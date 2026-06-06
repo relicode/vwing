@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "es2025",
+    "module": "es2022",
+    "moduleResolution": "bundler",
+    "lib": ["es2025", "dom"],
+    "allowJs": true,
+    "checkJs": false,
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "types": ["bun"],
+    "paths": {
+      "$/*": ["./src/*"]
+    }
+  },
+  "include": ["src/**/*", "__tests__/**/*", "scripts/**/*"]
+}
