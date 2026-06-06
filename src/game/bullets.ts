@@ -1,4 +1,5 @@
 import {
+  BULLET_DAMAGE,
   BULLET_LIFETIME,
   BULLET_RADIUS,
   BULLET_SPEED,
@@ -21,6 +22,7 @@ export const spawnBullet = (bullets: Bullet[], ship: Ship): void => {
     radius: BULLET_RADIUS,
     life: BULLET_LIFETIME,
     owner: ship.id,
+    damage: BULLET_DAMAGE,
   })
 }
 

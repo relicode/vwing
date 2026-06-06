@@ -11,11 +11,16 @@ import {
   SHIP_TURN_RATE,
   ShipKind,
   WALL_THICKNESS,
+  WEAPON_CONFIG,
+  WeaponKind,
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from '$/game/constants'
 import type { Input } from '$/game/input'
 import type { Ship } from '$/game/types'
+
+// Default secondary until the random per-life assignment lands (see weapons.ts).
+const DEFAULT_WEAPON = WeaponKind.SCATTERGUN
 
 export const PLAYER_SPAWN_X = WORLD_WIDTH / 2
 export const PLAYER_SPAWN_Y = WORLD_HEIGHT * 0.4
@@ -42,6 +47,10 @@ export const createShip = (
   invuln: SHIP_RESPAWN_INVULN,
   health: SHIP_MAX_HEALTH,
   shields: SHIP_MAX_SHIELDS,
+  weapon: DEFAULT_WEAPON,
+  ammo: WEAPON_CONFIG[DEFAULT_WEAPON].ammo,
+  altCooldown: 0,
+  disabled: 0,
 })
 
 // Reset a ship in place at a spawn point: full hull/shields, stopped, facing up, invulnerable.
@@ -56,6 +65,10 @@ export const respawnShipAt = (ship: Ship, x: number, y: number): void => {
   ship.invuln = SHIP_RESPAWN_INVULN
   ship.health = SHIP_MAX_HEALTH
   ship.shields = SHIP_MAX_SHIELDS
+  ship.weapon = DEFAULT_WEAPON
+  ship.ammo = WEAPON_CONFIG[DEFAULT_WEAPON].ammo
+  ship.altCooldown = 0
+  ship.disabled = 0
 }
 
 export const respawnShip = (ship: Ship): void => respawnShipAt(ship, PLAYER_SPAWN_X, PLAYER_SPAWN_Y)

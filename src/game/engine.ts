@@ -70,6 +70,9 @@ const createWorld = (seed: number): World => {
     bullets: [],
     asteroids: createWave(rng, ASTEROID_BASE_COUNT, player, SHIP_SPAWN_CLEAR_RADIUS),
     particles: [],
+    devices: [],
+    beams: [],
+    pools: [],
     rng,
   }
 }
@@ -108,20 +111,33 @@ export const createEngine = async (): Promise<Engine> => {
   let combatants = buildCombatants(world)
 
   const listeners = new Set<() => void>()
-  let status: EngineStatus = { phase, score, lives, best, wave: world.wave }
+  // The HUD reflects the local player (ships[0] by construction).
+  const playerShip = (): Ship => world.ships[0]
+  let status: EngineStatus = {
+    phase,
+    score,
+    lives,
+    best,
+    wave: world.wave,
+    weapon: playerShip().weapon,
+    ammo: playerShip().ammo,
+  }
 
   const publish = (): void => {
     const flooredScore = Math.floor(score)
+    const player = playerShip()
     if (
       status.phase === phase &&
       status.score === flooredScore &&
       status.lives === lives &&
       status.best === best &&
-      status.wave === world.wave
+      status.wave === world.wave &&
+      status.weapon === player.weapon &&
+      status.ammo === player.ammo
     ) {
       return
     }
-    status = { phase, score: flooredScore, lives, best, wave: world.wave }
+    status = { phase, score: flooredScore, lives, best, wave: world.wave, weapon: player.weapon, ammo: player.ammo }
     for (const listener of listeners) listener()
   }
 

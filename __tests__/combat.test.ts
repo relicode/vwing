@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { applyDamage, isDead } from '$/game/combat'
-import { ShipKind } from '$/game/constants'
+import { ShipKind, WeaponKind } from '$/game/constants'
 import type { Ship } from '$/game/types'
 
 const makeShip = (over: Partial<Ship>): Ship => ({
@@ -18,6 +18,10 @@ const makeShip = (over: Partial<Ship>): Ship => ({
   invuln: 0,
   health: 100,
   shields: 50,
+  weapon: WeaponKind.SCATTERGUN,
+  ammo: 0,
+  altCooldown: 0,
+  disabled: 0,
   ...over,
 })
 

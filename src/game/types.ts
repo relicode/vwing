@@ -1,4 +1,4 @@
-import type { AsteroidSize, GamePhase, ShipKind } from '$/game/constants'
+import type { AsteroidSize, DeviceKind, GamePhase, ShipKind, WeaponKind } from '$/game/constants'
 
 export type Vec2 = { x: number; y: number }
 
@@ -20,6 +20,10 @@ export type Ship = {
   invuln: number // s of remaining spawn invulnerability
   health: number // hull points; ship is destroyed at <= 0
   shields: number // absorbs damage before hull, regenerates over time
+  weapon: WeaponKind // current random secondary, rerolled each respawn
+  ammo: number // remaining secondary charges this life (0 = primary only)
+  altCooldown: number // s until the secondary can fire again
+  disabled: number // s of EMP lockout remaining (no thrust/turn/fire)
 }
 
 export type Bullet = {
@@ -30,6 +34,9 @@ export type Bullet = {
   radius: number
   life: number // s remaining
   owner: number // firing ship's id; cannot damage that ship
+  damage: number // hp removed on a ship hit (primary = BULLET_DAMAGE)
+  push?: number // knockback impulse applied to a hit ship (water cannon)
+  color?: number // render tint override (undefined = owner-based default)
 }
 
 export type Asteroid = {
@@ -55,6 +62,100 @@ export type Particle = {
   color: number
 }
 
+// Deployed, world-resident entities — one Device[] array, switched on `kind`.
+export type Device =
+  | {
+      kind: DeviceKind.MISSILE // seeker (homing) or EMP orb (turnRate 0, disableTime > 0)
+      x: number
+      y: number
+      vx: number
+      vy: number
+      life: number
+      owner: number
+      radius: number
+      turnRate: number // rad/s steering toward the nearest enemy; 0 = straight
+      speed: number
+      damage: number
+      blastRadius: number
+      blastDamage: number
+      disableTime: number // > 0 → disables the target instead of (or besides) damaging
+      shieldDrain: number
+      color: number
+    }
+  | {
+      kind: DeviceKind.MINE
+      x: number
+      y: number
+      owner: number
+      radius: number
+      armTime: number // counts down; armed once <= 0
+      life: number
+      triggerRadius: number
+      blastRadius: number
+      damage: number
+    }
+  | {
+      kind: DeviceKind.INFANTRY
+      x: number
+      y: number
+      vx: number
+      vy: number
+      owner: number
+      radius: number
+      life: number
+      attached: boolean // true once it lands on a surface (then it stays put + shoots)
+      fireCooldown: number
+    }
+  | {
+      kind: DeviceKind.GRENADE // gravity arc → shrapnel ring on fuse
+      x: number
+      y: number
+      vx: number
+      vy: number
+      owner: number
+      radius: number
+      fuse: number
+    }
+  | {
+      kind: DeviceKind.FLAK // straight shell → expanding ring airburst on fuse
+      x: number
+      y: number
+      vx: number
+      vy: number
+      owner: number
+      radius: number
+      fuse: number
+    }
+  | {
+      kind: DeviceKind.WELL // temporary gravity well pulling nearby ships
+      x: number
+      y: number
+      owner: number
+      radius: number
+      life: number
+      strength: number
+      pullRadius: number
+    }
+
+// Transient hitscan visual for the Rail Lance (damage is applied at spawn).
+export type Beam = {
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+  life: number
+  maxLife: number
+  color: number
+}
+
+// A floor-resting body of water. Surface y = WORLD_HEIGHT - WALL_THICKNESS - level.
+export type WaterPool = {
+  x: number // left edge of the span
+  width: number
+  level: number // current fill height above the floor
+  capacity: number // max fill height
+}
+
 // The full mutable simulation. Owned by the engine closure (never module-level).
 // `ships` holds every combatant; ships[0] / kind PLAYER is the camera-followed human.
 export type World = {
@@ -64,6 +165,9 @@ export type World = {
   bullets: Bullet[]
   asteroids: Asteroid[]
   particles: Particle[]
+  devices: Device[]
+  beams: Beam[]
+  pools: WaterPool[]
   rng: Rng
 }
 
@@ -74,4 +178,6 @@ export type EngineStatus = {
   best: number
   lives: number
   wave: number
+  weapon: WeaponKind // the PLAYER ship's current secondary
+  ammo: number // the PLAYER ship's remaining secondary charges
 }

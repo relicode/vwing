@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { createBotInput, decideBot } from '$/game/bot'
-import { AsteroidSize, BOT_ID, PLAYER_ID, ShipKind, WORLD_HEIGHT, WORLD_WIDTH } from '$/game/constants'
+import { AsteroidSize, BOT_ID, PLAYER_ID, ShipKind, WeaponKind, WORLD_HEIGHT, WORLD_WIDTH } from '$/game/constants'
 import type { Asteroid, Ship, World } from '$/game/types'
 
 const CENTER_X = WORLD_WIDTH / 2
@@ -21,6 +21,10 @@ const makeShip = (over: Partial<Ship>): Ship => ({
   invuln: 0,
   health: 100,
   shields: 50,
+  weapon: WeaponKind.SCATTERGUN,
+  ammo: 0,
+  altCooldown: 0,
+  disabled: 0,
   ...over,
 })
 
@@ -108,6 +112,9 @@ describe('decideBot', () => {
       bullets: [],
       asteroids: [],
       particles: [],
+      devices: [],
+      beams: [],
+      pools: [],
       rng: () => 0,
     }
     const input = createBotInput(self, () => world)

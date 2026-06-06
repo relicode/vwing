@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 
-import { GamePhase, SHIP_START_LIVES } from '$/game/constants'
+import { GamePhase, SHIP_START_LIVES, WeaponKind } from '$/game/constants'
 import { createEngine, type Engine } from '$/game/engine'
 import type { EngineStatus } from '$/game/types'
 
@@ -10,6 +10,8 @@ const INITIAL_STATUS: EngineStatus = {
   best: 0,
   lives: SHIP_START_LIVES,
   wave: 1,
+  weapon: WeaponKind.SCATTERGUN,
+  ammo: 0,
 }
 
 // Boots the PixiJS engine once, tearing it down on unmount. Returns undefined until ready.
