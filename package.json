@@ -1,9 +1,9 @@
 {
   "name": "vwing",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
-  "license": "0BSD",
+  "license": "Unlicense",
   "description": "V-Wing — an XPilot-style 2D gravity dogfighter built with PixiJS, with a React + MUI shell.",
   "engines": {
     "bun": ">=1.3.13"
