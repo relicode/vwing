@@ -129,7 +129,7 @@ export const BOT_DODGE_DIST = 150 // px gap to an asteroid that triggers an evas
 // ── Secondary weapons ───────────────────────────────────────────────────────
 // One weapon is rolled onto each ship per life (limited charges). Per-weapon
 // charge count + cooldown live here; mechanic params follow, grouped per weapon.
-export const ALT_FIRE_KEYS = ['KeyK', 'ShiftLeft'] // secondary trigger
+// (Secondary keybinding lives with the other keys in input.ts.)
 export const SECONDARY_DEPLOY_DIST = 22 // px ahead of the nose where devices spawn
 
 export type WeaponConfig = { name: string; ammo: number; cooldown: number }

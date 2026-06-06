@@ -20,9 +20,9 @@ import type { Asteroid, Ship, World } from '$/game/types'
 const FACING_UP = -Math.PI / 2
 
 // The per-frame command the AI feeds through the shared `updateShip`/fire path.
-export type BotDecision = { turn: number; thrusting: boolean; firing: boolean }
+export type BotDecision = { turn: number; thrusting: boolean; firing: boolean; altFiring: boolean }
 
-const IDLE: BotDecision = { turn: 0, thrusting: false, firing: false }
+const IDLE: BotDecision = { turn: 0, thrusting: false, firing: false, altFiring: false }
 
 const CENTER = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 } as const
 
@@ -90,7 +90,9 @@ export const decideBot = (self: Ship, target: Ship, asteroids: Asteroid[]): BotD
 
   const error = wrapAngle(desired - self.angle)
   const turn = Math.abs(error) < BOT_AIM_DEADBAND ? 0 : Math.sign(error)
-  return { turn, thrusting, firing }
+  // Loose the secondary whenever it'd fire the primary and a charge is ready.
+  const altFiring = firing && self.ammo > 0 && self.altCooldown <= 0 && self.disabled <= 0
+  return { turn, thrusting, firing, altFiring }
 }
 
 const nearestEnemy = (self: Ship, ships: Ship[]): Ship | undefined => {
@@ -107,7 +109,7 @@ const nearestEnemy = (self: Ship, ships: Ship[]): Ship | undefined => {
   return best
 }
 
-// Wrap the AI as an `Input`: the three accessors share one decision recomputed once
+// Wrap the AI as an `Input`: the accessors share one decision recomputed once
 // per simulation frame (keyed on world.time), so it slots straight into updateShip.
 export const createBotInput = (self: Ship, getWorld: () => World): Input => {
   let cachedTime = Number.NaN
@@ -133,6 +135,10 @@ export const createBotInput = (self: Ship, getWorld: () => World): Input => {
     firing: () => {
       refresh()
       return decision.firing
+    },
+    altFiring: () => {
+      refresh()
+      return decision.altFiring
     },
     destroy: () => {},
   }

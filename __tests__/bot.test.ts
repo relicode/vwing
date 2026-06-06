@@ -102,6 +102,20 @@ describe('decideBot', () => {
     expect(d.thrusting).toBe(false) // won't burn straight into it before turning
   })
 
+  test('alt-fires when lined up with a charge ready', () => {
+    const self = makeShip({ angle: 0, ammo: 3, altCooldown: 0 })
+    const target = makeTarget({ x: CENTER_X + 300, y: CENTER_Y })
+    const d = decideBot(self, target, [])
+    expect(d.firing).toBe(true)
+    expect(d.altFiring).toBe(true)
+  })
+
+  test('holds the secondary when out of charges or still cooling down', () => {
+    const target = makeTarget({ x: CENTER_X + 300, y: CENTER_Y })
+    expect(decideBot(makeShip({ angle: 0, ammo: 0, altCooldown: 0 }), target, []).altFiring).toBe(false)
+    expect(decideBot(makeShip({ angle: 0, ammo: 3, altCooldown: 0.5 }), target, []).altFiring).toBe(false)
+  })
+
   test('createBotInput memoizes one decision per world.time and recomputes on advance', () => {
     const self = makeShip({ id: BOT_ID, angle: 0, x: CENTER_X, y: CENTER_Y })
     const target = makeTarget({ x: CENTER_X + 300, y: CENTER_Y }) // lined up to the right

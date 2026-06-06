@@ -8,6 +8,7 @@ const makeInput = (turn: number, thrusting: boolean): Input => ({
   turn: () => turn,
   thrusting: () => thrusting,
   firing: () => false,
+  altFiring: () => false,
   destroy: () => {},
 })
 
