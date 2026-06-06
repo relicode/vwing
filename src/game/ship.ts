@@ -17,10 +17,12 @@ import {
   WORLD_WIDTH,
 } from '$/game/constants'
 import type { Input } from '$/game/input'
-import type { Ship } from '$/game/types'
+import type { Rng, Ship } from '$/game/types'
+import { assignWeapon } from '$/game/weapons'
 
-// Default secondary until the random per-life assignment lands (see weapons.ts).
+// Default secondary when no rng is supplied (the deterministic path the unit tests use).
 const DEFAULT_WEAPON = WeaponKind.SCATTERGUN
+const rollWeapon = (rng?: Rng): WeaponKind => (rng ? assignWeapon(rng) : DEFAULT_WEAPON)
 
 export const PLAYER_SPAWN_X = WORLD_WIDTH / 2
 export const PLAYER_SPAWN_Y = WORLD_HEIGHT * 0.4
@@ -32,29 +34,35 @@ export const createShip = (
   kind: ShipKind = ShipKind.PLAYER,
   x: number = PLAYER_SPAWN_X,
   y: number = PLAYER_SPAWN_Y,
-  id: number = PLAYER_ID
-): Ship => ({
-  id,
-  kind,
-  x,
-  y,
-  vx: 0,
-  vy: 0,
-  angle: FACING_UP,
-  radius: SHIP_RADIUS,
-  thrusting: false,
-  fireCooldown: 0,
-  invuln: SHIP_RESPAWN_INVULN,
-  health: SHIP_MAX_HEALTH,
-  shields: SHIP_MAX_SHIELDS,
-  weapon: DEFAULT_WEAPON,
-  ammo: WEAPON_CONFIG[DEFAULT_WEAPON].ammo,
-  altCooldown: 0,
-  disabled: 0,
-})
+  id: number = PLAYER_ID,
+  rng?: Rng
+): Ship => {
+  const weapon = rollWeapon(rng)
+  return {
+    id,
+    kind,
+    x,
+    y,
+    vx: 0,
+    vy: 0,
+    angle: FACING_UP,
+    radius: SHIP_RADIUS,
+    thrusting: false,
+    fireCooldown: 0,
+    invuln: SHIP_RESPAWN_INVULN,
+    health: SHIP_MAX_HEALTH,
+    shields: SHIP_MAX_SHIELDS,
+    weapon,
+    ammo: WEAPON_CONFIG[weapon].ammo,
+    altCooldown: 0,
+    disabled: 0,
+  }
+}
 
-// Reset a ship in place at a spawn point: full hull/shields, stopped, facing up, invulnerable.
-export const respawnShipAt = (ship: Ship, x: number, y: number): void => {
+// Reset a ship in place at a spawn point: full hull/shields, stopped, facing up,
+// invulnerable, and rolling a fresh random secondary (when an rng is supplied).
+export const respawnShipAt = (ship: Ship, x: number, y: number, rng?: Rng): void => {
+  const weapon = rollWeapon(rng)
   ship.x = x
   ship.y = y
   ship.vx = 0
@@ -65,13 +73,13 @@ export const respawnShipAt = (ship: Ship, x: number, y: number): void => {
   ship.invuln = SHIP_RESPAWN_INVULN
   ship.health = SHIP_MAX_HEALTH
   ship.shields = SHIP_MAX_SHIELDS
-  ship.weapon = DEFAULT_WEAPON
-  ship.ammo = WEAPON_CONFIG[DEFAULT_WEAPON].ammo
+  ship.weapon = weapon
+  ship.ammo = WEAPON_CONFIG[weapon].ammo
   ship.altCooldown = 0
   ship.disabled = 0
 }
 
-export const respawnShip = (ship: Ship): void => respawnShipAt(ship, PLAYER_SPAWN_X, PLAYER_SPAWN_Y)
+export const respawnShip = (ship: Ship, rng?: Rng): void => respawnShipAt(ship, PLAYER_SPAWN_X, PLAYER_SPAWN_Y, rng)
 
 // Newtonian integration: turn, optional thrust along the nose, global gravity,
 // gentle drag, then advance. Position is unbounded here — wall death is the engine's call.
