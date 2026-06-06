@@ -73,8 +73,10 @@ const spawnSeekers = (world: World, ship: Ship): void => {
       kind: DeviceKind.MISSILE,
       x: noseX(ship),
       y: noseY(ship),
-      vx: ship.vx + dirX * SEEKER_SPEED,
-      vy: ship.vy + dirY * SEEKER_SPEED,
+      // Launch at the missile's own constant speed (homing maintains it) — no inherited
+      // platform velocity, so the seeker doesn't visibly snap-decelerate on frame one.
+      vx: dirX * SEEKER_SPEED,
+      vy: dirY * SEEKER_SPEED,
       life: SEEKER_LIFE,
       owner: ship.id,
       radius: SEEKER_RADIUS,

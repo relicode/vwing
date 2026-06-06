@@ -2,6 +2,12 @@ import { applyDamage } from '$/game/combat'
 import { Color, RAIL_BEAM_LIFE, RAIL_DAMAGE, RAIL_RANGE } from '$/game/constants'
 import type { Ship, World } from '$/game/types'
 
+// Age out spent rail beams (damage was applied when they were fired).
+export const updateBeams = (world: World, dt: number): void => {
+  for (const beam of world.beams) beam.life -= dt
+  world.beams = world.beams.filter((beam) => beam.life > 0)
+}
+
 // Rail Lance hitscan: damage the nearest enemy ship lying along the ship's nose,
 // draw the transient beam to that ship (or to max range), and return the struck
 // ship so the caller can reap it if the hull is gone. Asteroids don't block it.

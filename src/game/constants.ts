@@ -118,7 +118,8 @@ export const BOT_KILL_SCORE = 250 // awarded when the player downs the bot
 // AI bot tuning (single balancing surface — the logic in bot.ts reads these).
 export const BOT_AIM_DEADBAND = 0.06 // rad of heading error tolerated before turning
 export const BOT_FIRE_CONE = 0.16 // rad of aim error within which the bot shoots
-export const BOT_FIRE_RANGE = 620 // px max engagement distance
+export const BOT_FIRE_RANGE = 620 // px max engagement distance (primary cannon)
+export const BOT_SECONDARY_RANGE = 950 // px range the bot will loose a secondary (rail/seeker reach further)
 export const BOT_THRUST_CONE = 1.1 // rad: thrust to close only when roughly facing the target
 export const BOT_STANDOFF = 240 // px: stop closing once this near the target
 export const BOT_FALL_LIMIT = 220 // vy above which the bot climbs even mid-engagement

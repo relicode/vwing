@@ -4,6 +4,7 @@ import {
   BOT_FALL_LIMIT,
   BOT_FIRE_CONE,
   BOT_FIRE_RANGE,
+  BOT_SECONDARY_RANGE,
   BOT_STANDOFF,
   BOT_THRUST_CONE,
   BOT_WALL_LOOKAHEAD,
@@ -66,10 +67,12 @@ export const decideBot = (self: Ship, target: Ship, asteroids: Asteroid[]): BotD
   let desired = Math.atan2(aimY - self.y, aimX - self.x)
   let thrusting = false
   let firing = false
+  let altFiring = false
 
   // Thrust only helps when the nose is within 90° of the goal heading; otherwise the
   // engine would shove the bot the wrong way, so it turns to face the goal first.
   const thrustToward = (heading: number): boolean => Math.abs(wrapAngle(heading - self.angle)) < Math.PI / 2
+  const charged = self.ammo > 0 && self.altCooldown <= 0 && self.disabled <= 0
 
   const escapeHeading = wallEscapeHeading(self) ?? asteroidEscapeHeading(self, asteroids)
   if (escapeHeading !== undefined) {
@@ -77,21 +80,22 @@ export const decideBot = (self: Ship, target: Ship, asteroids: Asteroid[]): BotD
     thrusting = thrustToward(desired)
   } else {
     const aimError = Math.abs(wrapAngle(desired - self.angle))
-    // Don't waste shots on a target still under spawn invulnerability.
-    firing = aimError < BOT_FIRE_CONE && dist < BOT_FIRE_RANGE && target.invuln <= 0
+    const onTarget = aimError < BOT_FIRE_CONE && target.invuln <= 0 // don't waste shots on invuln targets
+    firing = onTarget && dist < BOT_FIRE_RANGE
+    // Secondaries reach further than the primary cannon (rail/seeker), so use their own range.
+    altFiring = onTarget && dist < BOT_SECONDARY_RANGE && charged
     thrusting = aimError < BOT_THRUST_CONE && dist > BOT_STANDOFF
     // Falling too fast while engaging? Point up and ride thrust before resuming the chase.
     if (!thrusting && self.vy > BOT_FALL_LIMIT) {
       desired = FACING_UP
       thrusting = thrustToward(FACING_UP)
       firing = false
+      altFiring = false
     }
   }
 
   const error = wrapAngle(desired - self.angle)
   const turn = Math.abs(error) < BOT_AIM_DEADBAND ? 0 : Math.sign(error)
-  // Loose the secondary whenever it'd fire the primary and a charge is ready.
-  const altFiring = firing && self.ammo > 0 && self.altCooldown <= 0 && self.disabled <= 0
   return { turn, thrusting, firing, altFiring }
 }
 

@@ -1,6 +1,7 @@
 import { Application } from 'pixi.js'
 
 import { createWave, splitAsteroid, updateAsteroids } from '$/game/asteroids'
+import { updateBeams } from '$/game/beams'
 import { createBotInput } from '$/game/bot'
 import { spawnBullet, updateBullets } from '$/game/bullets'
 import { circlesOverlap } from '$/game/collision'
@@ -22,7 +23,7 @@ import {
   VIEW_HEIGHT,
   VIEW_WIDTH,
 } from '$/game/constants'
-import { updateBeams, updateDevices } from '$/game/devices'
+import { updateDevices } from '$/game/devices'
 import { createInput, type Input } from '$/game/input'
 import { spawnExplosion, updateParticles } from '$/game/particles'
 import { createRenderer } from '$/game/renderer'

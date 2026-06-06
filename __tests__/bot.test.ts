@@ -116,6 +116,14 @@ describe('decideBot', () => {
     expect(decideBot(makeShip({ angle: 0, ammo: 3, altCooldown: 0.5 }), target, []).altFiring).toBe(false)
   })
 
+  test('looses a long-range secondary past primary-cannon range', () => {
+    const self = makeShip({ angle: 0, ammo: 3, altCooldown: 0 })
+    const target = makeTarget({ x: CENTER_X + 800, y: CENTER_Y }) // > BOT_FIRE_RANGE, < BOT_SECONDARY_RANGE
+    const d = decideBot(self, target, [])
+    expect(d.firing).toBe(false) // primary cannon can't reach
+    expect(d.altFiring).toBe(true) // but the rail/seeker can
+  })
+
   test('createBotInput memoizes one decision per world.time and recomputes on advance', () => {
     const self = makeShip({ id: BOT_ID, angle: 0, x: CENTER_X, y: CENTER_Y })
     const target = makeTarget({ x: CENTER_X + 300, y: CENTER_Y }) // lined up to the right

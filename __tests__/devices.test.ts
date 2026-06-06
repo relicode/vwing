@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 
+import { updateBeams } from '$/game/beams'
 import { DeviceKind, ShipKind, WALL_THICKNESS, WeaponKind, WORLD_HEIGHT } from '$/game/constants'
-import { updateBeams, updateDevices } from '$/game/devices'
+import { updateDevices } from '$/game/devices'
 import { createRng } from '$/game/rng'
 import type { Device, Ship, World } from '$/game/types'
 

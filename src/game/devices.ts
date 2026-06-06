@@ -47,7 +47,8 @@ const nearestEnemyOf = (ownerId: number, x: number, y: number, ships: Ship[]): S
   return best
 }
 
-// Damage every enemy ship within `radius`, collecting any that die.
+// Damage every enemy ship within `radius`, collecting any that die. `exclude` skips
+// a ship already damaged directly (so a missile's splash never double-hits its target).
 const areaDamage = (
   world: World,
   x: number,
@@ -55,10 +56,11 @@ const areaDamage = (
   radius: number,
   damage: number,
   ownerId: number,
-  dead: Set<Ship>
+  dead: Set<Ship>,
+  exclude?: Ship
 ): void => {
   for (const ship of world.ships) {
-    if (ship.id === ownerId || ship.invuln > 0) continue
+    if (ship.id === ownerId || ship.invuln > 0 || ship === exclude) continue
     if (Math.hypot(ship.x - x, ship.y - y) > radius) continue
     applyDamage(ship, damage)
     if (isDead(ship)) dead.add(ship)
@@ -113,7 +115,7 @@ const stepDevice = (world: World, device: Device, dt: number, dead: Set<Ship>): 
           applyDamage(ship, device.damage)
           if (isDead(ship)) dead.add(ship)
           if (device.blastRadius > 0) {
-            areaDamage(world, device.x, device.y, device.blastRadius, device.blastDamage, device.owner, dead)
+            areaDamage(world, device.x, device.y, device.blastRadius, device.blastDamage, device.owner, dead, ship)
           }
         }
         if (device.disableTime > 0) applyDisable(ship, device.disableTime, device.shieldDrain)
@@ -258,10 +260,4 @@ export const updateDevices = (world: World, dt: number): Ship[] => {
   }
   world.devices = survivors
   return [...dead]
-}
-
-// Age out spent rail beams (damage was applied when they were fired).
-export const updateBeams = (world: World, dt: number): void => {
-  for (const beam of world.beams) beam.life -= dt
-  world.beams = world.beams.filter((beam) => beam.life > 0)
 }
