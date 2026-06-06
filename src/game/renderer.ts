@@ -1,15 +1,29 @@
 import { Container, Graphics } from 'pixi.js'
 
 import { cameraOrigin } from '$/game/camera'
-import { Color, GamePhase, VIEW_HEIGHT, VIEW_WIDTH, WALL_THICKNESS, WORLD_HEIGHT, WORLD_WIDTH } from '$/game/constants'
-import { TWO_PI } from '$/game/math'
+import {
+  Color,
+  DeviceKind,
+  GamePhase,
+  PLAYER_ID,
+  SHIP_MAX_HEALTH,
+  SHIP_MAX_SHIELDS,
+  ShipKind,
+  VIEW_HEIGHT,
+  VIEW_WIDTH,
+  WALL_THICKNESS,
+  WORLD_HEIGHT,
+  WORLD_WIDTH,
+} from '$/game/constants'
+import { clamp, TWO_PI } from '$/game/math'
 import { randRange } from '$/game/rng'
-import type { Asteroid, Particle, Rng, Ship, Vec2, World } from '$/game/types'
+import type { Asteroid, Beam, Device, Particle, Rng, Ship, Vec2, WaterPool, World } from '$/game/types'
 
 type Star = { x: number; y: number; depth: number; size: number }
 
 const STAR_COUNT = 150
 const WING_SPREAD = 2.4 // radians from nose to each tail corner
+const FLOOR_Y = WORLD_HEIGHT - WALL_THICKNESS
 
 export type Renderer = {
   view: Container
@@ -70,10 +84,73 @@ const drawParticles = (g: Graphics, particles: Particle[]): void => {
   }
 }
 
+// Floor pools: a translucent body with a brighter surface line.
+const drawWater = (g: Graphics, pools: WaterPool[]): void => {
+  for (const pool of pools) {
+    const top = FLOOR_Y - pool.level
+    g.rect(pool.x, top, pool.width, pool.level).fill({ color: Color.WATER, alpha: 0.38 })
+    g.rect(pool.x, top, pool.width, 2).fill({ color: Color.WATER_EDGE, alpha: 0.8 })
+  }
+}
+
+const drawDevice = (g: Graphics, d: Device): void => {
+  switch (d.kind) {
+    case DeviceKind.MISSILE: {
+      const a = Math.atan2(d.vy, d.vx)
+      g.moveTo(d.x - Math.cos(a) * d.radius * 2.4, d.y - Math.sin(a) * d.radius * 2.4)
+        .lineTo(d.x, d.y)
+        .stroke({ width: 2, color: d.color, alpha: 0.55 })
+      g.circle(d.x, d.y, d.radius).fill({ color: d.color })
+      break
+    }
+    case DeviceKind.MINE: {
+      const armed = d.armTime <= 0
+      const color = armed ? Color.MINE_ARMED : Color.MINE
+      g.circle(d.x, d.y, d.radius).stroke({ width: 2, color })
+      g.circle(d.x, d.y, d.radius * 0.4).fill({ color })
+      break
+    }
+    case DeviceKind.INFANTRY:
+      g.rect(d.x - d.radius * 0.5, d.y - d.radius, d.radius, d.radius * 1.6).fill({ color: Color.INFANTRY })
+      break
+    case DeviceKind.GRENADE:
+      g.circle(d.x, d.y, d.radius).fill({ color: Color.GRENADE })
+      break
+    case DeviceKind.FLAK:
+      g.circle(d.x, d.y, d.radius).fill({ color: Color.FLAK })
+      break
+    case DeviceKind.WELL:
+      g.circle(d.x, d.y, d.pullRadius).stroke({ width: 1, color: Color.WELL, alpha: 0.12 })
+      g.circle(d.x, d.y, d.radius * 2).stroke({ width: 2, color: Color.WELL, alpha: 0.5 })
+      g.circle(d.x, d.y, d.radius).fill({ color: Color.WELL })
+      break
+  }
+}
+
+const drawBeams = (g: Graphics, beams: Beam[]): void => {
+  for (const b of beams) {
+    g.moveTo(b.x1, b.y1)
+      .lineTo(b.x2, b.y2)
+      .stroke({ width: 3, color: b.color, alpha: Math.max(0, b.life / b.maxLife) })
+  }
+}
+
+// Floating hull (bottom) + shield (top) gauges above a ship, so combat reads at a glance.
+const drawBars = (g: Graphics, ship: Ship): void => {
+  const w = ship.radius * 2.6
+  const x = ship.x - w / 2
+  const y = ship.y - ship.radius - 12
+  g.rect(x, y, w, 3).fill({ color: Color.BAR_BACK })
+  g.rect(x, y, w * clamp(ship.health / SHIP_MAX_HEALTH, 0, 1), 3).fill({ color: Color.HEALTH })
+  g.rect(x, y - 4, w, 2).fill({ color: Color.BAR_BACK })
+  g.rect(x, y - 4, w * clamp(ship.shields / SHIP_MAX_SHIELDS, 0, 1), 2).fill({ color: Color.SHIELD })
+}
+
 const drawShip = (g: Graphics, ship: Ship, time: number): void => {
   if (ship.invuln > 0 && Math.floor(time * 12) % 2 === 0) return
   const a = ship.angle
   const r = ship.radius
+  const hull = ship.kind === ShipKind.PLAYER ? Color.SHIP : Color.ENEMY
   if (ship.thrusting) {
     const flick = 0.6 + (Math.floor(time * 40) % 3) * 0.28
     g.poly([
@@ -92,8 +169,9 @@ const drawShip = (g: Graphics, ship: Ship, time: number): void => {
     ship.y + Math.sin(a + WING_SPREAD) * r,
     ship.x + Math.cos(a - WING_SPREAD) * r,
     ship.y + Math.sin(a - WING_SPREAD) * r,
-  ]).fill({ color: Color.SHIP })
+  ]).fill({ color: hull })
   g.circle(ship.x, ship.y, r * 0.34).fill({ color: Color.SHIP_CORE })
+  drawBars(g, ship)
 }
 
 export const createRenderer = (rng: Rng): Renderer => {
@@ -108,16 +186,21 @@ export const createRenderer = (rng: Rng): Renderer => {
   drawWalls(wallGfx)
 
   const draw = (world: World, phase: GamePhase): void => {
-    const camera = cameraOrigin(world.ship)
+    const player = world.ships.find((ship) => ship.kind === ShipKind.PLAYER) ?? world.ships[0]
+    const camera = cameraOrigin(player)
     worldLayer.position.set(-camera.x, -camera.y)
     drawStars(starLayer, stars, camera)
     dynGfx.clear()
+    drawWater(dynGfx, world.pools)
     for (const asteroid of world.asteroids) drawAsteroid(dynGfx, asteroid)
+    for (const device of world.devices) drawDevice(dynGfx, device)
     for (const bullet of world.bullets) {
-      dynGfx.circle(bullet.x, bullet.y, bullet.radius).fill({ color: Color.BULLET })
+      const color = bullet.color ?? (bullet.owner === PLAYER_ID ? Color.BULLET : Color.BULLET_ENEMY)
+      dynGfx.circle(bullet.x, bullet.y, bullet.radius).fill({ color })
     }
+    drawBeams(dynGfx, world.beams)
     drawParticles(dynGfx, world.particles)
-    if (phase !== GamePhase.GAME_OVER) drawShip(dynGfx, world.ship, world.time)
+    if (phase !== GamePhase.GAME_OVER) for (const ship of world.ships) drawShip(dynGfx, ship, world.time)
   }
 
   const destroy = (): void => {

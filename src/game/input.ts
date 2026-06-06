@@ -2,12 +2,14 @@ const LEFT_KEYS = ['ArrowLeft', 'KeyA']
 const RIGHT_KEYS = ['ArrowRight', 'KeyD']
 const THRUST_KEYS = ['ArrowUp', 'KeyW']
 const FIRE_KEYS = ['Space', 'KeyJ', 'KeyZ']
-const PREVENT_DEFAULT = new Set([...LEFT_KEYS, ...RIGHT_KEYS, ...THRUST_KEYS, ...FIRE_KEYS])
+const ALT_FIRE_KEYS = ['KeyK', 'ShiftLeft'] // secondary weapon
+const PREVENT_DEFAULT = new Set([...LEFT_KEYS, ...RIGHT_KEYS, ...THRUST_KEYS, ...FIRE_KEYS, ...ALT_FIRE_KEYS])
 
 export type Input = {
   turn: () => number // -1 = rotate left, +1 = rotate right, 0 = none
   thrusting: () => boolean
   firing: () => boolean
+  altFiring: () => boolean // secondary weapon trigger
   destroy: () => void
 }
 
@@ -34,6 +36,7 @@ export const createInput = (target: Window): Input => {
   const turn = (): number => (anyDown(RIGHT_KEYS) ? 1 : 0) - (anyDown(LEFT_KEYS) ? 1 : 0)
   const thrusting = (): boolean => anyDown(THRUST_KEYS)
   const firing = (): boolean => anyDown(FIRE_KEYS)
+  const altFiring = (): boolean => anyDown(ALT_FIRE_KEYS)
 
   const destroy = () => {
     target.removeEventListener('keydown', onKeyDown)
@@ -41,5 +44,5 @@ export const createInput = (target: Window): Input => {
     target.removeEventListener('blur', onBlur)
   }
 
-  return { turn, thrusting, firing, destroy }
+  return { turn, thrusting, firing, altFiring, destroy }
 }
