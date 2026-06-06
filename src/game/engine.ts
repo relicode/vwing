@@ -166,11 +166,13 @@ export const createEngine = async (): Promise<Engine> => {
   // (endGame flips `phase` from inside nested helpers TS can't see into).
   const gameOver = (): boolean => phase === GamePhase.GAME_OVER
 
-  // Clear rocks around a fresh spawn so a respawn isn't an instant re-death.
-  const clearRocksAround = (x: number, y: number): void => {
+  // Clear rocks AND deployed devices (mines, wells, …) around a fresh spawn so a
+  // respawn isn't an instant re-death.
+  const clearSpawnArea = (x: number, y: number): void => {
     world.asteroids = world.asteroids.filter(
       (asteroid) => Math.hypot(asteroid.x - x, asteroid.y - y) > SHIP_SPAWN_CLEAR_RADIUS
     )
+    world.devices = world.devices.filter((device) => Math.hypot(device.x - x, device.y - y) > SHIP_SPAWN_CLEAR_RADIUS)
   }
 
   // Blow up a destroyed ship. The player costs a life (and ends the run when out);
@@ -189,7 +191,7 @@ export const createEngine = async (): Promise<Engine> => {
       score += BOT_KILL_SCORE
       respawnShipAt(ship, BOT_SPAWN_X, BOT_SPAWN_Y, world.rng)
     }
-    clearRocksAround(ship.x, ship.y)
+    clearSpawnArea(ship.x, ship.y)
   }
 
   // Devices/rail report ships they dealt lethal damage to; reap them (guarded so an

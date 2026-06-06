@@ -233,7 +233,7 @@ const stepDevice = (world: World, device: Device, dt: number, dead: Set<Ship>): 
     case DeviceKind.WELL: {
       device.life -= dt
       for (const ship of world.ships) {
-        if (ship.id === device.owner) continue
+        if (ship.id === device.owner || ship.invuln > 0) continue // invuln ships aren't gripped
         const dx = device.x - ship.x
         const dy = device.y - ship.y
         const dist = Math.hypot(dx, dy)
