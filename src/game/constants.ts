@@ -13,6 +13,16 @@ export enum AsteroidSize {
   SMALL = 'SMALL',
 }
 
+// Who controls a ship. PLAYER is the camera-followed, life-counted human; BOT is AI.
+export enum ShipKind {
+  PLAYER = 'PLAYER',
+  BOT = 'BOT',
+}
+
+// Stable owner ids tagged onto bullets so shots never hit their firer.
+export const PLAYER_ID = 0
+export const BOT_ID = 1
+
 // Camera viewport (the canvas) and the larger world it pans across.
 export const VIEW_WIDTH = 900
 export const VIEW_HEIGHT = 600
@@ -29,8 +39,14 @@ export const Color = {
   WALL_EDGE: 0x4f7bff,
   SHIP: 0x8fe3ff,
   SHIP_CORE: 0xffffff,
+  ENEMY: 0xff6b8b, // AI ship hull
   THRUST: 0xffb347,
-  BULLET: 0xfff27a,
+  BULLET: 0xfff27a, // player shots
+  BULLET_ENEMY: 0xff9d5c, // AI shots
+  SPARK: 0xffd9a0, // shield/hull impact flecks
+  SHIELD: 0x5ad1ff, // shield bar
+  HEALTH: 0x57e08a, // hull bar
+  BAR_BACK: 0x20242e, // bar backing
   ASTEROID_FILL: 0x3a3f4d,
   ASTEROID_EDGE: 0xb9c0d0,
   EXPLOSION: 0xffd166,
@@ -53,6 +69,25 @@ export const SHIP_SPAWN_CLEAR_RADIUS = 260 // rocks within this of a respawn are
 export const BULLET_SPEED = 600 // muzzle speed
 export const BULLET_RADIUS = 3
 export const BULLET_LIFETIME = 1.5 // s
+export const BULLET_DAMAGE = 22 // hit points removed per shot
+
+// Ship combat: shields soak damage first and regenerate; hull is the real pool.
+// Walls and asteroids stay one-hit lethal — only gunfire is graded.
+export const SHIP_MAX_HEALTH = 100
+export const SHIP_MAX_SHIELDS = 50
+export const SHIP_SHIELD_REGEN = 9 // shield points/s recovered between hits
+export const BOT_KILL_SCORE = 250 // awarded when the player downs the bot
+
+// AI bot tuning (single balancing surface — the logic in bot.ts reads these).
+export const BOT_AIM_DEADBAND = 0.06 // rad of heading error tolerated before turning
+export const BOT_FIRE_CONE = 0.16 // rad of aim error within which the bot shoots
+export const BOT_FIRE_RANGE = 620 // px max engagement distance
+export const BOT_THRUST_CONE = 1.1 // rad: thrust to close only when roughly facing the target
+export const BOT_STANDOFF = 240 // px: stop closing once this near the target
+export const BOT_FALL_LIMIT = 220 // vy above which the bot climbs even mid-engagement
+export const BOT_WALL_MARGIN = 90 // px buffer off the walls before the bot flees to center
+export const BOT_WALL_LOOKAHEAD = 0.85 // s of velocity projected when testing wall danger
+export const BOT_DODGE_DIST = 150 // px gap to an asteroid that triggers an evasive turn
 
 // Asteroid waves.
 export const ASTEROID_BASE_COUNT = 5 // large rocks in wave 1
