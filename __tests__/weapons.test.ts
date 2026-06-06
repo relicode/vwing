@@ -1,0 +1,153 @@
+import { describe, expect, test } from 'bun:test'
+
+import {
+  DeviceKind,
+  INFANTRY_COUNT,
+  MINE_COUNT,
+  SCATTERGUN_PELLETS,
+  SEEKER_COUNT,
+  ShipKind,
+  WEAPON_CONFIG,
+  WEAPON_POOL,
+  WeaponKind,
+  WORLD_HEIGHT,
+  WORLD_WIDTH,
+} from '$/game/constants'
+import { createRng } from '$/game/rng'
+import type { Ship, World } from '$/game/types'
+import { assignWeapon, fireSecondary } from '$/game/weapons'
+
+const makeShip = (over: Partial<Ship>): Ship => ({
+  id: 0,
+  kind: ShipKind.PLAYER,
+  x: WORLD_WIDTH / 2,
+  y: WORLD_HEIGHT / 2,
+  vx: 0,
+  vy: 0,
+  angle: 0,
+  radius: 12,
+  thrusting: false,
+  fireCooldown: 0,
+  invuln: 0,
+  health: 100,
+  shields: 50,
+  weapon: WeaponKind.SCATTERGUN,
+  ammo: 5,
+  altCooldown: 0,
+  disabled: 0,
+  ...over,
+})
+
+const makeWorld = (over?: Partial<World>): World => ({
+  time: 0,
+  wave: 1,
+  ships: [],
+  bullets: [],
+  asteroids: [],
+  particles: [],
+  devices: [],
+  beams: [],
+  pools: [],
+  rng: createRng(1),
+  ...over,
+})
+
+describe('assignWeapon', () => {
+  test('always returns a weapon from the pool', () => {
+    const rng = createRng(42)
+    for (let i = 0; i < 30; i += 1) expect(WEAPON_POOL).toContain(assignWeapon(rng))
+  })
+})
+
+describe('fireSecondary — gating', () => {
+  test('spends a charge and arms the cooldown', () => {
+    const ship = makeShip({ weapon: WeaponKind.SCATTERGUN, ammo: 5 })
+    const world = makeWorld({ ships: [ship] })
+    fireSecondary(world, ship)
+    expect(ship.ammo).toBe(4)
+    expect(ship.altCooldown).toBe(WEAPON_CONFIG[WeaponKind.SCATTERGUN].cooldown)
+  })
+
+  test('is a no-op with no charges, while cooling down, or while disabled', () => {
+    const dry = makeShip({ ammo: 0 })
+    const cooling = makeShip({ ammo: 5, altCooldown: 0.4 })
+    const emp = makeShip({ ammo: 5, disabled: 1 })
+    const world = makeWorld()
+    expect(fireSecondary(world, dry)).toEqual([])
+    expect(fireSecondary(world, cooling)).toEqual([])
+    expect(fireSecondary(world, emp)).toEqual([])
+    expect(world.bullets).toHaveLength(0)
+    expect(world.devices).toHaveLength(0)
+    expect(cooling.ammo).toBe(5) // untouched
+  })
+})
+
+describe('fireSecondary — bullet/beam weapons', () => {
+  test('Scattergun emits a cone of pellets', () => {
+    const ship = makeShip({ weapon: WeaponKind.SCATTERGUN })
+    const world = makeWorld({ ships: [ship] })
+    fireSecondary(world, ship)
+    expect(world.bullets).toHaveLength(SCATTERGUN_PELLETS)
+  })
+
+  test('Water Cannon emits a knockback droplet', () => {
+    const ship = makeShip({ weapon: WeaponKind.WATER_CANNON })
+    const world = makeWorld({ ships: [ship] })
+    fireSecondary(world, ship)
+    expect(world.bullets).toHaveLength(1)
+    expect(world.bullets[0].push ?? 0).toBeGreaterThan(0)
+  })
+
+  test('Rail Lance beams and damages a target in line', () => {
+    const ship = makeShip({ id: 0, weapon: WeaponKind.RAIL, x: 100, y: 100, angle: 0 })
+    const target = makeShip({ id: 1, kind: ShipKind.BOT, x: 400, y: 100, health: 100 })
+    const world = makeWorld({ ships: [ship, target] })
+    const hits = fireSecondary(world, ship)
+    expect(world.beams).toHaveLength(1)
+    expect(hits).toEqual([target])
+    expect(target.health).toBeLessThan(100)
+  })
+
+  test('Rail Lance misses cleanly when nothing is in line', () => {
+    const ship = makeShip({ id: 0, weapon: WeaponKind.RAIL, x: 100, y: 100, angle: 0 })
+    const target = makeShip({ id: 1, kind: ShipKind.BOT, x: 100, y: 600 }) // off-axis
+    const world = makeWorld({ ships: [ship, target] })
+    expect(fireSecondary(world, ship)).toEqual([])
+    expect(world.beams).toHaveLength(1)
+    expect(target.health).toBe(100)
+  })
+})
+
+describe('fireSecondary — device weapons', () => {
+  const fireWith = (weapon: WeaponKind) => {
+    const ship = makeShip({ weapon })
+    const world = makeWorld({ ships: [ship] })
+    fireSecondary(world, ship)
+    return world.devices
+  }
+
+  test('Seeker launches homing missiles', () => {
+    const devices = fireWith(WeaponKind.SEEKER)
+    expect(devices).toHaveLength(SEEKER_COUNT)
+    expect(devices.every((d) => d.kind === DeviceKind.MISSILE && d.turnRate > 0)).toBe(true)
+  })
+
+  test('EMP launches one non-homing disabling orb', () => {
+    const devices = fireWith(WeaponKind.EMP)
+    expect(devices).toHaveLength(1)
+    const orb = devices[0]
+    expect(orb.kind).toBe(DeviceKind.MISSILE)
+    if (orb.kind === DeviceKind.MISSILE) {
+      expect(orb.turnRate).toBe(0)
+      expect(orb.disableTime).toBeGreaterThan(0)
+    }
+  })
+
+  test('Mines / Infantry drop the configured counts; Grenade/Flak/Singularity drop one each', () => {
+    expect(fireWith(WeaponKind.MINES)).toHaveLength(MINE_COUNT)
+    expect(fireWith(WeaponKind.INFANTRY)).toHaveLength(INFANTRY_COUNT)
+    expect(fireWith(WeaponKind.GRENADE)[0].kind).toBe(DeviceKind.GRENADE)
+    expect(fireWith(WeaponKind.FLAK)[0].kind).toBe(DeviceKind.FLAK)
+    expect(fireWith(WeaponKind.SINGULARITY)[0].kind).toBe(DeviceKind.WELL)
+  })
+})

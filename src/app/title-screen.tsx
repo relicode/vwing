@@ -43,6 +43,7 @@ const TitleScreen = ({ onStart, ready }: TitleScreenProps) => (
       <ControlRow action="Rotate" keys="← → / A D" />
       <ControlRow action="Thrust" keys="↑ / W" />
       <ControlRow action="Fire" keys="Space / J" />
+      <ControlRow action="Secondary" keys="K / Shift" />
     </Box>
   </Overlay>
 )

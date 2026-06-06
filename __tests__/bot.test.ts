@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { createBotInput, decideBot } from '$/game/bot'
-import { AsteroidSize, BOT_ID, PLAYER_ID, ShipKind, WORLD_HEIGHT, WORLD_WIDTH } from '$/game/constants'
+import { AsteroidSize, BOT_ID, PLAYER_ID, ShipKind, WeaponKind, WORLD_HEIGHT, WORLD_WIDTH } from '$/game/constants'
 import type { Asteroid, Ship, World } from '$/game/types'
 
 const CENTER_X = WORLD_WIDTH / 2
@@ -21,6 +21,10 @@ const makeShip = (over: Partial<Ship>): Ship => ({
   invuln: 0,
   health: 100,
   shields: 50,
+  weapon: WeaponKind.SCATTERGUN,
+  ammo: 0,
+  altCooldown: 0,
+  disabled: 0,
   ...over,
 })
 
@@ -98,6 +102,28 @@ describe('decideBot', () => {
     expect(d.thrusting).toBe(false) // won't burn straight into it before turning
   })
 
+  test('alt-fires when lined up with a charge ready', () => {
+    const self = makeShip({ angle: 0, ammo: 3, altCooldown: 0 })
+    const target = makeTarget({ x: CENTER_X + 300, y: CENTER_Y })
+    const d = decideBot(self, target, [])
+    expect(d.firing).toBe(true)
+    expect(d.altFiring).toBe(true)
+  })
+
+  test('holds the secondary when out of charges or still cooling down', () => {
+    const target = makeTarget({ x: CENTER_X + 300, y: CENTER_Y })
+    expect(decideBot(makeShip({ angle: 0, ammo: 0, altCooldown: 0 }), target, []).altFiring).toBe(false)
+    expect(decideBot(makeShip({ angle: 0, ammo: 3, altCooldown: 0.5 }), target, []).altFiring).toBe(false)
+  })
+
+  test('looses a long-range secondary past primary-cannon range', () => {
+    const self = makeShip({ angle: 0, ammo: 3, altCooldown: 0 })
+    const target = makeTarget({ x: CENTER_X + 800, y: CENTER_Y }) // > BOT_FIRE_RANGE, < BOT_SECONDARY_RANGE
+    const d = decideBot(self, target, [])
+    expect(d.firing).toBe(false) // primary cannon can't reach
+    expect(d.altFiring).toBe(true) // but the rail/seeker can
+  })
+
   test('createBotInput memoizes one decision per world.time and recomputes on advance', () => {
     const self = makeShip({ id: BOT_ID, angle: 0, x: CENTER_X, y: CENTER_Y })
     const target = makeTarget({ x: CENTER_X + 300, y: CENTER_Y }) // lined up to the right
@@ -108,6 +134,9 @@ describe('decideBot', () => {
       bullets: [],
       asteroids: [],
       particles: [],
+      devices: [],
+      beams: [],
+      pools: [],
       rng: () => 0,
     }
     const input = createBotInput(self, () => world)

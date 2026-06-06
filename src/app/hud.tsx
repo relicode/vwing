@@ -2,7 +2,7 @@ import Box from '@mui/material/Box'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
 
-import { SHIP_START_LIVES } from '$/game/constants'
+import { SHIP_START_LIVES, WEAPON_CONFIG } from '$/game/constants'
 import type { EngineStatus } from '$/game/types'
 
 // Stable per-slot keys (lives only ever counts down from the max), so the life pips
@@ -73,6 +73,19 @@ const Hud = ({ status }: HudProps) => (
       </Stack>
       <Typography sx={{ fontSize: 11, letterSpacing: '0.25em', color: 'text.secondary', lineHeight: 1 }}>
         WAVE {status.wave}
+      </Typography>
+      <Typography
+        sx={{
+          fontSize: 13,
+          fontWeight: 700,
+          letterSpacing: '0.12em',
+          lineHeight: 1.2,
+          color: status.ammo > 0 ? 'primary.main' : 'text.secondary',
+          textShadow: status.ammo > 0 ? '0 0 8px currentColor' : 'none',
+        }}
+      >
+        {WEAPON_CONFIG[status.weapon].name.toUpperCase()}
+        {status.ammo > 0 ? ` ×${status.ammo}` : ''}
       </Typography>
     </Stack>
     <Stat label="BEST" value={status.best.toLocaleString()} align="right" />
