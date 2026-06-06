@@ -22,12 +22,25 @@ import {
   VIEW_HEIGHT,
   VIEW_WIDTH,
 } from '$/game/constants'
+import { updateBeams, updateDevices } from '$/game/devices'
 import { createInput, type Input } from '$/game/input'
 import { spawnExplosion, updateParticles } from '$/game/particles'
 import { createRenderer } from '$/game/renderer'
 import { createRng } from '$/game/rng'
-import { BOT_SPAWN_X, BOT_SPAWN_Y, createShip, respawnShip, respawnShipAt, shipHitWall, updateShip } from '$/game/ship'
+import {
+  BOT_SPAWN_X,
+  BOT_SPAWN_Y,
+  createShip,
+  PLAYER_SPAWN_X,
+  PLAYER_SPAWN_Y,
+  respawnShip,
+  respawnShipAt,
+  shipHitWall,
+  updateShip,
+} from '$/game/ship'
 import type { Asteroid, Bullet, EngineStatus, Ship, World } from '$/game/types'
+import { createInitialPools } from '$/game/water'
+import { fireSecondary } from '$/game/weapons'
 
 // Pairs a ship with whatever drives it — keyboard for the player, AI for the bot.
 type Combatant = { ship: Ship; input: Input }
@@ -60,8 +73,8 @@ const explosionCount = (size: AsteroidSize): number =>
 
 const createWorld = (seed: number): World => {
   const rng = createRng(seed)
-  const player = createShip(ShipKind.PLAYER)
-  const bot = createShip(ShipKind.BOT, BOT_SPAWN_X, BOT_SPAWN_Y, BOT_ID)
+  const player = createShip(ShipKind.PLAYER, PLAYER_SPAWN_X, PLAYER_SPAWN_Y, PLAYER_ID, rng)
+  const bot = createShip(ShipKind.BOT, BOT_SPAWN_X, BOT_SPAWN_Y, BOT_ID, rng)
   return {
     time: 0,
     wave: 1,
@@ -71,7 +84,7 @@ const createWorld = (seed: number): World => {
     particles: [],
     devices: [],
     beams: [],
-    pools: [],
+    pools: createInitialPools(rng),
     rng,
   }
 }
@@ -171,12 +184,18 @@ export const createEngine = async (): Promise<Engine> => {
         endGame()
         return
       }
-      respawnShip(ship)
+      respawnShip(ship, world.rng)
     } else {
       score += BOT_KILL_SCORE
-      respawnShipAt(ship, BOT_SPAWN_X, BOT_SPAWN_Y)
+      respawnShipAt(ship, BOT_SPAWN_X, BOT_SPAWN_Y, world.rng)
     }
     clearRocksAround(ship.x, ship.y)
+  }
+
+  // Devices/rail report ships they dealt lethal damage to; reap them (guarded so an
+  // already-respawned ship isn't destroyed twice in one frame).
+  const reap = (ship: Ship): void => {
+    if (isDead(ship)) destroyShip(ship)
   }
 
   // A shot striking an enemy ship: spark, deal damage, and destroy on hull depletion.
@@ -251,14 +270,20 @@ export const createEngine = async (): Promise<Engine> => {
 
   const stepPlaying = (dt: number): void => {
     world.time += dt
+    const env = { pools: world.pools }
     for (const { ship, input: control } of combatants) {
-      updateShip(ship, control, dt)
-      if (control.firing() && ship.fireCooldown <= 0) {
+      updateShip(ship, control, dt, env)
+      if (control.firing() && ship.fireCooldown <= 0 && ship.disabled <= 0) {
         spawnBullet(world.bullets, ship)
         ship.fireCooldown = SHIP_FIRE_INTERVAL
       }
+      if (control.altFiring()) for (const killed of fireSecondary(world, ship)) reap(killed)
+      if (gameOver()) return
     }
     world.bullets = updateBullets(world.bullets, dt)
+    for (const killed of updateDevices(world, dt)) reap(killed)
+    if (gameOver()) return
+    updateBeams(world, dt)
     updateAsteroids(world.asteroids, dt)
     world.particles = updateParticles(world.particles, dt)
 
@@ -273,10 +298,11 @@ export const createEngine = async (): Promise<Engine> => {
     if (phase === GamePhase.PLAYING) {
       stepPlaying(dt)
     } else {
-      // Title + game-over: keep the rocks drifting (and debris fading) as ambiance.
+      // Title + game-over: keep the rocks drifting (and debris/beams fading) as ambiance.
       world.time += dt
       updateAsteroids(world.asteroids, dt)
       world.particles = updateParticles(world.particles, dt)
+      updateBeams(world, dt)
     }
   }
 

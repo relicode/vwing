@@ -175,6 +175,7 @@ export const WATER_CANNON_SPEED = 520
 export const WATER_CANNON_LIFE = 0.5
 export const WATER_CANNON_SPREAD = 0.05 // rad jitter
 export const WATER_TRANSFER = 14 // px of pool level moved (muzzle pool → aim pool) per shot
+export const WATER_SPRAY_REACH = 220 // px ahead of the muzzle where the stream deposits water
 
 // Infantry Drop — units fall, attach to a surface, plink the nearest enemy.
 export const INFANTRY_COUNT = 3
