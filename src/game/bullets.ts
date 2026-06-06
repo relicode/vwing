@@ -1,4 +1,11 @@
-import { BULLET_LIFETIME, BULLET_RADIUS, BULLET_SPEED, WORLD_HEIGHT, WORLD_WIDTH } from '$/game/constants'
+import {
+  BULLET_LIFETIME,
+  BULLET_RADIUS,
+  BULLET_SPEED,
+  WALL_THICKNESS,
+  WORLD_HEIGHT,
+  WORLD_WIDTH,
+} from '$/game/constants'
 import type { Bullet, Ship } from '$/game/types'
 
 // Shots inherit the ship's velocity plus muzzle speed along the nose (XPilot-style),
@@ -22,8 +29,13 @@ export const updateBullets = (bullets: Bullet[], dt: number): Bullet[] => {
     bullet.y += bullet.vy * dt
     bullet.life -= dt
   }
-  // Expire on timeout or when they leave the world (hit a wall).
+  // Expire on timeout or when they reach the wall band (shots don't pass through the lethal border).
   return bullets.filter(
-    (bullet) => bullet.life > 0 && bullet.x > 0 && bullet.x < WORLD_WIDTH && bullet.y > 0 && bullet.y < WORLD_HEIGHT
+    (bullet) =>
+      bullet.life > 0 &&
+      bullet.x > WALL_THICKNESS &&
+      bullet.x < WORLD_WIDTH - WALL_THICKNESS &&
+      bullet.y > WALL_THICKNESS &&
+      bullet.y < WORLD_HEIGHT - WALL_THICKNESS
   )
 }
