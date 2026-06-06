@@ -9,7 +9,7 @@ import {
 import type { Bullet, Ship } from '$/game/types'
 
 // Shots inherit the ship's velocity plus muzzle speed along the nose (XPilot-style),
-// and fly straight — no gravity.
+// and fly straight — no gravity. Tagged with the firer's id so they skip that ship.
 export const spawnBullet = (bullets: Bullet[], ship: Ship): void => {
   const dirX = Math.cos(ship.angle)
   const dirY = Math.sin(ship.angle)
@@ -20,6 +20,7 @@ export const spawnBullet = (bullets: Bullet[], ship: Ship): void => {
     vy: ship.vy + dirY * BULLET_SPEED,
     radius: BULLET_RADIUS,
     life: BULLET_LIFETIME,
+    owner: ship.id,
   })
 }
 

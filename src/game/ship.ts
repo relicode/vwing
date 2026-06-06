@@ -1,10 +1,15 @@
 import {
   GRAVITY,
+  PLAYER_ID,
   SHIP_DRAG,
+  SHIP_MAX_HEALTH,
+  SHIP_MAX_SHIELDS,
   SHIP_RADIUS,
   SHIP_RESPAWN_INVULN,
+  SHIP_SHIELD_REGEN,
   SHIP_THRUST,
   SHIP_TURN_RATE,
+  ShipKind,
   WALL_THICKNESS,
   WORLD_HEIGHT,
   WORLD_WIDTH,
@@ -12,13 +17,22 @@ import {
 import type { Input } from '$/game/input'
 import type { Ship } from '$/game/types'
 
-const SPAWN_X = WORLD_WIDTH / 2
-const SPAWN_Y = WORLD_HEIGHT * 0.4
+export const PLAYER_SPAWN_X = WORLD_WIDTH / 2
+export const PLAYER_SPAWN_Y = WORLD_HEIGHT * 0.4
+export const BOT_SPAWN_X = WORLD_WIDTH * 0.62 // off to the player's right, just in view
+export const BOT_SPAWN_Y = WORLD_HEIGHT * 0.4
 const FACING_UP = -Math.PI / 2
 
-export const createShip = (): Ship => ({
-  x: SPAWN_X,
-  y: SPAWN_Y,
+export const createShip = (
+  kind: ShipKind = ShipKind.PLAYER,
+  x: number = PLAYER_SPAWN_X,
+  y: number = PLAYER_SPAWN_Y,
+  id: number = PLAYER_ID
+): Ship => ({
+  id,
+  kind,
+  x,
+  y,
   vx: 0,
   vy: 0,
   angle: FACING_UP,
@@ -26,18 +40,25 @@ export const createShip = (): Ship => ({
   thrusting: false,
   fireCooldown: 0,
   invuln: SHIP_RESPAWN_INVULN,
+  health: SHIP_MAX_HEALTH,
+  shields: SHIP_MAX_SHIELDS,
 })
 
-export const respawnShip = (ship: Ship): void => {
-  ship.x = SPAWN_X
-  ship.y = SPAWN_Y
+// Reset a ship in place at a spawn point: full hull/shields, stopped, facing up, invulnerable.
+export const respawnShipAt = (ship: Ship, x: number, y: number): void => {
+  ship.x = x
+  ship.y = y
   ship.vx = 0
   ship.vy = 0
   ship.angle = FACING_UP
   ship.thrusting = false
   ship.fireCooldown = 0
   ship.invuln = SHIP_RESPAWN_INVULN
+  ship.health = SHIP_MAX_HEALTH
+  ship.shields = SHIP_MAX_SHIELDS
 }
+
+export const respawnShip = (ship: Ship): void => respawnShipAt(ship, PLAYER_SPAWN_X, PLAYER_SPAWN_Y)
 
 // Newtonian integration: turn, optional thrust along the nose, global gravity,
 // gentle drag, then advance. Position is unbounded here — wall death is the engine's call.
@@ -56,6 +77,7 @@ export const updateShip = (ship: Ship, input: Input, dt: number): void => {
   ship.y += ship.vy * dt
   if (ship.fireCooldown > 0) ship.fireCooldown -= dt
   if (ship.invuln > 0) ship.invuln -= dt
+  if (ship.shields < SHIP_MAX_SHIELDS) ship.shields = Math.min(SHIP_MAX_SHIELDS, ship.shields + SHIP_SHIELD_REGEN * dt)
 }
 
 export const shipHitWall = (ship: Ship): boolean => {
