@@ -4,7 +4,7 @@ import { createWave, splitAsteroid, updateAsteroids } from '$/game/asteroids'
 import { createBotInput } from '$/game/bot'
 import { spawnBullet, updateBullets } from '$/game/bullets'
 import { circlesOverlap } from '$/game/collision'
-import { applyDamage, isDead } from '$/game/combat'
+import { applyDamage, applyKnockback, isDead } from '$/game/combat'
 import {
   ASTEROID_BASE_COUNT,
   ASTEROID_CONFIG,
@@ -12,7 +12,6 @@ import {
   AsteroidSize,
   BOT_ID,
   BOT_KILL_SCORE,
-  BULLET_DAMAGE,
   Color,
   GamePhase,
   PLAYER_ID,
@@ -186,8 +185,9 @@ export const createEngine = async (): Promise<Engine> => {
     for (const { ship } of combatants) {
       if (ship.id === bullet.owner || ship.invuln > 0) continue
       if (!circlesOverlap(bullet.x, bullet.y, bullet.radius, ship.x, ship.y, ship.radius)) continue
-      applyDamage(ship, BULLET_DAMAGE)
-      spawnExplosion(world.particles, bullet.x, bullet.y, Color.SPARK, world.rng, 5)
+      applyDamage(ship, bullet.damage)
+      if (bullet.push) applyKnockback(ship, bullet.vx, bullet.vy, bullet.push)
+      spawnExplosion(world.particles, bullet.x, bullet.y, bullet.color ?? Color.SPARK, world.rng, 5)
       if (isDead(ship)) destroyShip(ship)
       return true
     }

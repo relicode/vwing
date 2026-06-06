@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { applyDamage, isDead } from '$/game/combat'
+import { applyDamage, applyDisable, applyKnockback, isDead } from '$/game/combat'
 import { ShipKind, WeaponKind } from '$/game/constants'
 import type { Ship } from '$/game/types'
 
@@ -52,5 +52,23 @@ describe('combat damage', () => {
     applyDamage(ship, 22)
     expect(ship.health).toBeLessThanOrEqual(0)
     expect(isDead(ship)).toBe(true)
+  })
+})
+
+describe('knockback + disable', () => {
+  test('applyKnockback shoves the ship along a normalized direction', () => {
+    const ship = makeShip({ vx: 0, vy: 0 })
+    applyKnockback(ship, 10, 0, 50) // direction +x (magnitude normalized away)
+    expect(ship.vx).toBeCloseTo(50)
+    expect(ship.vy).toBeCloseTo(0)
+  })
+
+  test('applyDisable keeps the longer lockout and drains shields once', () => {
+    const ship = makeShip({ disabled: 0, shields: 50 })
+    applyDisable(ship, 2, 40)
+    expect(ship.disabled).toBe(2)
+    expect(ship.shields).toBe(10)
+    applyDisable(ship, 1) // shorter lockout never shortens the active one
+    expect(ship.disabled).toBe(2)
   })
 })

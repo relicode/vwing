@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 
-import { spawnBullet, updateBullets } from '$/game/bullets'
+import { pushBullet, spawnBullet, spawnBurst, updateBullets } from '$/game/bullets'
 import { BULLET_SPEED, ShipKind, WALL_THICKNESS, WeaponKind, WORLD_WIDTH } from '$/game/constants'
+import { createRng } from '$/game/rng'
 import type { Bullet, Ship } from '$/game/types'
 
 const makeShip = (over: Partial<Ship>): Ship => ({
@@ -38,6 +39,32 @@ describe('bullets', () => {
     const bullets: Bullet[] = []
     spawnBullet(bullets, makeShip({ id: 7 }))
     expect(bullets[0].owner).toBe(7)
+  })
+
+  test('pushBullet drops one projectile carrying the given payload', () => {
+    const bullets: Bullet[] = []
+    pushBullet(bullets, 1, 2, 3, 4, { owner: 5, damage: 9, life: 1, push: 7, color: 0xabc })
+    expect(bullets[0]).toMatchObject({ x: 1, y: 2, vx: 3, vy: 4, owner: 5, damage: 9, life: 1, push: 7, color: 0xabc })
+  })
+
+  test('spawnBurst fires the configured count with per-weapon damage/push/color', () => {
+    const bullets: Bullet[] = []
+    spawnBurst(bullets, makeShip({ id: 3, angle: 0 }), createRng(1), {
+      count: 7,
+      spread: 0.3,
+      speed: 500,
+      life: 0.4,
+      damage: 12,
+      push: 80,
+      color: 0x1234,
+    })
+    expect(bullets).toHaveLength(7)
+    for (const b of bullets) {
+      expect(b.owner).toBe(3)
+      expect(b.damage).toBe(12)
+      expect(b.push).toBe(80)
+      expect(b.color).toBe(0x1234)
+    }
   })
 
   test('updateBullets culls expired shots', () => {
