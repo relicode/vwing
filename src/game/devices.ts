@@ -18,6 +18,8 @@ import {
   INFANTRY_RANGE,
   INFANTRY_SHOT_DAMAGE,
   INFANTRY_SHOT_SPEED,
+  INFANTRY_SINK_SPEED,
+  INFANTRY_SINK_TIME,
   INFANTRY_SWIM_DRAG,
   INFANTRY_SWIM_TIME,
   WALL_THICKNESS,
@@ -51,6 +53,7 @@ const nearestEnemyOf = (ownerId: number, x: number, y: number, ships: Ship[]): S
 
 // Damage every enemy ship within `radius`, collecting any that die. `exclude` skips
 // a ship already damaged directly (so a missile's splash never double-hits its target).
+// Enemy infantry caught in the radius are splattered (added to `deadDevices`).
 const areaDamage = (
   world: World,
   x: number,
@@ -59,6 +62,7 @@ const areaDamage = (
   damage: number,
   ownerId: number,
   dead: Set<Ship>,
+  deadDevices: Set<Device>,
   exclude?: Ship
 ): void => {
   for (const ship of world.ships) {
@@ -66,6 +70,12 @@ const areaDamage = (
     if (Math.hypot(ship.x - x, ship.y - y) > radius) continue
     applyDamage(ship, damage)
     if (isDead(ship)) dead.add(ship)
+  }
+  for (const device of world.devices) {
+    if (device.kind !== DeviceKind.INFANTRY || device.owner === ownerId || deadDevices.has(device)) continue
+    if (Math.hypot(device.x - x, device.y - y) > radius) continue
+    spawnExplosion(world.particles, device.x, device.y, Color.BLOOD, world.rng, 6)
+    deadDevices.add(device)
   }
 }
 
@@ -93,7 +103,7 @@ const spawnShards = (
 
 // Advance one device. Mutates the device and the world (spawns shards/shots/blasts),
 // adds any killed ships to `dead`, and returns whether the device survives the frame.
-const stepDevice = (world: World, device: Device, dt: number, dead: Set<Ship>): boolean => {
+const stepDevice = (world: World, device: Device, dt: number, dead: Set<Ship>, deadDevices: Set<Device>): boolean => {
   switch (device.kind) {
     case DeviceKind.MISSILE: {
       if (device.turnRate > 0) {
@@ -117,7 +127,17 @@ const stepDevice = (world: World, device: Device, dt: number, dead: Set<Ship>): 
           applyDamage(ship, device.damage)
           if (isDead(ship)) dead.add(ship)
           if (device.blastRadius > 0) {
-            areaDamage(world, device.x, device.y, device.blastRadius, device.blastDamage, device.owner, dead, ship)
+            areaDamage(
+              world,
+              device.x,
+              device.y,
+              device.blastRadius,
+              device.blastDamage,
+              device.owner,
+              dead,
+              deadDevices,
+              ship
+            )
           }
         }
         if (device.disableTime > 0) applyDisable(ship, device.disableTime, device.shieldDrain)
@@ -135,7 +155,7 @@ const stepDevice = (world: World, device: Device, dt: number, dead: Set<Ship>): 
         for (const ship of world.ships) {
           if (ship.id === device.owner || ship.invuln > 0) continue
           if (Math.hypot(ship.x - device.x, ship.y - device.y) > device.triggerRadius) continue
-          areaDamage(world, device.x, device.y, device.blastRadius, device.damage, device.owner, dead)
+          areaDamage(world, device.x, device.y, device.blastRadius, device.damage, device.owner, dead, deadDevices)
           spawnExplosion(world.particles, device.x, device.y, Color.MINE_ARMED, world.rng, 22)
           return false
         }
@@ -145,7 +165,13 @@ const stepDevice = (world: World, device: Device, dt: number, dead: Set<Ship>): 
 
     case DeviceKind.INFANTRY: {
       device.life -= dt
-      // Swimming: bob at the surface, drift to a stop, hold fire — drown when the timer runs out.
+      // Drowned corpse: sink and fade for a moment, then vanish (no explosion).
+      if (device.sinking > 0) {
+        device.sinking -= dt
+        device.y += INFANTRY_SINK_SPEED * dt
+        return device.sinking > 0
+      }
+      // Swimming: bob at the surface, drift to a stop, hold fire — begin sinking on drown.
       if (device.swim > 0) {
         device.swim -= dt
         const surface = waterSurfaceAt(world.water, device.x)
@@ -154,8 +180,8 @@ const stepDevice = (world: World, device: Device, dt: number, dead: Set<Ship>): 
         device.x += device.vx * dt
         device.vx *= Math.exp(-INFANTRY_SWIM_DRAG * dt)
         if (device.swim <= 0) {
-          spawnExplosion(world.particles, device.x, device.y, Color.WATER_EDGE, world.rng, 8)
-          return false
+          device.sinking = INFANTRY_SINK_TIME
+          return true
         }
         return device.life > 0
       }
@@ -169,7 +195,7 @@ const stepDevice = (world: World, device: Device, dt: number, dead: Set<Ship>): 
           if (!c) continue
           const impact = -(device.vx * c.nx + device.vy * c.ny)
           if (impact > INFANTRY_FALL_LETHAL) {
-            spawnExplosion(world.particles, device.x, device.y, Color.INFANTRY, world.rng, 6)
+            spawnExplosion(world.particles, device.x, device.y, Color.BLOOD, world.rng, 6)
             return false
           }
           device.x += c.nx * c.depth
@@ -278,10 +304,11 @@ const stepDevice = (world: World, device: Device, dt: number, dead: Set<Ship>): 
 // the engine can run its destroy/respawn bookkeeping.
 export const updateDevices = (world: World, dt: number): Ship[] => {
   const dead = new Set<Ship>()
+  const deadDevices = new Set<Device>() // infantry splattered by a blast mid-iteration
   const survivors: Device[] = []
   for (const device of world.devices) {
-    if (stepDevice(world, device, dt, dead)) survivors.push(device)
+    if (stepDevice(world, device, dt, dead, deadDevices)) survivors.push(device)
   }
-  world.devices = survivors
+  world.devices = deadDevices.size > 0 ? survivors.filter((device) => !deadDevices.has(device)) : survivors
   return [...dead]
 }

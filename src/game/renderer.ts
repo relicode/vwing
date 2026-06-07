@@ -103,7 +103,7 @@ const drawDevice = (g: Graphics, d: Device): void => {
     case DeviceKind.INFANTRY:
       g.rect(d.x - d.radius * 0.5, d.y - d.radius, d.radius, d.radius * 1.6).fill({
         color: Color.INFANTRY,
-        alpha: d.swim > 0 ? 0.5 : 1, // dimmed while swimming
+        alpha: d.sinking > 0 ? 0.3 : d.swim > 0 ? 0.5 : 1, // fading as it sinks, dim while swimming
       })
       break
     case DeviceKind.GRENADE:

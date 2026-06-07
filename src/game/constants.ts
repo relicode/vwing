@@ -82,6 +82,7 @@ export const Color = {
   INFANTRY: 0xcfe8a0,
   GRENADE: 0x9fd36b,
   FLAK: 0xd8b46a,
+  BLOOD: 0xff3b3b, // infantry death (shot / splatted / blasted)
   WELL: 0xb388ff,
   RAIL: 0xff5ad1,
   EMP: 0x7af7ff,
@@ -199,6 +200,8 @@ export const INFANTRY_SWIM_TIME = 6 // s a unit floats (can't shoot) in water be
 export const INFANTRY_SWIM_DRAG = 1.6 // horizontal damping coefficient while swimming
 export const INFANTRY_PICKUP_RADIUS = 30 // px: the owner this close can scoop a unit up
 export const INFANTRY_PICKUP_SPEED = 90 // px/s: the owner must be slower than this to pick up
+export const INFANTRY_SINK_TIME = 1.5 // s a drowned unit sinks and fades before vanishing
+export const INFANTRY_SINK_SPEED = 36 // px/s it descends while sinking
 
 // Seeker Missiles — limited-turn homing, area blast on contact.
 export const SEEKER_COUNT = 3
