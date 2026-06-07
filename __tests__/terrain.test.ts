@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { circleRectContact, closestPointOnRect } from '$/game/collision'
+import { circleRectContact, closestPointOnRect, segmentIntersectsRect } from '$/game/collision'
 import { CRASH_SPEED, GRAVITY, LAND_SPEED, ShipKind, SurfaceMaterial, WeaponKind } from '$/game/constants'
 import { resolveShipTerrain } from '$/game/terrain'
 import type { Block, Ship } from '$/game/types'
@@ -54,6 +54,25 @@ describe('circleRectContact', () => {
     const c = circleRectContact(20, 110, 12, 0, 100, 200, 100) // nearest edge is the top
     expect(c?.ny).toBeCloseTo(-1)
     expect(c?.depth).toBeCloseTo(12 + 10)
+  })
+})
+
+describe('segmentIntersectsRect', () => {
+  // rect spans x 0..200, y 100..200
+  test('true when the segment crosses the rect', () => {
+    expect(segmentIntersectsRect(-50, 150, 250, 150, 0, 100, 200, 100)).toBe(true)
+  })
+
+  test('false when the segment passes clear of the rect', () => {
+    expect(segmentIntersectsRect(-50, 50, 250, 50, 0, 100, 200, 100)).toBe(false) // runs above it
+  })
+
+  test('true when an endpoint sits inside the rect', () => {
+    expect(segmentIntersectsRect(100, 150, 400, 150, 0, 100, 200, 100)).toBe(true)
+  })
+
+  test('false when the segment stops short of the rect', () => {
+    expect(segmentIntersectsRect(-100, 150, -50, 150, 0, 100, 200, 100)).toBe(false)
   })
 })
 

@@ -178,6 +178,14 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     expect(world.bullets.length).toBeGreaterThan(0)
   })
 
+  test('a landed unit holds fire when terrain blocks line of sight', () => {
+    const enemy = makeShip({ id: 1, kind: ShipKind.BOT, x: 300, y: 100 })
+    const world = makeWorld([enemy], [infantry({ x: 100, y: 100, attached: true })])
+    world.blocks = [{ x: 180, y: 60, w: 40, h: 80, material: SurfaceMaterial.BEDROCK }] // wall between them
+    updateDevices(world, 0.016)
+    expect(world.bullets.length).toBe(0)
+  })
+
   test('lands in water and swims instead of attaching, holding fire', () => {
     const enemy = makeShip({ id: 1, kind: ShipKind.BOT, x: 100, y: 60 }) // in range, but it must not shoot
     const world = makeWorld([enemy], [infantry({ y: 194 })])

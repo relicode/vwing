@@ -50,3 +50,35 @@ export const circleRectContact = (
   }
   return top < bottom ? { nx: 0, ny: -1, depth: cr + top } : { nx: 0, ny: 1, depth: cr + bottom }
 }
+
+// Does the segment (x1,y1)→(x2,y2) cross the axis-aligned rect? Liang–Barsky clipping:
+// keep narrowing the [t0,t1] slice of the segment that stays inside every slab; if it
+// ever empties, the segment misses. Used for line-of-sight tests against terrain.
+export const segmentIntersectsRect = (
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  rx: number,
+  ry: number,
+  rw: number,
+  rh: number
+): boolean => {
+  const dx = x2 - x1
+  const dy = y2 - y1
+  let t0 = 0
+  let t1 = 1
+  const accept = (p: number, q: number): boolean => {
+    if (p === 0) return q >= 0 // parallel to this edge: inside only if not on the outer side
+    const r = q / p
+    if (p < 0) {
+      if (r > t1) return false
+      if (r > t0) t0 = r
+    } else {
+      if (r < t0) return false
+      if (r < t1) t1 = r
+    }
+    return true
+  }
+  return accept(-dx, x1 - rx) && accept(dx, rx + rw - x1) && accept(-dy, y1 - ry) && accept(dy, ry + rh - y1)
+}
