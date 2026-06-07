@@ -88,8 +88,8 @@ export const Color = {
   EMP: 0x7af7ff,
   SHRAPNEL: 0xffc97a,
   // Terrain surfaces (fill + brighter edge).
-  BEDROCK: 0x2a3350,
-  BEDROCK_EDGE: 0x55659c,
+  BEDROCK: 0x767c88, // metallic gray — kept clearly distinct from the blue water
+  BEDROCK_EDGE: 0xb4bcc9,
   ROCK: 0x5b4636,
   ROCK_EDGE: 0x9a7a59,
   GRASS: 0x3f7d3a,
