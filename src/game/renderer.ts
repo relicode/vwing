@@ -65,11 +65,49 @@ const BLOCK_STYLE: Record<SurfaceMaterial, { fill: number; edge: number }> = {
   [SurfaceMaterial.ICE]: { fill: Color.ICE, edge: Color.ICE_EDGE },
 }
 
-// Static terrain: a filled rect per block with a brighter material edge.
+// Per-material flourishes (drawn once into the cached terrain layer, deterministic from
+// block coords): grass blades, ice shine streaks, bedrock rivets, rock cracks.
+const drawBlockDetail = (g: Graphics, b: Block): void => {
+  switch (b.material) {
+    case SurfaceMaterial.GRASS:
+      for (let x = b.x + 5; x < b.x + b.w - 3; x += 13) {
+        g.moveTo(x, b.y)
+          .lineTo(x + 2, b.y - 4)
+          .stroke({ width: 1.5, color: Color.GRASS_EDGE, alpha: 0.85 })
+      }
+      break
+    case SurfaceMaterial.ICE:
+      for (let i = 0; i < 2; i += 1) {
+        const ox = b.x + b.w * (0.25 + i * 0.4)
+        g.moveTo(ox, b.y + 3)
+          .lineTo(ox + b.h * 0.5, b.y + b.h * 0.5)
+          .stroke({ width: 2, color: Color.ICE_EDGE, alpha: 0.4 })
+      }
+      break
+    case SurfaceMaterial.BEDROCK:
+      for (let x = b.x + 12; x < b.x + b.w - 6; x += 24) {
+        for (let y = b.y + 12; y < b.y + b.h - 6; y += 24) {
+          g.circle(x, y, 1.2).fill({ color: Color.BEDROCK_EDGE, alpha: 0.5 })
+        }
+      }
+      break
+    case SurfaceMaterial.ROCK: {
+      const cx = b.x + b.w * 0.5
+      g.moveTo(cx, b.y + 4)
+        .lineTo(cx - b.w * 0.12, b.y + b.h * 0.4)
+        .lineTo(cx + b.w * 0.08, b.y + b.h * 0.7)
+        .stroke({ width: 1, color: Color.ROCK_EDGE, alpha: 0.35 })
+      break
+    }
+  }
+}
+
+// Static terrain: a filled rect per block with a brighter material edge + detail.
 const drawBlocks = (g: Graphics, blocks: Block[]): void => {
   for (const b of blocks) {
     const style = BLOCK_STYLE[b.material]
     g.rect(b.x, b.y, b.w, b.h).fill({ color: style.fill }).stroke({ width: 2, color: style.edge, alpha: 0.8 })
+    drawBlockDetail(g, b)
   }
 }
 
