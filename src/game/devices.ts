@@ -1,5 +1,5 @@
 import { pushBullet } from '$/game/bullets'
-import { circleRectContact, circlesOverlap } from '$/game/collision'
+import { circleRectContact, circlesOverlap, segmentIntersectsRect } from '$/game/collision'
 import { applyDamage, applyDisable, isDead } from '$/game/combat'
 import {
   Color,
@@ -31,8 +31,12 @@ import {
 import { TWO_PI, wrapAngle } from '$/game/math'
 import { spawnExplosion } from '$/game/particles'
 import { randRange } from '$/game/rng'
-import type { Device, Ship, World } from '$/game/types'
+import type { Block, Device, Ship, World } from '$/game/types'
 import { waterSurfaceAt } from '$/game/water'
+
+// True when no terrain block sits on the straight line between two points (infantry LOS).
+const hasLineOfSight = (x1: number, y1: number, x2: number, y2: number, blocks: Block[]): boolean =>
+  !blocks.some((b) => segmentIntersectsRect(x1, y1, x2, y2, b.x, b.y, b.w, b.h))
 
 const inBounds = (x: number, y: number): boolean =>
   x > WALL_THICKNESS && x < WORLD_WIDTH - WALL_THICKNESS && y > WALL_THICKNESS && y < WORLD_HEIGHT - WALL_THICKNESS
@@ -217,7 +221,11 @@ const stepDevice = (world: World, device: Device, dt: number, dead: Set<Ship>, d
       device.fireCooldown -= dt
       if (device.fireCooldown <= 0) {
         const target = nearestEnemyOf(device.owner, device.x, device.y, world.ships)
-        if (target && Math.hypot(target.x - device.x, target.y - device.y) <= INFANTRY_RANGE) {
+        if (
+          target &&
+          Math.hypot(target.x - device.x, target.y - device.y) <= INFANTRY_RANGE &&
+          hasLineOfSight(device.x, device.y, target.x, target.y, world.blocks)
+        ) {
           const angle = Math.atan2(target.y - device.y, target.x - device.x)
           pushBullet(
             world.bullets,
