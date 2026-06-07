@@ -24,6 +24,8 @@ import {
   SHIP_START_LIVES,
   ShipKind,
   SMOKE_LIFE,
+  SPLASH_MIN_SPEED,
+  SPLASH_PARTICLES,
   SurfaceMaterial,
   THRUST_PARTICLE_LIFE,
   THRUST_PARTICLE_SPEED,
@@ -49,6 +51,7 @@ import {
 import { resolveShipTerrain } from '$/game/terrain'
 import { createTerrain } from '$/game/terrain-map'
 import type { Bullet, EngineStatus, Ship, World } from '$/game/types'
+import { submersion, waterSurfaceAt } from '$/game/water'
 import { fireSecondary } from '$/game/weapons'
 
 // Pairs a ship with whatever drives it — keyboard for the player, AI for the bot.
@@ -129,6 +132,7 @@ export const createEngine = async (): Promise<Engine> => {
     )
 
   let combatants = buildCombatants(world)
+  const submergedShips = new Set<number>() // ship ids currently underwater, for splash-on-crossing
 
   const listeners = new Set<() => void>()
   // The HUD reflects the local player (ships[0] by construction).
@@ -314,6 +318,16 @@ export const createEngine = async (): Promise<Engine> => {
       }
       if (ship.health < SHIP_SMOKE_HEALTH && ship.invuln <= 0) {
         spawnPuff(world.particles, ship.x, ship.y, 0, -30, Color.SMOKE, world.rng, SMOKE_LIFE)
+      }
+      // Splash when a ship crosses the water surface fast (entering or leaving).
+      const surface = waterSurfaceAt(world.water, ship.x)
+      if (surface !== undefined) {
+        const wet = submersion(ship, world.water) > 0
+        if (wet !== submergedShips.has(ship.id) && Math.abs(ship.vy) > SPLASH_MIN_SPEED) {
+          spawnExplosion(world.particles, ship.x, surface, Color.WATER_EDGE, world.rng, SPLASH_PARTICLES)
+        }
+        if (wet) submergedShips.add(ship.id)
+        else submergedShips.delete(ship.id)
       }
       if (control.firing() && ship.fireCooldown <= 0 && ship.disabled <= 0) {
         spawnBullet(world.bullets, ship)
