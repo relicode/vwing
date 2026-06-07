@@ -40,7 +40,13 @@ const TitleScreen = ({ onStart, ready, weapon, onWeaponChange }: TitleScreenProp
     >
       V-WING
     </Typography>
-    <Typography sx={{ color: 'text.secondary', mt: -1 }}>Fight the gravity. Land soft. Dodge the cliffs.</Typography>
+    <Typography sx={{ color: 'text.secondary', mt: -1, lineHeight: 1.7 }}>
+      Fight the gravity.
+      <br />
+      Land soft.
+      <br />
+      Dodge the cliffs.
+    </Typography>
     <Button variant="contained" size="large" onClick={onStart} disabled={!ready} autoFocus sx={{ px: 5, mt: 1 }}>
       {ready ? 'Launch' : 'Loading…'}
     </Button>
