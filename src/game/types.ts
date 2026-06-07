@@ -1,4 +1,4 @@
-import type { AsteroidSize, DeviceKind, GamePhase, ShipKind, SurfaceMaterial, WeaponKind } from '$/game/constants'
+import type { DeviceKind, GamePhase, ShipKind, SurfaceMaterial, WeaponKind } from '$/game/constants'
 
 export type Vec2 = { x: number; y: number }
 
@@ -37,18 +37,6 @@ export type Bullet = {
   damage: number // hp removed on a ship hit (primary = BULLET_DAMAGE)
   push?: number // knockback impulse applied to a hit ship (water cannon)
   color?: number // render tint override (undefined = owner-based default)
-}
-
-export type Asteroid = {
-  x: number
-  y: number
-  vx: number
-  vy: number
-  radius: number
-  size: AsteroidSize
-  angle: number // current visual rotation
-  spin: number // rad/s
-  verts: number[] // per-vertex radius multipliers for the rough outline
 }
 
 export type Particle = {
@@ -148,14 +136,6 @@ export type Beam = {
   color: number
 }
 
-// A floor-resting body of water. Surface y = WORLD_HEIGHT - WALL_THICKNESS - level.
-export type WaterPool = {
-  x: number // left edge of the span
-  width: number
-  level: number // current fill height above the floor
-  capacity: number // max fill height
-}
-
 // A static, landable terrain structure: an axis-aligned rectangle (top-left + size)
 // tagged with a surface material that drives destructibility and landing friction.
 export type Block = {
@@ -179,14 +159,13 @@ export type WaterBody = {
 // `ships` holds every combatant; ships[0] / kind PLAYER is the camera-followed human.
 export type World = {
   time: number // s elapsed in the current run
-  wave: number
   ships: Ship[]
   bullets: Bullet[]
-  asteroids: Asteroid[]
   particles: Particle[]
   devices: Device[]
   beams: Beam[]
-  pools: WaterPool[]
+  blocks: Block[] // static, landable terrain
+  water: WaterBody[] // bodies the ship can submerge into
   rng: Rng
 }
 
@@ -196,7 +175,6 @@ export type EngineStatus = {
   score: number
   best: number
   lives: number
-  wave: number
   weapon: WeaponKind // the PLAYER ship's current secondary
   ammo: number // the PLAYER ship's remaining secondary charges
 }

@@ -10,7 +10,7 @@ export const updateBeams = (world: World, dt: number): void => {
 
 // Rail Lance hitscan: damage the nearest enemy ship lying along the ship's nose,
 // draw the transient beam to that ship (or to max range), and return the struck
-// ship so the caller can reap it if the hull is gone. Asteroids don't block it.
+// ship so the caller can reap it if the hull is gone. Terrain does not block it.
 export const fireRail = (world: World, ship: Ship): Ship | undefined => {
   const dirX = Math.cos(ship.angle)
   const dirY = Math.sin(ship.angle)

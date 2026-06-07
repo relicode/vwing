@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 
 import { createBotInput, decideBot } from '$/game/bot'
-import { AsteroidSize, BOT_ID, PLAYER_ID, ShipKind, WeaponKind, WORLD_HEIGHT, WORLD_WIDTH } from '$/game/constants'
-import type { Asteroid, Ship, World } from '$/game/types'
+import { BOT_ID, PLAYER_ID, ShipKind, SurfaceMaterial, WeaponKind, WORLD_HEIGHT, WORLD_WIDTH } from '$/game/constants'
+import type { Block, Ship, World } from '$/game/types'
 
 const CENTER_X = WORLD_WIDTH / 2
 const CENTER_Y = WORLD_HEIGHT / 2
@@ -30,16 +30,12 @@ const makeShip = (over: Partial<Ship>): Ship => ({
 
 const makeTarget = (over: Partial<Ship>): Ship => makeShip({ id: PLAYER_ID, kind: ShipKind.PLAYER, ...over })
 
-const makeAsteroid = (x: number, y: number, radius: number): Asteroid => ({
+const makeBlock = (x: number, y: number, w: number, h: number): Block => ({
   x,
   y,
-  vx: 0,
-  vy: 0,
-  radius,
-  size: AsteroidSize.LARGE,
-  angle: 0,
-  spin: 0,
-  verts: [1, 1, 1],
+  w,
+  h,
+  material: SurfaceMaterial.ROCK,
 })
 
 describe('decideBot', () => {
@@ -92,13 +88,13 @@ describe('decideBot', () => {
     expect(d.firing).toBe(false)
   })
 
-  test('breaks off from a close asteroid even with the target lined up', () => {
-    const self = makeShip({ angle: 0 }) // facing the rock and the target
+  test('breaks off from a close terrain block even with the target lined up', () => {
+    const self = makeShip({ angle: 0 }) // facing the block and the target
     const target = makeTarget({ x: CENTER_X + 600, y: CENTER_Y }) // dead ahead, in range
-    const rock = makeAsteroid(CENTER_X + 30, CENTER_Y, 20) // right on top of the bot
-    const d = decideBot(self, target, [rock])
+    const block = makeBlock(CENTER_X + 8, CENTER_Y - 40, 80, 80) // right on top of the bot
+    const d = decideBot(self, target, [block])
     expect(d.firing).toBe(false) // dodging overrides the shot
-    expect(d.turn).not.toBe(0) // turns away from the rock
+    expect(d.turn).not.toBe(0) // turns away from the block
     expect(d.thrusting).toBe(false) // won't burn straight into it before turning
   })
 
@@ -129,14 +125,13 @@ describe('decideBot', () => {
     const target = makeTarget({ x: CENTER_X + 300, y: CENTER_Y }) // lined up to the right
     const world: World = {
       time: 1,
-      wave: 1,
       ships: [target, self],
       bullets: [],
-      asteroids: [],
       particles: [],
       devices: [],
       beams: [],
-      pools: [],
+      blocks: [],
+      water: [],
       rng: () => 0,
     }
     const input = createBotInput(self, () => world)

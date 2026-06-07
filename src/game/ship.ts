@@ -10,7 +10,6 @@ import {
   SHIP_THRUST,
   SHIP_TURN_RATE,
   ShipKind,
-  WALL_THICKNESS,
   WATER_BUOYANCY,
   WATER_DRAG,
   WEAPON_CONFIG,
@@ -19,13 +18,13 @@ import {
   WORLD_WIDTH,
 } from '$/game/constants'
 import type { Input } from '$/game/input'
-import type { Rng, Ship, WaterPool } from '$/game/types'
+import type { Rng, Ship, WaterBody } from '$/game/types'
 import { submersion } from '$/game/water'
 import { assignWeapon } from '$/game/weapons'
 
 // Optional surroundings passed to updateShip; absent = open air (the default everywhere
 // except the live engine), which keeps the pure physics tests calling updateShip(s,i,dt).
-export type ShipEnv = { pools: WaterPool[] }
+export type ShipEnv = { water: WaterBody[] }
 
 // Default secondary when no rng is supplied (the deterministic path the unit tests use).
 const DEFAULT_WEAPON = WeaponKind.SCATTERGUN
@@ -104,7 +103,7 @@ export const updateShip = (ship: Ship, input: Input, dt: number, env?: ShipEnv):
   ship.vx *= drag
   ship.vy *= drag
   // Water: buoyancy fights gravity and a heavier drag bogs the ship down when submerged.
-  const submerged = env ? submersion(ship, env.pools) : 0
+  const submerged = env ? submersion(ship, env.water) : 0
   if (submerged > 0) {
     ship.vy -= WATER_BUOYANCY * submerged * dt
     const waterDrag = Math.exp(-WATER_DRAG * submerged * dt)
@@ -118,9 +117,4 @@ export const updateShip = (ship: Ship, input: Input, dt: number, env?: ShipEnv):
   if (ship.invuln > 0) ship.invuln -= dt
   if (ship.disabled > 0) ship.disabled -= dt
   if (ship.shields < SHIP_MAX_SHIELDS) ship.shields = Math.min(SHIP_MAX_SHIELDS, ship.shields + SHIP_SHIELD_REGEN * dt)
-}
-
-export const shipHitWall = (ship: Ship): boolean => {
-  const min = WALL_THICKNESS + ship.radius
-  return ship.x < min || ship.x > WORLD_WIDTH - min || ship.y < min || ship.y > WORLD_HEIGHT - min
 }

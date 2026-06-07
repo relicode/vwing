@@ -9,7 +9,6 @@ const INITIAL_STATUS: EngineStatus = {
   score: 0,
   best: 0,
   lives: SHIP_START_LIVES,
-  wave: 1,
   weapon: WeaponKind.SCATTERGUN,
   ammo: 0,
 }

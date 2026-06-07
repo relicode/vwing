@@ -2,8 +2,8 @@ import { describe, expect, test } from 'bun:test'
 
 import { SHIP_TURN_RATE, WALL_THICKNESS, WORLD_HEIGHT, WORLD_WIDTH } from '$/game/constants'
 import type { Input } from '$/game/input'
-import { createShip, respawnShip, shipHitWall, updateShip } from '$/game/ship'
-import type { WaterPool } from '$/game/types'
+import { createShip, respawnShip, updateShip } from '$/game/ship'
+import type { WaterBody } from '$/game/types'
 
 const makeInput = (turn: number, thrusting: boolean): Input => ({
   turn: () => turn,
@@ -37,16 +37,6 @@ describe('ship physics', () => {
     expect(ship.angle).toBeCloseTo(startAngle + SHIP_TURN_RATE * 0.1)
   })
 
-  test('shipHitWall detects the lethal border', () => {
-    const ship = createShip()
-    expect(shipHitWall(ship)).toBe(false)
-    ship.x = WALL_THICKNESS
-    expect(shipHitWall(ship)).toBe(true)
-    ship.x = WORLD_WIDTH / 2
-    ship.y = WORLD_HEIGHT - WALL_THICKNESS
-    expect(shipHitWall(ship)).toBe(true)
-  })
-
   test('respawn recenters, stops, and grants invulnerability', () => {
     const ship = createShip()
     ship.x = 123
@@ -59,18 +49,18 @@ describe('ship physics', () => {
   })
 
   test('water buoyancy lifts a submerged ship relative to open air', () => {
-    const pool: WaterPool = { x: WORLD_WIDTH / 2 - 200, width: 400, level: 300, capacity: 400 }
+    const body: WaterBody = { x: WORLD_WIDTH / 2 - 200, y: WORLD_HEIGHT - WALL_THICKNESS - 300, w: 400, h: 300 }
     const submerged = createShip()
     submerged.invuln = 0
     submerged.x = WORLD_WIDTH / 2
-    submerged.y = WORLD_HEIGHT - WALL_THICKNESS - 10 // deep in the pool
+    submerged.y = WORLD_HEIGHT - WALL_THICKNESS - 10 // deep in the body
 
     const dry = createShip()
     dry.invuln = 0
     dry.x = WORLD_WIDTH / 2
     dry.y = 200 // open air
 
-    updateShip(submerged, makeInput(0, false), 0.1, { pools: [pool] })
+    updateShip(submerged, makeInput(0, false), 0.1, { water: [body] })
     updateShip(dry, makeInput(0, false), 0.1)
     expect(submerged.vy).toBeLessThan(dry.vy) // buoyancy fights gravity
   })
