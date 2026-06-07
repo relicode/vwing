@@ -11,9 +11,6 @@ import {
   Color,
   DeviceKind,
   GamePhase,
-  INFANTRY_PICKUP_RADIUS,
-  INFANTRY_PICKUP_REFUND,
-  INFANTRY_PICKUP_SPEED,
   PLAYER_ID,
   SECONDARY_MAX_CHARGE,
   SHAKE_DECAY,
@@ -31,9 +28,9 @@ import {
   THRUST_PARTICLE_SPEED,
   VIEW_HEIGHT,
   VIEW_WIDTH,
-  WeaponKind,
+  type WeaponKind,
 } from '$/game/constants'
-import { updateDevices } from '$/game/devices'
+import { resolveInfantryContacts, updateDevices } from '$/game/devices'
 import { createInput, type Input } from '$/game/input'
 import { spawnExplosion, spawnPuff, updateParticles } from '$/game/particles'
 import { createRenderer } from '$/game/renderer'
@@ -275,27 +272,6 @@ export const createEngine = async (): Promise<Engine> => {
     }
   }
 
-  // An owner drifting slowly over its own landed/swimming infantry scoops one up, refunding
-  // secondary energy (and switching its secondary back to Infantry).
-  const resolvePickups = (): void => {
-    for (const { ship } of combatants) {
-      if (Math.hypot(ship.vx, ship.vy) > INFANTRY_PICKUP_SPEED) continue
-      const idx = world.devices.findIndex(
-        (d) =>
-          d.kind === DeviceKind.INFANTRY &&
-          d.owner === ship.id &&
-          d.pickupLock <= 0 &&
-          (d.attached || d.swim > 0) &&
-          circlesOverlap(ship.x, ship.y, INFANTRY_PICKUP_RADIUS, d.x, d.y, d.radius)
-      )
-      if (idx < 0) continue
-      world.devices.splice(idx, 1)
-      ship.weapon = WeaponKind.INFANTRY
-      ship.charge = Math.min(SECONDARY_MAX_CHARGE, ship.charge + INFANTRY_PICKUP_REFUND)
-      ship.altCooldown = 0
-    }
-  }
-
   const stepPlaying = (dt: number): void => {
     world.time += dt
     const env = { water: world.water }
@@ -346,7 +322,7 @@ export const createEngine = async (): Promise<Engine> => {
     if (gameOver()) return
     resolveTerrain(dt)
     if (gameOver()) return
-    resolvePickups()
+    resolveInfantryContacts(world)
   }
 
   const step = (dt: number): void => {

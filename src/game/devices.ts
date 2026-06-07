@@ -21,35 +21,57 @@ import {
   INFANTRY_FIRE_INTERVAL,
   INFANTRY_GRENADE_FIRE_INTERVAL,
   INFANTRY_PARACHUTE_FIRE_INTERVAL,
+  INFANTRY_PICKUP_RADIUS,
+  INFANTRY_PICKUP_REFUND,
+  INFANTRY_PICKUP_SPEED,
+  INFANTRY_RAM_SPEED,
   INFANTRY_RANGE,
+  INFANTRY_RESCUE_RANGE,
   INFANTRY_SHOT_DAMAGE,
   INFANTRY_SHOT_SPEED,
   INFANTRY_SINK_SPEED,
   INFANTRY_SINK_TIME,
   INFANTRY_SWIM_DRAG,
+  INFANTRY_SWIM_SPEED,
   INFANTRY_SWIM_TIME,
   INFANTRY_WALK_SPEED,
   INFANTRY_WALK_TURN_CHANCE,
   InfantryWeapon,
-  PARACHUTE_BRAKE,
   PARACHUTE_DEPLOY_SPEED,
   PARACHUTE_OPEN_TIME,
   PARACHUTE_TERMINAL,
+  SECONDARY_MAX_CHARGE,
   WALL_THICKNESS,
   WELL_MAX_ACCEL,
   WELL_MIN_DIST,
+  WeaponKind,
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from '$/game/constants'
-import { TWO_PI, wrapAngle } from '$/game/math'
+import { clamp, TWO_PI, wrapAngle } from '$/game/math'
 import { spawnExplosion } from '$/game/particles'
 import { randRange } from '$/game/rng'
 import type { Block, Device, Ship, World } from '$/game/types'
 import { waterSurfaceAt } from '$/game/water'
 
+type InfantryDevice = Extract<Device, { kind: DeviceKind.INFANTRY }>
+
 // True when no terrain block sits on the straight line between two points (infantry LOS).
 const hasLineOfSight = (x1: number, y1: number, x2: number, y2: number, blocks: Block[]): boolean =>
   !blocks.some((b) => segmentIntersectsRect(x1, y1, x2, y2, b.x, b.y, b.w, b.h))
+
+// True when a point lies strictly inside any block. A trooper resting on a surface sits
+// *above* its block, so this only fires when one is wrongly embedded (a kill condition).
+const insideAnyBlock = (x: number, y: number, blocks: Block[]): boolean =>
+  blocks.some((b) => x > b.x && x < b.x + b.w && y > b.y && y < b.y + b.h)
+
+// True while solid ground is still directly under a landed trooper's feet. Probes just
+// below the soles: if the supporting block was shot away, this goes false and the unit falls.
+const FOOTING_PROBE = 3 // px below the feet to sample for solid ground
+const hasFooting = (device: InfantryDevice, blocks: Block[]): boolean => {
+  const footY = device.y + device.radius + FOOTING_PROBE
+  return blocks.some((b) => device.x > b.x && device.x < b.x + b.w && footY > b.y && footY < b.y + b.h)
+}
 
 const inBounds = (x: number, y: number): boolean =>
   x > WALL_THICKNESS && x < WORLD_WIDTH - WALL_THICKNESS && y > WALL_THICKNESS && y < WORLD_HEIGHT - WALL_THICKNESS
@@ -119,8 +141,6 @@ const spawnShards = (
   }
 }
 
-type InfantryDevice = Extract<Device, { kind: DeviceKind.INFANTRY }>
-
 // A grenadier's lob: an arcing GRENADE device aimed along `angle` (gravity + fuse → shards,
 // just like the ship's Grenade Lob). Queued in `spawned` so we don't mutate mid-iteration.
 const lobGrenade = (spawned: Device[], device: InfantryDevice, angle: number): void => {
@@ -168,6 +188,26 @@ const infantryFire = (world: World, device: InfantryDevice, spawned: Device[], i
   const my = device.y + Math.sin(angle) * device.radius * 1.8
   spawnExplosion(world.particles, mx, my, flash, world.rng, 3)
   device.fireCooldown = interval
+}
+
+// The unit's own owner ship when it's a viable rescuer: present and drifting slowly enough
+// to scoop the unit up (so a fast fly-by isn't a rescue — it's a ram). undefined otherwise.
+const rescuingOwner = (world: World, device: InfantryDevice): Ship | undefined => {
+  if (device.pickupLock > 0) return undefined
+  const owner = world.ships.find((s) => s.id === device.owner)
+  if (!owner) return undefined
+  return Math.hypot(owner.vx, owner.vy) <= INFANTRY_PICKUP_SPEED ? owner : undefined
+}
+
+// March toward a target x along the supporting block (clamped to its edges) to be picked up.
+const walkToward = (device: InfantryDevice, targetX: number, dt: number): void => {
+  device.walkDir = targetX >= device.x ? 1 : -1
+  device.x = clamp(
+    device.x + device.walkDir * INFANTRY_WALK_SPEED * dt,
+    device.groundLeft + device.radius,
+    device.groundRight - device.radius
+  )
+  device.facing = device.walkDir
 }
 
 // Walk back and forth along the supporting block, turning at its edges (never off it) and
@@ -268,14 +308,21 @@ const stepDevice = (
         device.y += INFANTRY_SINK_SPEED * dt
         return device.sinking > 0
       }
-      // Swimming: bob at the surface, drift to a stop, hold fire — begin sinking on drown.
+      // Swimming: bob at the surface, hold fire, and either paddle toward a nearby rescuing
+      // owner or drift to a stop — begin sinking on drown.
       if (device.swim > 0) {
         device.swim -= dt
         const surface = waterSurfaceAt(world.water, device.x)
         if (surface !== undefined) device.y = surface + device.radius * 0.2
         device.vy = 0
+        const rescuer = rescuingOwner(world, device)
+        if (rescuer && Math.hypot(rescuer.x - device.x, rescuer.y - device.y) <= INFANTRY_RESCUE_RANGE) {
+          device.facing = rescuer.x >= device.x ? 1 : -1
+          device.vx = device.facing * INFANTRY_SWIM_SPEED
+        } else {
+          device.vx *= Math.exp(-INFANTRY_SWIM_DRAG * dt)
+        }
         device.x += device.vx * dt
-        device.vx *= Math.exp(-INFANTRY_SWIM_DRAG * dt)
         if (device.swim <= 0) {
           device.sinking = INFANTRY_SINK_TIME
           return true
@@ -285,12 +332,14 @@ const stepDevice = (
       // Airborne: fall (with optional parachute braking), then land / splat / start swimming.
       if (!device.attached) {
         device.vy += GRAVITY * dt
-        // Parachute: deploy past a fast descent, then open over time and brake toward terminal.
-        // A high drop fully opens and lands soft; a too-low one opens late and may still splat.
+        // Parachute: deploy past a fast descent, then open over time. The brake is all-or-
+        // nothing — while opening it does nothing (the unit keeps accelerating), then snaps
+        // the descent to a slow terminal the instant the canopy is fully open. A high drop
+        // blooms in time and lands soft; a too-low one hits before it opens and still splats.
         if (device.chute < 0 && device.vy > PARACHUTE_DEPLOY_SPEED) device.chute = 0
         if (device.chute >= 0) {
           device.chute = Math.min(1, device.chute + dt / PARACHUTE_OPEN_TIME)
-          device.vy += (PARACHUTE_TERMINAL - device.vy) * device.chute * PARACHUTE_BRAKE * dt
+          if (device.chute >= 1 && device.vy > PARACHUTE_TERMINAL) device.vy = PARACHUTE_TERMINAL
           infantryFire(world, device, spawned, INFANTRY_PARACHUTE_FIRE_INTERVAL, dt) // fire slowly while descending
         }
         device.x += device.vx * dt
@@ -324,8 +373,31 @@ const stepDevice = (
         }
         return true
       }
-      // Landed: patrol the supporting block (never off its edges) and fire at the nearest enemy.
-      patrolInfantry(device, world, dt)
+      // Landed. Embedded in a block (terrain shifted under it) → instant death.
+      if (insideAnyBlock(device.x, device.y, world.blocks)) {
+        spawnExplosion(world.particles, device.x, device.y, Color.BLOOD, world.rng, 6)
+        return false
+      }
+      // Block beneath shot away → lose footing and fall (re-enters the airborne path next frame).
+      if (!hasFooting(device, world.blocks)) {
+        device.attached = false
+        device.chute = -1
+        return true
+      }
+      // Walk toward a rescuing owner landed on this same block, else patrol; either way, fire.
+      // The vertical gate keeps it to a ship resting at the unit's level (not hovering above),
+      // and within reach of the pickup overlap once the unit arrives at its x.
+      const rescuer = rescuingOwner(world, device)
+      if (
+        rescuer &&
+        rescuer.x >= device.groundLeft &&
+        rescuer.x <= device.groundRight &&
+        Math.abs(rescuer.y - device.y) <= INFANTRY_PICKUP_RADIUS
+      ) {
+        walkToward(device, rescuer.x, dt)
+      } else {
+        patrolInfantry(device, world, dt)
+      }
       const interval =
         device.weapon === InfantryWeapon.GRENADE ? INFANTRY_GRENADE_FIRE_INTERVAL : INFANTRY_FIRE_INTERVAL
       infantryFire(world, device, spawned, interval, dt)
@@ -406,4 +478,38 @@ export const updateDevices = (world: World, dt: number): Ship[] => {
   const kept = deadDevices.size > 0 ? survivors.filter((device) => !deadDevices.has(device)) : survivors
   world.devices = spawned.length > 0 ? kept.concat(spawned) : kept
   return [...dead]
+}
+
+// Resolve ship-vs-trooper overlaps: an owner drifting slowly over its own (re-armable) unit
+// scoops it up — refunding secondary energy and re-arming the Infantry slot — while any ship
+// fast enough to ram (own or enemy) splatters the trooper it ploughs through. Iterates from
+// the tail so removals don't disturb pending indices.
+export const resolveInfantryContacts = (world: World): void => {
+  for (const ship of world.ships) {
+    const speed = Math.hypot(ship.vx, ship.vy)
+    const slow = speed <= INFANTRY_PICKUP_SPEED
+    const ramming = speed > INFANTRY_RAM_SPEED
+    if (!slow && !ramming) continue // a moderate fly-by neither rescues nor rams
+    for (let i = world.devices.length - 1; i >= 0; i -= 1) {
+      const d = world.devices[i]
+      if (d.kind !== DeviceKind.INFANTRY || d.sinking > 0) continue
+      if (
+        slow &&
+        d.owner === ship.id &&
+        d.pickupLock <= 0 &&
+        (d.attached || d.swim > 0) &&
+        circlesOverlap(ship.x, ship.y, INFANTRY_PICKUP_RADIUS, d.x, d.y, d.radius)
+      ) {
+        world.devices.splice(i, 1)
+        ship.weapon = WeaponKind.INFANTRY
+        ship.charge = Math.min(SECONDARY_MAX_CHARGE, ship.charge + INFANTRY_PICKUP_REFUND)
+        ship.altCooldown = 0
+        continue
+      }
+      if (ramming && circlesOverlap(ship.x, ship.y, ship.radius, d.x, d.y, d.radius)) {
+        spawnExplosion(world.particles, d.x, d.y, Color.BLOOD, world.rng, 6)
+        world.devices.splice(i, 1)
+      }
+    }
+  }
 }
