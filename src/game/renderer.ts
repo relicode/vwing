@@ -196,7 +196,9 @@ export const createRenderer = (rng: Rng): Renderer => {
     }
     drawBeams(dynGfx, world.beams)
     drawParticles(dynGfx, world.particles)
-    if (phase !== GamePhase.GAME_OVER) for (const ship of world.ships) drawShip(dynGfx, ship, world.time)
+    // Ships are drawn only in-play: in TITLE/GAME_OVER updateShip never runs, so their
+    // spawn invulnerability never ticks down and they'd blink forever over the backdrop.
+    if (phase === GamePhase.PLAYING) for (const ship of world.ships) drawShip(dynGfx, ship, world.time)
   }
 
   const destroy = (): void => {
