@@ -28,6 +28,30 @@ export const spawnExplosion = (
   }
 }
 
+// A single drifting puff (exhaust ember, smoke) emitted with a base velocity + slight jitter.
+export const spawnPuff = (
+  particles: Particle[],
+  x: number,
+  y: number,
+  vx: number,
+  vy: number,
+  color: number,
+  rng: Rng,
+  lifeMax: number
+): void => {
+  const life = randRange(rng, lifeMax * 0.6, lifeMax)
+  particles.push({
+    x,
+    y,
+    vx: vx + randRange(rng, -18, 18),
+    vy: vy + randRange(rng, -18, 18),
+    life,
+    maxLife: life,
+    size: randRange(rng, 1.4, 3),
+    color,
+  })
+}
+
 export const updateParticles = (particles: Particle[], dt: number): Particle[] => {
   const drag = Math.exp(-3 * dt)
   for (const particle of particles) {
