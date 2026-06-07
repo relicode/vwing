@@ -285,6 +285,7 @@ export const createRenderer = (rng: Rng): Renderer => {
     for (const device of world.devices) drawDevice(dynGfx, device)
     for (const bullet of world.bullets) {
       const color = bullet.color ?? (bullet.owner === PLAYER_ID ? Color.BULLET : Color.BULLET_ENEMY)
+      dynGfx.circle(bullet.x, bullet.y, bullet.radius * 2.2).fill({ color, alpha: 0.18 }) // soft glow
       dynGfx.circle(bullet.x, bullet.y, bullet.radius).fill({ color })
     }
     drawBeams(dynGfx, world.beams)

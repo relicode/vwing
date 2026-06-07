@@ -92,6 +92,7 @@ const Hud = ({ status }: HudProps) => {
               width: `${status.charge}%`,
               height: '100%',
               bgcolor: ready ? 'primary.main' : 'secondary.main',
+              boxShadow: ready ? '0 0 6px rgba(51,245,163,0.9)' : 'none', // glow once ready to fire
               transition: 'width 0.12s linear',
             }}
           />
