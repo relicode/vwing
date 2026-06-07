@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test'
 
 import {
   DeviceKind,
-  INFANTRY_COUNT,
   MINE_COUNT,
   SCATTERGUN_PELLETS,
   SEEKER_COUNT,
@@ -142,9 +141,10 @@ describe('fireSecondary — device weapons', () => {
     }
   })
 
-  test('Mines / Infantry drop the configured counts; Grenade/Flak/Singularity drop one each', () => {
+  test('Mines drop the configured count; Infantry/Grenade/Flak/Singularity drop one each', () => {
     expect(fireWith(WeaponKind.MINES)).toHaveLength(MINE_COUNT)
-    expect(fireWith(WeaponKind.INFANTRY)).toHaveLength(INFANTRY_COUNT)
+    expect(fireWith(WeaponKind.INFANTRY)).toHaveLength(1) // held-fire streams one trooper per cadence
+    expect(fireWith(WeaponKind.INFANTRY)[0].kind).toBe(DeviceKind.INFANTRY)
     expect(fireWith(WeaponKind.GRENADE)[0].kind).toBe(DeviceKind.GRENADE)
     expect(fireWith(WeaponKind.FLAK)[0].kind).toBe(DeviceKind.FLAK)
     expect(fireWith(WeaponKind.SINGULARITY)[0].kind).toBe(DeviceKind.WELL)

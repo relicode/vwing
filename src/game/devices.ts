@@ -9,12 +9,17 @@ import {
   FLAK_SHARD_SPEED,
   FLAK_SHARDS,
   GRAVITY,
+  GRENADE_FUSE,
+  GRENADE_RADIUS,
   GRENADE_SHARD_DAMAGE,
   GRENADE_SHARD_LIFE,
   GRENADE_SHARD_SPEED,
   GRENADE_SHARDS,
+  GRENADE_SPEED,
   INFANTRY_FALL_LETHAL,
   INFANTRY_FIRE_INTERVAL,
+  INFANTRY_GRENADE_FIRE_INTERVAL,
+  INFANTRY_PARACHUTE_FIRE_INTERVAL,
   INFANTRY_RANGE,
   INFANTRY_SHOT_DAMAGE,
   INFANTRY_SHOT_SPEED,
@@ -22,6 +27,13 @@ import {
   INFANTRY_SINK_TIME,
   INFANTRY_SWIM_DRAG,
   INFANTRY_SWIM_TIME,
+  INFANTRY_WALK_SPEED,
+  INFANTRY_WALK_TURN_CHANCE,
+  InfantryWeapon,
+  PARACHUTE_BRAKE,
+  PARACHUTE_DEPLOY_SPEED,
+  PARACHUTE_OPEN_TIME,
+  PARACHUTE_TERMINAL,
   WALL_THICKNESS,
   WELL_MAX_ACCEL,
   WELL_MIN_DIST,
@@ -105,9 +117,88 @@ const spawnShards = (
   }
 }
 
+type InfantryDevice = Extract<Device, { kind: DeviceKind.INFANTRY }>
+
+// A grenadier's lob: an arcing GRENADE device aimed along `angle` (gravity + fuse → shards,
+// just like the ship's Grenade Lob). Queued in `spawned` so we don't mutate mid-iteration.
+const lobGrenade = (spawned: Device[], device: InfantryDevice, angle: number): void => {
+  spawned.push({
+    kind: DeviceKind.GRENADE,
+    x: device.x,
+    y: device.y - device.radius,
+    vx: Math.cos(angle) * GRENADE_SPEED,
+    vy: Math.sin(angle) * GRENADE_SPEED,
+    owner: device.owner,
+    radius: GRENADE_RADIUS,
+    fuse: GRENADE_FUSE,
+  })
+}
+
+// Fire at the nearest enemy in range with clear line of sight, at the given cadence.
+// Rifles shoot straight; grenadiers lob. Ticks the cooldown every frame regardless.
+const infantryFire = (world: World, device: InfantryDevice, spawned: Device[], interval: number, dt: number): void => {
+  device.fireCooldown -= dt
+  if (device.fireCooldown > 0) return
+  const target = nearestEnemyOf(device.owner, device.x, device.y, world.ships)
+  if (!target || Math.hypot(target.x - device.x, target.y - device.y) > INFANTRY_RANGE) return
+  if (!hasLineOfSight(device.x, device.y, target.x, target.y, world.blocks)) return
+  const angle = Math.atan2(target.y - device.y, target.x - device.x)
+  if (device.weapon === InfantryWeapon.GRENADE) {
+    lobGrenade(spawned, device, angle)
+  } else {
+    pushBullet(
+      world.bullets,
+      device.x,
+      device.y,
+      Math.cos(angle) * INFANTRY_SHOT_SPEED,
+      Math.sin(angle) * INFANTRY_SHOT_SPEED,
+      {
+        owner: device.owner,
+        damage: INFANTRY_SHOT_DAMAGE,
+        life: INFANTRY_RANGE / INFANTRY_SHOT_SPEED,
+        color: Color.INFANTRY,
+      }
+    )
+  }
+  // Muzzle flash at the barrel tip.
+  const flash = device.weapon === InfantryWeapon.GRENADE ? Color.GRENADE : Color.SPARK
+  const mx = device.x + Math.cos(angle) * device.radius * 1.8
+  const my = device.y + Math.sin(angle) * device.radius * 1.8
+  spawnExplosion(world.particles, mx, my, flash, world.rng, 3)
+  device.fireCooldown = interval
+}
+
+// Walk back and forth along the supporting block, turning at its edges (never off it) and
+// occasionally reversing on a whim. `facing` tracks the movement direction for the sprite.
+const patrolInfantry = (device: InfantryDevice, world: World, dt: number): void => {
+  const min = device.groundLeft + device.radius
+  const max = device.groundRight - device.radius
+  if (max <= min) {
+    device.facing = device.walkDir
+    return
+  }
+  if (world.rng() < INFANTRY_WALK_TURN_CHANCE) device.walkDir = -device.walkDir
+  device.x += device.walkDir * INFANTRY_WALK_SPEED * dt
+  if (device.x <= min) {
+    device.x = min
+    device.walkDir = 1
+  } else if (device.x >= max) {
+    device.x = max
+    device.walkDir = -1
+  }
+  device.facing = device.walkDir
+}
+
 // Advance one device. Mutates the device and the world (spawns shards/shots/blasts),
 // adds any killed ships to `dead`, and returns whether the device survives the frame.
-const stepDevice = (world: World, device: Device, dt: number, dead: Set<Ship>, deadDevices: Set<Device>): boolean => {
+const stepDevice = (
+  world: World,
+  device: Device,
+  dt: number,
+  dead: Set<Ship>,
+  deadDevices: Set<Device>,
+  spawned: Device[]
+): boolean => {
   switch (device.kind) {
     case DeviceKind.MISSILE: {
       if (device.turnRate > 0) {
@@ -168,6 +259,7 @@ const stepDevice = (world: World, device: Device, dt: number, dead: Set<Ship>, d
     }
 
     case DeviceKind.INFANTRY: {
+      if (device.pickupLock > 0) device.pickupLock -= dt
       // Drowned corpse: sink and fade for a moment, then vanish (no explosion).
       if (device.sinking > 0) {
         device.sinking -= dt
@@ -188,9 +280,17 @@ const stepDevice = (world: World, device: Device, dt: number, dead: Set<Ship>, d
         }
         return true
       }
-      // Airborne: fall, then land on a surface (splat if it hit too fast) or start swimming.
+      // Airborne: fall (with optional parachute braking), then land / splat / start swimming.
       if (!device.attached) {
         device.vy += GRAVITY * dt
+        // Parachute: deploy past a fast descent, then open over time and brake toward terminal.
+        // A high drop fully opens and lands soft; a too-low one opens late and may still splat.
+        if (device.chute < 0 && device.vy > PARACHUTE_DEPLOY_SPEED) device.chute = 0
+        if (device.chute >= 0) {
+          device.chute = Math.min(1, device.chute + dt / PARACHUTE_OPEN_TIME)
+          device.vy += (PARACHUTE_TERMINAL - device.vy) * device.chute * PARACHUTE_BRAKE * dt
+          infantryFire(world, device, spawned, INFANTRY_PARACHUTE_FIRE_INTERVAL, dt) // fire slowly while descending
+        }
         device.x += device.vx * dt
         device.y += device.vy * dt
         for (const block of world.blocks) {
@@ -206,6 +306,10 @@ const stepDevice = (world: World, device: Device, dt: number, dead: Set<Ship>, d
           device.vx = 0
           device.vy = 0
           device.attached = true
+          device.chute = -1
+          device.groundLeft = block.x
+          device.groundRight = block.x + block.w
+          spawnExplosion(world.particles, device.x, device.y + device.radius, Color.ROCK_EDGE, world.rng, 4) // landing dust
           break
         }
         if (!device.attached) {
@@ -213,37 +317,17 @@ const stepDevice = (world: World, device: Device, dt: number, dead: Set<Ship>, d
           if (surface !== undefined && device.y + device.radius >= surface) {
             device.swim = INFANTRY_SWIM_TIME
             device.vy = 0
+            device.chute = -1
           }
         }
         return true
       }
-      // Landed turret: plink the nearest enemy in range at a low fire rate.
-      device.fireCooldown -= dt
-      if (device.fireCooldown <= 0) {
-        const target = nearestEnemyOf(device.owner, device.x, device.y, world.ships)
-        if (
-          target &&
-          Math.hypot(target.x - device.x, target.y - device.y) <= INFANTRY_RANGE &&
-          hasLineOfSight(device.x, device.y, target.x, target.y, world.blocks)
-        ) {
-          const angle = Math.atan2(target.y - device.y, target.x - device.x)
-          pushBullet(
-            world.bullets,
-            device.x,
-            device.y,
-            Math.cos(angle) * INFANTRY_SHOT_SPEED,
-            Math.sin(angle) * INFANTRY_SHOT_SPEED,
-            {
-              owner: device.owner,
-              damage: INFANTRY_SHOT_DAMAGE,
-              life: INFANTRY_RANGE / INFANTRY_SHOT_SPEED,
-              color: Color.INFANTRY,
-            }
-          )
-          device.fireCooldown = INFANTRY_FIRE_INTERVAL
-        }
-      }
-      return true // landed turret persists until it's killed or picked up
+      // Landed: patrol the supporting block (never off its edges) and fire at the nearest enemy.
+      patrolInfantry(device, world, dt)
+      const interval =
+        device.weapon === InfantryWeapon.GRENADE ? INFANTRY_GRENADE_FIRE_INTERVAL : INFANTRY_FIRE_INTERVAL
+      infantryFire(world, device, spawned, interval, dt)
+      return true // landed unit persists until it's killed or picked up
     }
 
     case DeviceKind.GRENADE: {
@@ -312,10 +396,12 @@ const stepDevice = (world: World, device: Device, dt: number, dead: Set<Ship>, d
 export const updateDevices = (world: World, dt: number): Ship[] => {
   const dead = new Set<Ship>()
   const deadDevices = new Set<Device>() // infantry splattered by a blast mid-iteration
+  const spawned: Device[] = [] // grenades lobbed by grenadiers this frame (added after the loop)
   const survivors: Device[] = []
   for (const device of world.devices) {
-    if (stepDevice(world, device, dt, dead, deadDevices)) survivors.push(device)
+    if (stepDevice(world, device, dt, dead, deadDevices, spawned)) survivors.push(device)
   }
-  world.devices = deadDevices.size > 0 ? survivors.filter((device) => !deadDevices.has(device)) : survivors
+  const kept = deadDevices.size > 0 ? survivors.filter((device) => !deadDevices.has(device)) : survivors
+  world.devices = spawned.length > 0 ? kept.concat(spawned) : kept
   return [...dead]
 }
