@@ -92,6 +92,7 @@ export type Device =
       radius: number
       life: number
       attached: boolean // true once it lands on a surface (then it stays put + shoots)
+      swim: number // s of floating left while in water (0 = on land / airborne); drowns at 0
       fireCooldown: number
     }
   | {

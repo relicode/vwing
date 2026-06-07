@@ -9,7 +9,10 @@ import {
   BOT_ID,
   BOT_KILL_SCORE,
   Color,
+  DeviceKind,
   GamePhase,
+  INFANTRY_PICKUP_RADIUS,
+  INFANTRY_PICKUP_SPEED,
   PLAYER_ID,
   SHIP_FIRE_INTERVAL,
   SHIP_SPAWN_CLEAR_RADIUS,
@@ -18,7 +21,8 @@ import {
   SurfaceMaterial,
   VIEW_HEIGHT,
   VIEW_WIDTH,
-  type WeaponKind,
+  WEAPON_CONFIG,
+  WeaponKind,
 } from '$/game/constants'
 import { updateDevices } from '$/game/devices'
 import { createInput, type Input } from '$/game/input'
@@ -212,6 +216,19 @@ export const createEngine = async (): Promise<Engine> => {
     const survivingBullets: Bullet[] = []
     for (const bullet of world.bullets) {
       if (bulletHitShip(bullet)) continue
+      // A bullet touching an enemy-owned infantry unit kills it outright (one hit, one life).
+      const unit = world.devices.findIndex(
+        (d) =>
+          d.kind === DeviceKind.INFANTRY &&
+          d.owner !== bullet.owner &&
+          circlesOverlap(bullet.x, bullet.y, bullet.radius, d.x, d.y, d.radius)
+      )
+      if (unit >= 0) {
+        const inf = world.devices[unit]
+        spawnExplosion(world.particles, inf.x, inf.y, Color.INFANTRY, world.rng, 6)
+        world.devices.splice(unit, 1)
+        continue
+      }
       const hit = world.blocks.findIndex((b) =>
         circleRectContact(bullet.x, bullet.y, bullet.radius, b.x, b.y, b.w, b.h)
       )
@@ -242,6 +259,28 @@ export const createEngine = async (): Promise<Engine> => {
     }
   }
 
+  // An owner drifting slowly over its own landed/swimming infantry scoops one up, restoring
+  // an Infantry charge (and switching its secondary back to Infantry).
+  const resolvePickups = (): void => {
+    const cap = WEAPON_CONFIG[WeaponKind.INFANTRY].ammo
+    for (const { ship } of combatants) {
+      if (Math.hypot(ship.vx, ship.vy) > INFANTRY_PICKUP_SPEED) continue
+      const idx = world.devices.findIndex(
+        (d) =>
+          d.kind === DeviceKind.INFANTRY &&
+          d.owner === ship.id &&
+          (d.attached || d.swim > 0) &&
+          circlesOverlap(ship.x, ship.y, INFANTRY_PICKUP_RADIUS, d.x, d.y, d.radius)
+      )
+      if (idx < 0) continue
+      world.devices.splice(idx, 1)
+      const wasInfantry = ship.weapon === WeaponKind.INFANTRY
+      ship.weapon = WeaponKind.INFANTRY
+      ship.ammo = Math.min(cap, (wasInfantry ? ship.ammo : 0) + 1)
+      ship.altCooldown = 0
+    }
+  }
+
   const stepPlaying = (dt: number): void => {
     world.time += dt
     const env = { water: world.water }
@@ -263,6 +302,8 @@ export const createEngine = async (): Promise<Engine> => {
     resolveBulletHits()
     if (gameOver()) return
     resolveTerrain(dt)
+    if (gameOver()) return
+    resolvePickups()
   }
 
   const step = (dt: number): void => {

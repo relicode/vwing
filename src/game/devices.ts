@@ -1,5 +1,5 @@
 import { pushBullet } from '$/game/bullets'
-import { circlesOverlap } from '$/game/collision'
+import { circleRectContact, circlesOverlap } from '$/game/collision'
 import { applyDamage, applyDisable, isDead } from '$/game/combat'
 import {
   Color,
@@ -13,10 +13,13 @@ import {
   GRENADE_SHARD_LIFE,
   GRENADE_SHARD_SPEED,
   GRENADE_SHARDS,
+  INFANTRY_FALL_LETHAL,
   INFANTRY_FIRE_INTERVAL,
   INFANTRY_RANGE,
   INFANTRY_SHOT_DAMAGE,
   INFANTRY_SHOT_SPEED,
+  INFANTRY_SWIM_DRAG,
+  INFANTRY_SWIM_TIME,
   WALL_THICKNESS,
   WELL_MAX_ACCEL,
   WELL_MIN_DIST,
@@ -27,8 +30,7 @@ import { TWO_PI, wrapAngle } from '$/game/math'
 import { spawnExplosion } from '$/game/particles'
 import { randRange } from '$/game/rng'
 import type { Device, Ship, World } from '$/game/types'
-
-const FLOOR_Y = WORLD_HEIGHT - WALL_THICKNESS
+import { waterSurfaceAt } from '$/game/water'
 
 const inBounds = (x: number, y: number): boolean =>
   x > WALL_THICKNESS && x < WORLD_WIDTH - WALL_THICKNESS && y > WALL_THICKNESS && y < WORLD_HEIGHT - WALL_THICKNESS
@@ -143,47 +145,69 @@ const stepDevice = (world: World, device: Device, dt: number, dead: Set<Ship>): 
 
     case DeviceKind.INFANTRY: {
       device.life -= dt
+      // Swimming: bob at the surface, drift to a stop, hold fire — drown when the timer runs out.
+      if (device.swim > 0) {
+        device.swim -= dt
+        const surface = waterSurfaceAt(world.water, device.x)
+        if (surface !== undefined) device.y = surface + device.radius * 0.2
+        device.vy = 0
+        device.x += device.vx * dt
+        device.vx *= Math.exp(-INFANTRY_SWIM_DRAG * dt)
+        if (device.swim <= 0) {
+          spawnExplosion(world.particles, device.x, device.y, Color.WATER_EDGE, world.rng, 8)
+          return false
+        }
+        return device.life > 0
+      }
+      // Airborne: fall, then land on a surface (splat if it hit too fast) or start swimming.
       if (!device.attached) {
         device.vy += GRAVITY * dt
         device.x += device.vx * dt
         device.y += device.vy * dt
-        const leftWall = WALL_THICKNESS + device.radius
-        const rightWall = WORLD_WIDTH - WALL_THICKNESS - device.radius
-        if (device.y + device.radius >= FLOOR_Y) {
-          device.y = FLOOR_Y - device.radius
-          device.attached = true
-        } else if (device.x <= leftWall) {
-          device.x = leftWall
-          device.attached = true
-        } else if (device.x >= rightWall) {
-          device.x = rightWall
-          device.attached = true
-        }
-        if (device.attached) {
+        for (const block of world.blocks) {
+          const c = circleRectContact(device.x, device.y, device.radius, block.x, block.y, block.w, block.h)
+          if (!c) continue
+          const impact = -(device.vx * c.nx + device.vy * c.ny)
+          if (impact > INFANTRY_FALL_LETHAL) {
+            spawnExplosion(world.particles, device.x, device.y, Color.INFANTRY, world.rng, 6)
+            return false
+          }
+          device.x += c.nx * c.depth
+          device.y += c.ny * c.depth
           device.vx = 0
           device.vy = 0
+          device.attached = true
+          break
         }
-      } else {
-        device.fireCooldown -= dt
-        if (device.fireCooldown <= 0) {
-          const target = nearestEnemyOf(device.owner, device.x, device.y, world.ships)
-          if (target && Math.hypot(target.x - device.x, target.y - device.y) <= INFANTRY_RANGE) {
-            const angle = Math.atan2(target.y - device.y, target.x - device.x)
-            pushBullet(
-              world.bullets,
-              device.x,
-              device.y,
-              Math.cos(angle) * INFANTRY_SHOT_SPEED,
-              Math.sin(angle) * INFANTRY_SHOT_SPEED,
-              {
-                owner: device.owner,
-                damage: INFANTRY_SHOT_DAMAGE,
-                life: INFANTRY_RANGE / INFANTRY_SHOT_SPEED,
-                color: Color.INFANTRY,
-              }
-            )
-            device.fireCooldown = INFANTRY_FIRE_INTERVAL
+        if (!device.attached) {
+          const surface = waterSurfaceAt(world.water, device.x)
+          if (surface !== undefined && device.y + device.radius >= surface) {
+            device.swim = INFANTRY_SWIM_TIME
+            device.vy = 0
           }
+        }
+        return device.life > 0
+      }
+      // Landed turret: plink the nearest enemy in range at a low fire rate.
+      device.fireCooldown -= dt
+      if (device.fireCooldown <= 0) {
+        const target = nearestEnemyOf(device.owner, device.x, device.y, world.ships)
+        if (target && Math.hypot(target.x - device.x, target.y - device.y) <= INFANTRY_RANGE) {
+          const angle = Math.atan2(target.y - device.y, target.x - device.x)
+          pushBullet(
+            world.bullets,
+            device.x,
+            device.y,
+            Math.cos(angle) * INFANTRY_SHOT_SPEED,
+            Math.sin(angle) * INFANTRY_SHOT_SPEED,
+            {
+              owner: device.owner,
+              damage: INFANTRY_SHOT_DAMAGE,
+              life: INFANTRY_RANGE / INFANTRY_SHOT_SPEED,
+              color: Color.INFANTRY,
+            }
+          )
+          device.fireCooldown = INFANTRY_FIRE_INTERVAL
         }
       }
       return device.life > 0

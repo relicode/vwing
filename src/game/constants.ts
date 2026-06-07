@@ -184,7 +184,9 @@ export const WATER_CANNON_SPEED = 520
 export const WATER_CANNON_LIFE = 0.5
 export const WATER_CANNON_SPREAD = 0.05 // rad jitter
 
-// Infantry Drop — units fall, attach to a surface, plink the nearest enemy.
+// Infantry Drop — units fall, land on a surface, and plink the nearest enemy. A unit
+// dies from any single hit, splats if dropped from too high, swims (no shooting) if it
+// lands in water and drowns unless its owner scoops it up at low speed.
 export const INFANTRY_COUNT = 3
 export const INFANTRY_LIFE = 9
 export const INFANTRY_RADIUS = 5
@@ -192,6 +194,11 @@ export const INFANTRY_FIRE_INTERVAL = 1.1
 export const INFANTRY_SHOT_DAMAGE = 6
 export const INFANTRY_SHOT_SPEED = 380
 export const INFANTRY_RANGE = 520
+export const INFANTRY_FALL_LETHAL = 300 // landing impact speed (px/s) above which a unit splats
+export const INFANTRY_SWIM_TIME = 6 // s a unit floats (can't shoot) in water before it drowns
+export const INFANTRY_SWIM_DRAG = 1.6 // horizontal damping coefficient while swimming
+export const INFANTRY_PICKUP_RADIUS = 30 // px: the owner this close can scoop a unit up
+export const INFANTRY_PICKUP_SPEED = 90 // px/s: the owner must be slower than this to pick up
 
 // Seeker Missiles — limited-turn homing, area blast on contact.
 export const SEEKER_COUNT = 3

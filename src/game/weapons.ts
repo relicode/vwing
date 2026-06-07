@@ -171,6 +171,7 @@ const spawnInfantry = (world: World, ship: Ship): void => {
       radius: INFANTRY_RADIUS,
       life: INFANTRY_LIFE,
       attached: false,
+      swim: 0,
       fireCooldown: randRange(world.rng, 0, INFANTRY_FIRE_INTERVAL),
     })
   }
