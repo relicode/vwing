@@ -160,6 +160,11 @@ const infantryFire = (world: World, device: InfantryDevice, spawned: Device[], i
       }
     )
   }
+  // Muzzle flash at the barrel tip.
+  const flash = device.weapon === InfantryWeapon.GRENADE ? Color.GRENADE : Color.SPARK
+  const mx = device.x + Math.cos(angle) * device.radius * 1.8
+  const my = device.y + Math.sin(angle) * device.radius * 1.8
+  spawnExplosion(world.particles, mx, my, flash, world.rng, 3)
   device.fireCooldown = interval
 }
 
@@ -304,6 +309,7 @@ const stepDevice = (
           device.chute = -1
           device.groundLeft = block.x
           device.groundRight = block.x + block.w
+          spawnExplosion(world.particles, device.x, device.y + device.radius, Color.ROCK_EDGE, world.rng, 4) // landing dust
           break
         }
         if (!device.attached) {
