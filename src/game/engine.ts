@@ -19,17 +19,21 @@ import {
   SHAKE_DECAY,
   SHIP_DEATH_SHAKE,
   SHIP_FIRE_INTERVAL,
+  SHIP_SMOKE_HEALTH,
   SHIP_SPAWN_CLEAR_RADIUS,
   SHIP_START_LIVES,
   ShipKind,
+  SMOKE_LIFE,
   SurfaceMaterial,
+  THRUST_PARTICLE_LIFE,
+  THRUST_PARTICLE_SPEED,
   VIEW_HEIGHT,
   VIEW_WIDTH,
   WeaponKind,
 } from '$/game/constants'
 import { updateDevices } from '$/game/devices'
 import { createInput, type Input } from '$/game/input'
-import { spawnExplosion, updateParticles } from '$/game/particles'
+import { spawnExplosion, spawnPuff, updateParticles } from '$/game/particles'
 import { createRenderer } from '$/game/renderer'
 import { createRng } from '$/game/rng'
 import {
@@ -293,6 +297,24 @@ export const createEngine = async (): Promise<Engine> => {
     const env = { water: world.water }
     for (const { ship, input: control } of combatants) {
       updateShip(ship, control, dt, env)
+      // Ambiance: exhaust embers behind the nozzle while thrusting; smoke when badly hurt.
+      if (ship.thrusting) {
+        const bx = -Math.cos(ship.angle)
+        const by = -Math.sin(ship.angle)
+        spawnPuff(
+          world.particles,
+          ship.x + bx * ship.radius,
+          ship.y + by * ship.radius,
+          bx * THRUST_PARTICLE_SPEED,
+          by * THRUST_PARTICLE_SPEED,
+          Color.THRUST,
+          world.rng,
+          THRUST_PARTICLE_LIFE
+        )
+      }
+      if (ship.health < SHIP_SMOKE_HEALTH && ship.invuln <= 0) {
+        spawnPuff(world.particles, ship.x, ship.y, 0, -30, Color.SMOKE, world.rng, SMOKE_LIFE)
+      }
       if (control.firing() && ship.fireCooldown <= 0 && ship.disabled <= 0) {
         spawnBullet(world.bullets, ship)
         ship.fireCooldown = SHIP_FIRE_INTERVAL

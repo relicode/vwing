@@ -95,6 +95,7 @@ export const Color = {
   MINE_ARMED: 0xff5a5a,
   INFANTRY: 0xcfe8a0,
   PARACHUTE: 0xe6e2cf,
+  SMOKE: 0x6b7280,
   GRENADE: 0x9fd36b,
   FLAK: 0xd8b46a,
   BLOOD: 0xff3b3b, // infantry death (shot / splatted / blasted)
@@ -115,6 +116,12 @@ export const Color = {
 
 // Global gravity: a constant downward pull. Thrust must beat it to climb.
 export const GRAVITY = 200 // px/s^2
+
+// Ship ambiance (cosmetic particles spawned by the engine).
+export const THRUST_PARTICLE_SPEED = 120 // px/s backward ember speed from the nozzle while thrusting
+export const THRUST_PARTICLE_LIFE = 0.34 // s exhaust ember lifetime
+export const SHIP_SMOKE_HEALTH = 40 // hull below this trails smoke
+export const SMOKE_LIFE = 0.9 // s smoke puff lifetime
 
 // Ship flight model.
 export const SHIP_RADIUS = 12
