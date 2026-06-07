@@ -133,7 +133,7 @@ export const BOT_STANDOFF = 240 // px: stop closing once this near the target
 export const BOT_FALL_LIMIT = 220 // vy above which the bot climbs even mid-engagement
 export const BOT_WALL_MARGIN = 90 // px buffer off the walls before the bot flees to center
 export const BOT_WALL_LOOKAHEAD = 0.85 // s of velocity projected when testing wall danger
-export const BOT_DODGE_DIST = 150 // px gap to a terrain block that triggers an evasive turn
+export const BOT_DODGE_DIST = 220 // px gap to a terrain block that triggers an evasive turn
 
 // ── Secondary weapons ───────────────────────────────────────────────────────
 // One weapon is rolled onto each ship per life (limited charges). Per-weapon
@@ -260,8 +260,8 @@ export const WATER_DRAG = 2.4 // extra exponential damping coefficient when subm
 // ── Terrain landing model ─────────────────────────────────────────────────
 // On contact the ship is classified by `impact` = closing speed (px/s) along the
 // surface normal: gentle → land (rest + slide), middling → bounce, hard → crash.
-export const LAND_SPEED = 110 // impact below this rests the ship on the surface
-export const CRASH_SPEED = 340 // impact at/above this destroys the ship (costs a life)
+export const LAND_SPEED = 130 // impact below this rests the ship on the surface
+export const CRASH_SPEED = 430 // impact at/above this destroys the ship (costs a life)
 export const BOUNCE_RESTITUTION = 0.45 // fraction of normal velocity kept on a mid-speed bounce
 
 // Per-second tangential damping applied while a ship is resting on a surface:
