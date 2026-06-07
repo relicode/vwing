@@ -46,6 +46,7 @@ const makeWorld = (over?: Partial<World>): World => ({
   beams: [],
   blocks: [],
   water: [],
+  shake: 0,
   rng: createRng(1),
   ...over,
 })

@@ -16,6 +16,8 @@ import {
   INFANTRY_PICKUP_SPEED,
   PLAYER_ID,
   SECONDARY_MAX_CHARGE,
+  SHAKE_DECAY,
+  SHIP_DEATH_SHAKE,
   SHIP_FIRE_INTERVAL,
   SHIP_SPAWN_CLEAR_RADIUS,
   SHIP_START_LIVES,
@@ -85,6 +87,7 @@ const createWorld = (seed: number, forcedWeapon?: WeaponKind): World => {
     beams: [],
     blocks,
     water,
+    shake: 0,
     rng,
   }
 }
@@ -179,6 +182,7 @@ export const createEngine = async (): Promise<Engine> => {
   const destroyShip = (ship: Ship): void => {
     const isPlayer = ship.kind === ShipKind.PLAYER
     spawnExplosion(world.particles, ship.x, ship.y, isPlayer ? Color.SHIP : Color.ENEMY, world.rng, 34)
+    world.shake = Math.max(world.shake, SHIP_DEATH_SHAKE)
     if (isPlayer) {
       lives -= 1
       if (lives <= 0) {
@@ -310,6 +314,7 @@ export const createEngine = async (): Promise<Engine> => {
   }
 
   const step = (dt: number): void => {
+    if (world.shake > 0) world.shake = Math.max(0, world.shake - SHAKE_DECAY * dt)
     if (phase === GamePhase.PLAYING) {
       stepPlaying(dt)
     } else {

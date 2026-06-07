@@ -174,6 +174,7 @@ export type World = {
   beams: Beam[]
   blocks: Block[] // static, landable terrain
   water: WaterBody[] // bodies the ship can submerge into
+  shake: number // screen-shake amplitude (px); bumped by explosions, decays each frame
   rng: Rng
 }
 

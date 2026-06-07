@@ -2,11 +2,14 @@ import { Container, Graphics } from 'pixi.js'
 
 import { cameraOrigin } from '$/game/camera'
 import {
+  CAMERA_EASE_RATE,
+  CAMERA_SNAP_DIST,
   Color,
   DeviceKind,
   GamePhase,
   InfantryWeapon,
   PLAYER_ID,
+  SHAKE_FREQ,
   SHIP_MAX_HEALTH,
   SHIP_MAX_SHIELDS,
   ShipKind,
@@ -209,10 +212,29 @@ export const createRenderer = (rng: Rng): Renderer => {
   // Terrain is static; redraw the cached layer only when its block count changes
   // (i.e. a rock was destroyed, or a fresh run reset the arena).
   let terrainBlockCount = -1
+  // Eased camera state (smooth follow); undefined until the first frame snaps to the target.
+  let camX: number | undefined
+  let camY = 0
+  let lastTime = 0
 
   const draw = (world: World, phase: GamePhase): void => {
     const player = world.ships.find((ship) => ship.kind === ShipKind.PLAYER) ?? world.ships[0]
-    const camera = cameraOrigin(player)
+    const target = cameraOrigin(player)
+    if (camX === undefined || Math.hypot(target.x - camX, target.y - camY) > CAMERA_SNAP_DIST) {
+      camX = target.x // first frame or a big jump (respawn): snap, don't drift across the arena
+      camY = target.y
+    } else {
+      const dt = Math.min(0.05, Math.max(0, world.time - lastTime))
+      const ease = 1 - Math.exp(-CAMERA_EASE_RATE * dt)
+      camX += (target.x - camX) * ease
+      camY += (target.y - camY) * ease
+    }
+    lastTime = world.time
+    const camera = { x: camX, y: camY }
+    // Screen shake: wobble the whole view (stars + world) by the decaying amplitude.
+    const shakeX = world.shake > 0 ? Math.sin(world.time * SHAKE_FREQ) * world.shake : 0
+    const shakeY = world.shake > 0 ? Math.cos(world.time * SHAKE_FREQ * 1.3) * world.shake : 0
+    view.position.set(shakeX, shakeY)
     worldLayer.position.set(-camera.x, -camera.y)
     drawStars(starLayer, stars, camera)
     if (world.blocks.length !== terrainBlockCount) {
