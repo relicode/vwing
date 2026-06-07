@@ -235,22 +235,54 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     }
   })
 
-  test('a landed grenadier lobs a grenade at an enemy in range', () => {
+  test('a landed grenadier plants on one knee to fire, lobbing mid-crouch', () => {
     const enemy = makeShip({ id: 1, kind: ShipKind.BOT, x: 200, y: 100 })
     const world = makeWorld([enemy], [infantry({ weapon: InfantryWeapon.GRENADE, x: 100, y: 100, attached: true })])
     world.blocks = [{ x: 40, y: 108, w: 120, h: 40, material: SurfaceMaterial.ROCK }] // ground beneath
-    updateDevices(world, 0.016)
+    updateDevices(world, 0.016) // cadence ready + target in sight → drops to a knee (no lob yet)
+    const crouched = world.devices.find((d) => d.kind === DeviceKind.INFANTRY)
+    if (crouched?.kind === DeviceKind.INFANTRY) expect(crouched.kneel).toBeGreaterThan(0) // kneeling first
+    expect(world.devices.some((d) => d.kind === DeviceKind.GRENADE)).toBe(false) // hasn't fired during wind-up
+    for (let i = 0; i < 60; i += 1) updateDevices(world, 1 / 60) // ~1s: the wind-up elapses and the round flies
     expect(world.devices.some((d) => d.kind === DeviceKind.GRENADE)).toBe(true)
   })
 
-  test('a landed grenadier drops to a knee right after launching its bazooka', () => {
-    const enemy = makeShip({ id: 1, kind: ShipKind.BOT, x: 200, y: 100 })
-    const world = makeWorld([enemy], [infantry({ weapon: InfantryWeapon.GRENADE, x: 100, y: 100, attached: true })])
-    world.blocks = [{ x: 40, y: 108, w: 120, h: 40, material: SurfaceMaterial.ROCK }] // ground beneath
-    updateDevices(world, 0.016)
+  test('a kneeling grenadier holds perfectly still through the crouch', () => {
+    const enemy = makeShip({ id: 1, kind: ShipKind.BOT, x: 300, y: 100 })
+    // already crouched (kneel set), well above the fire point so it just holds during these frames
+    const world = makeWorld(
+      [enemy],
+      [
+        infantry({
+          weapon: InfantryWeapon.GRENADE,
+          x: 100,
+          y: 100,
+          attached: true,
+          kneel: 1.5,
+          groundLeft: 40,
+          groundRight: 160,
+        }),
+      ]
+    )
+    world.blocks = [{ x: 40, y: 108, w: 120, h: 40, material: SurfaceMaterial.ROCK }]
+    for (let i = 0; i < 10; i += 1) updateDevices(world, 1 / 60) // ~0.17s, stays above INFANTRY_KNEEL_FIRE_AT
     const u = world.devices.find((d) => d.kind === DeviceKind.INFANTRY)
+    if (u?.kind === DeviceKind.INFANTRY) {
+      expect(u.x).toBe(100) // never drifted — crouched units don't patrol
+      expect(u.kneel).toBeGreaterThan(0)
+    }
+  })
+
+  test('a falling unit grazing the side of a wall slides past instead of sticking', () => {
+    const world = makeWorld([], [infantry({ x: 96, y: 100, vx: 0, vy: 50 })])
+    world.blocks = [{ x: 100, y: 0, w: 40, h: 400, material: SurfaceMaterial.BEDROCK }] // a tall wall to its right
+    updateDevices(world, 0.05)
+    const u = world.devices[0]
     expect(u?.kind).toBe(DeviceKind.INFANTRY)
-    if (u?.kind === DeviceKind.INFANTRY) expect(u.kneel).toBeGreaterThan(0) // crouched after the launch
+    if (u?.kind === DeviceKind.INFANTRY) {
+      expect(u.attached).toBe(false) // didn't latch onto the wall's side
+      expect(u.vy).toBeGreaterThan(0) // still falling past it (slides, doesn't stick)
+    }
   })
 
   test('a landed unit falls when the block beneath it is destroyed', () => {
