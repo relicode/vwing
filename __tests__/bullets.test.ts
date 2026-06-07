@@ -20,7 +20,7 @@ const makeShip = (over: Partial<Ship>): Ship => ({
   health: 100,
   shields: 50,
   weapon: WeaponKind.SCATTERGUN,
-  ammo: 0,
+  charge: 100,
   altCooldown: 0,
   disabled: 0,
   ...over,

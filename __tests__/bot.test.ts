@@ -22,7 +22,7 @@ const makeShip = (over: Partial<Ship>): Ship => ({
   health: 100,
   shields: 50,
   weapon: WeaponKind.SCATTERGUN,
-  ammo: 0,
+  charge: 0,
   altCooldown: 0,
   disabled: 0,
   ...over,
@@ -99,7 +99,7 @@ describe('decideBot', () => {
   })
 
   test('alt-fires when lined up with a charge ready', () => {
-    const self = makeShip({ angle: 0, ammo: 3, altCooldown: 0 })
+    const self = makeShip({ angle: 0, charge: 100, altCooldown: 0 })
     const target = makeTarget({ x: CENTER_X + 300, y: CENTER_Y })
     const d = decideBot(self, target, [])
     expect(d.firing).toBe(true)
@@ -108,12 +108,12 @@ describe('decideBot', () => {
 
   test('holds the secondary when out of charges or still cooling down', () => {
     const target = makeTarget({ x: CENTER_X + 300, y: CENTER_Y })
-    expect(decideBot(makeShip({ angle: 0, ammo: 0, altCooldown: 0 }), target, []).altFiring).toBe(false)
-    expect(decideBot(makeShip({ angle: 0, ammo: 3, altCooldown: 0.5 }), target, []).altFiring).toBe(false)
+    expect(decideBot(makeShip({ angle: 0, charge: 0, altCooldown: 0 }), target, []).altFiring).toBe(false)
+    expect(decideBot(makeShip({ angle: 0, charge: 100, altCooldown: 0.5 }), target, []).altFiring).toBe(false)
   })
 
   test('looses a long-range secondary past primary-cannon range', () => {
-    const self = makeShip({ angle: 0, ammo: 3, altCooldown: 0 })
+    const self = makeShip({ angle: 0, charge: 100, altCooldown: 0 })
     const target = makeTarget({ x: CENTER_X + 800, y: CENTER_Y }) // > BOT_FIRE_RANGE, < BOT_SECONDARY_RANGE
     const d = decideBot(self, target, [])
     expect(d.firing).toBe(false) // primary cannon can't reach

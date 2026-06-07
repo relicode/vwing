@@ -144,24 +144,28 @@ export const BOT_WALL_LOOKAHEAD = 0.85 // s of velocity projected when testing w
 export const BOT_DODGE_DIST = 220 // px gap to a terrain block that triggers an evasive turn
 
 // ── Secondary weapons ───────────────────────────────────────────────────────
-// One weapon is rolled onto each ship per life (limited charges). Per-weapon
-// charge count + cooldown live here; mechanic params follow, grouped per weapon.
+// One weapon is rolled onto each ship per life. Instead of a fixed ammo pool, the
+// secondary draws on a recharging energy bar: each use spends `cost`, the bar
+// regenerates over time, and `cooldown` still caps the firing rate.
 // (Secondary keybinding lives with the other keys in input.ts.)
 export const SECONDARY_DEPLOY_DIST = 22 // px ahead of the nose where devices spawn
+export const SECONDARY_MAX_CHARGE = 100 // full energy bar
+export const SECONDARY_REGEN = 22 // energy/s the bar refills (full in ~4.5s)
+export const INFANTRY_PICKUP_REFUND = 22 // energy returned when the owner rescues a unit
 
-export type WeaponConfig = { name: string; ammo: number; cooldown: number }
+export type WeaponConfig = { name: string; cost: number; cooldown: number }
 
 export const WEAPON_CONFIG: Record<WeaponKind, WeaponConfig> = {
-  [WeaponKind.SCATTERGUN]: { name: 'Scattergun', ammo: 8, cooldown: 0.5 },
-  [WeaponKind.WATER_CANNON]: { name: 'Water Cannon', ammo: 60, cooldown: 0.05 },
-  [WeaponKind.INFANTRY]: { name: 'Infantry Drop', ammo: 12, cooldown: 0.3 }, // ammo = units; cooldown = hold-to-deploy cadence
-  [WeaponKind.SEEKER]: { name: 'Seeker Missiles', ammo: 3, cooldown: 0.8 },
-  [WeaponKind.RAIL]: { name: 'Rail Lance', ammo: 3, cooldown: 0.9 },
-  [WeaponKind.GRENADE]: { name: 'Grenade Lob', ammo: 4, cooldown: 0.7 },
-  [WeaponKind.MINES]: { name: 'Proximity Mines', ammo: 3, cooldown: 0.6 },
-  [WeaponKind.FLAK]: { name: 'Flak Burst', ammo: 4, cooldown: 0.6 },
-  [WeaponKind.EMP]: { name: 'EMP Orb', ammo: 3, cooldown: 0.8 },
-  [WeaponKind.SINGULARITY]: { name: 'Singularity', ammo: 1, cooldown: 1.5 },
+  [WeaponKind.SCATTERGUN]: { name: 'Scattergun', cost: 22, cooldown: 0.5 },
+  [WeaponKind.WATER_CANNON]: { name: 'Water Cannon', cost: 3, cooldown: 0.05 }, // cheap stream
+  [WeaponKind.INFANTRY]: { name: 'Infantry Drop', cost: 14, cooldown: 0.3 }, // per trooper while held
+  [WeaponKind.SEEKER]: { name: 'Seeker Missiles', cost: 55, cooldown: 0.8 },
+  [WeaponKind.RAIL]: { name: 'Rail Lance', cost: 80, cooldown: 0.9 },
+  [WeaponKind.GRENADE]: { name: 'Grenade Lob', cost: 32, cooldown: 0.7 },
+  [WeaponKind.MINES]: { name: 'Proximity Mines', cost: 55, cooldown: 0.6 },
+  [WeaponKind.FLAK]: { name: 'Flak Burst', cost: 30, cooldown: 0.6 },
+  [WeaponKind.EMP]: { name: 'EMP Orb', cost: 50, cooldown: 0.8 },
+  [WeaponKind.SINGULARITY]: { name: 'Singularity', cost: 100, cooldown: 1.5 }, // a full bar
 }
 
 // Pool the random respawn assignment draws from (all ten, equal odds).
