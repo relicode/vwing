@@ -26,7 +26,6 @@ const GameOverScreen = ({ status, onRestart }: GameOverScreenProps) => {
       <Typography sx={{ color: isNewBest ? 'primary.main' : 'text.secondary', fontWeight: isNewBest ? 700 : 400 }}>
         {isNewBest ? 'NEW BEST!' : `Best ${status.best.toLocaleString()}`}
       </Typography>
-      <Typography sx={{ color: 'text.secondary', fontSize: 13 }}>Reached wave {status.wave}</Typography>
       <Button variant="contained" size="large" onClick={onRestart} autoFocus sx={{ px: 5, mt: 1 }}>
         Fly again
       </Button>

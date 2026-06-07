@@ -9,21 +9,18 @@ import {
   SHIP_MAX_HEALTH,
   SHIP_MAX_SHIELDS,
   ShipKind,
+  SurfaceMaterial,
   VIEW_HEIGHT,
   VIEW_WIDTH,
-  WALL_THICKNESS,
-  WORLD_HEIGHT,
-  WORLD_WIDTH,
 } from '$/game/constants'
-import { clamp, TWO_PI } from '$/game/math'
+import { clamp } from '$/game/math'
 import { randRange } from '$/game/rng'
-import type { Asteroid, Beam, Device, Particle, Rng, Ship, Vec2, WaterPool, World } from '$/game/types'
+import type { Beam, Block, Device, Particle, Rng, Ship, Vec2, WaterBody, World } from '$/game/types'
 
 type Star = { x: number; y: number; depth: number; size: number }
 
 const STAR_COUNT = 150
 const WING_SPREAD = 2.4 // radians from nose to each tail corner
-const FLOOR_Y = WORLD_HEIGHT - WALL_THICKNESS
 
 export type Renderer = {
   view: Container
@@ -56,26 +53,20 @@ const drawStars = (g: Graphics, stars: Star[], camera: Vec2): void => {
   }
 }
 
-// World border (drawn once): lethal wall bands plus a neon inner edge.
-const drawWalls = (g: Graphics): void => {
-  const t = WALL_THICKNESS
-  g.rect(0, 0, WORLD_WIDTH, t)
-  g.rect(0, WORLD_HEIGHT - t, WORLD_WIDTH, t)
-  g.rect(0, 0, t, WORLD_HEIGHT)
-  g.rect(WORLD_WIDTH - t, 0, t, WORLD_HEIGHT)
-  g.fill({ color: Color.WALL })
-  g.rect(t, t, WORLD_WIDTH - t * 2, WORLD_HEIGHT - t * 2).stroke({ width: 3, color: Color.WALL_EDGE, alpha: 0.85 })
+// Per-material fill + brighter edge for terrain blocks.
+const BLOCK_STYLE: Record<SurfaceMaterial, { fill: number; edge: number }> = {
+  [SurfaceMaterial.BEDROCK]: { fill: Color.BEDROCK, edge: Color.BEDROCK_EDGE },
+  [SurfaceMaterial.ROCK]: { fill: Color.ROCK, edge: Color.ROCK_EDGE },
+  [SurfaceMaterial.GRASS]: { fill: Color.GRASS, edge: Color.GRASS_EDGE },
+  [SurfaceMaterial.ICE]: { fill: Color.ICE, edge: Color.ICE_EDGE },
 }
 
-const drawAsteroid = (g: Graphics, asteroid: Asteroid): void => {
-  const points: number[] = []
-  const n = asteroid.verts.length
-  for (let i = 0; i < n; i += 1) {
-    const angle = asteroid.angle + (i / n) * TWO_PI
-    const r = asteroid.radius * asteroid.verts[i]
-    points.push(asteroid.x + Math.cos(angle) * r, asteroid.y + Math.sin(angle) * r)
+// Static terrain: a filled rect per block with a brighter material edge.
+const drawBlocks = (g: Graphics, blocks: Block[]): void => {
+  for (const b of blocks) {
+    const style = BLOCK_STYLE[b.material]
+    g.rect(b.x, b.y, b.w, b.h).fill({ color: style.fill }).stroke({ width: 2, color: style.edge, alpha: 0.8 })
   }
-  g.poly(points).fill({ color: Color.ASTEROID_FILL }).stroke({ width: 2, color: Color.ASTEROID_EDGE, alpha: 0.9 })
 }
 
 const drawParticles = (g: Graphics, particles: Particle[]): void => {
@@ -84,12 +75,11 @@ const drawParticles = (g: Graphics, particles: Particle[]): void => {
   }
 }
 
-// Floor pools: a translucent body with a brighter surface line.
-const drawWater = (g: Graphics, pools: WaterPool[]): void => {
-  for (const pool of pools) {
-    const top = FLOOR_Y - pool.level
-    g.rect(pool.x, top, pool.width, pool.level).fill({ color: Color.WATER, alpha: 0.38 })
-    g.rect(pool.x, top, pool.width, 2).fill({ color: Color.WATER_EDGE, alpha: 0.8 })
+// Water bodies: a translucent volume with a brighter surface line at the top.
+const drawWaterBodies = (g: Graphics, water: WaterBody[]): void => {
+  for (const b of water) {
+    g.rect(b.x, b.y, b.w, b.h).fill({ color: Color.WATER, alpha: 0.38 })
+    g.rect(b.x, b.y, b.w, 2).fill({ color: Color.WATER_EDGE, alpha: 0.8 })
   }
 }
 
@@ -178,21 +168,27 @@ export const createRenderer = (rng: Rng): Renderer => {
   const view = new Container()
   const starLayer = new Graphics()
   const worldLayer = new Container()
-  const wallGfx = new Graphics()
+  const terrainGfx = new Graphics()
   const dynGfx = new Graphics()
-  worldLayer.addChild(wallGfx, dynGfx)
+  worldLayer.addChild(terrainGfx, dynGfx)
   view.addChild(starLayer, worldLayer)
   const stars = createStars(rng)
-  drawWalls(wallGfx)
+  // Terrain is static; redraw the cached layer only when its block count changes
+  // (i.e. a rock was destroyed, or a fresh run reset the arena).
+  let terrainBlockCount = -1
 
   const draw = (world: World, phase: GamePhase): void => {
     const player = world.ships.find((ship) => ship.kind === ShipKind.PLAYER) ?? world.ships[0]
     const camera = cameraOrigin(player)
     worldLayer.position.set(-camera.x, -camera.y)
     drawStars(starLayer, stars, camera)
+    if (world.blocks.length !== terrainBlockCount) {
+      terrainBlockCount = world.blocks.length
+      terrainGfx.clear()
+      drawBlocks(terrainGfx, world.blocks)
+      drawWaterBodies(terrainGfx, world.water)
+    }
     dynGfx.clear()
-    drawWater(dynGfx, world.pools)
-    for (const asteroid of world.asteroids) drawAsteroid(dynGfx, asteroid)
     for (const device of world.devices) drawDevice(dynGfx, device)
     for (const bullet of world.bullets) {
       const color = bullet.color ?? (bullet.owner === PLAYER_ID ? Color.BULLET : Color.BULLET_ENEMY)

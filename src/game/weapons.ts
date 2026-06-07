@@ -43,8 +43,6 @@ import {
   WATER_CANNON_PUSH,
   WATER_CANNON_SPEED,
   WATER_CANNON_SPREAD,
-  WATER_SPRAY_REACH,
-  WATER_TRANSFER,
   WEAPON_CONFIG,
   WEAPON_POOL,
   WELL_DEPLOY_DIST,
@@ -56,7 +54,6 @@ import {
 } from '$/game/constants'
 import { pick, randRange } from '$/game/rng'
 import type { Rng, Ship, World } from '$/game/types'
-import { transferWater } from '$/game/water'
 
 // Roll a fresh random secondary for a (re)spawning ship.
 export const assignWeapon = (rng: Rng): WeaponKind => pick(rng, WEAPON_POOL)
@@ -221,8 +218,6 @@ export const fireSecondary = (world: World, ship: Ship): Ship[] => {
         push: WATER_CANNON_PUSH,
         color: Color.WATER_EDGE,
       })
-      // Siphon from the pool under the ship and spray it where the stream is aimed.
-      transferWater(world.pools, ship.x, ship.x + Math.cos(ship.angle) * WATER_SPRAY_REACH, WATER_TRANSFER)
       return []
     case WeaponKind.RAIL: {
       const hit = fireRail(world, ship)

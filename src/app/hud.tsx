@@ -71,9 +71,6 @@ const Hud = ({ status }: HudProps) => (
           <ShipPip key={slot} />
         ))}
       </Stack>
-      <Typography sx={{ fontSize: 11, letterSpacing: '0.25em', color: 'text.secondary', lineHeight: 1 }}>
-        WAVE {status.wave}
-      </Typography>
       <Typography
         sx={{
           fontSize: 13,

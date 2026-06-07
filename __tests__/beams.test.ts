@@ -28,14 +28,13 @@ const makeShip = (over: Partial<Ship>): Ship => ({
 
 const makeWorld = (ships: Ship[]): World => ({
   time: 0,
-  wave: 1,
   ships,
   bullets: [],
-  asteroids: [],
   particles: [],
   devices: [],
   beams: [],
-  pools: [],
+  blocks: [],
+  water: [],
   rng: createRng(1),
 })
 
