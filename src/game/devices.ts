@@ -2,6 +2,7 @@ import { pushBullet } from '$/game/bullets'
 import { circleRectContact, circlesOverlap, segmentIntersectsRect } from '$/game/collision'
 import { applyDamage, applyDisable, isDead } from '$/game/combat'
 import {
+  BLAST_SHAKE,
   Color,
   DeviceKind,
   FLAK_SHARD_DAMAGE,
@@ -81,6 +82,7 @@ const areaDamage = (
   deadDevices: Set<Device>,
   exclude?: Ship
 ): void => {
+  world.shake = Math.max(world.shake, BLAST_SHAKE)
   for (const ship of world.ships) {
     if (ship.id === ownerId || ship.invuln > 0 || ship === exclude) continue
     if (Math.hypot(ship.x - x, ship.y - y) > radius) continue

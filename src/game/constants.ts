@@ -56,6 +56,14 @@ export enum InfantryWeapon {
   GRENADE = 'GRENADE',
 }
 
+// Camera follow + screen shake.
+export const CAMERA_EASE_RATE = 9 // higher = snappier follow (per-second easing toward the target)
+export const CAMERA_SNAP_DIST = 400 // px target jump beyond which the camera snaps (respawns) not eases
+export const SHAKE_DECAY = 26 // shake amplitude lost per second
+export const SHAKE_FREQ = 47 // rad/s wobble frequency of the shake offset
+export const SHIP_DEATH_SHAKE = 17 // shake amplitude (px) on a ship explosion
+export const BLAST_SHAKE = 11 // shake amplitude (px) on a mine/seeker blast
+
 // Camera viewport (the canvas) and the larger world it pans across.
 export const VIEW_WIDTH = 900
 export const VIEW_HEIGHT = 600

@@ -132,6 +132,7 @@ describe('decideBot', () => {
       beams: [],
       blocks: [],
       water: [],
+      shake: 0,
       rng: () => 0,
     }
     const input = createBotInput(self, () => world)
