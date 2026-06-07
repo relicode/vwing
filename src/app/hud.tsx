@@ -2,7 +2,7 @@ import Box from '@mui/material/Box'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
 
-import { SHIP_START_LIVES, WEAPON_CONFIG } from '$/game/constants'
+import { SECONDARY_MAX_CHARGE, SHIP_START_LIVES, WEAPON_CONFIG } from '$/game/constants'
 import type { EngineStatus } from '$/game/types'
 
 // Stable per-slot keys (lives only ever counts down from the max), so the life pips
@@ -50,43 +50,56 @@ type HudProps = {
   status: EngineStatus
 }
 
-const Hud = ({ status }: HudProps) => (
-  <Box
-    sx={{
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      p: 1.5,
-      pointerEvents: 'none',
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'flex-start',
-    }}
-  >
-    <Stat label="SCORE" value={status.score.toLocaleString()} />
-    <Stack spacing={0.5} sx={{ alignItems: 'center', pt: 0.25 }}>
-      <Stack direction="row" spacing={0.75} aria-label={`${status.lives} lives`}>
-        {LIFE_SLOTS.slice(0, status.lives).map((slot) => (
-          <ShipPip key={slot} />
-        ))}
+const Hud = ({ status }: HudProps) => {
+  // "Ready" once the bar holds enough energy to fire the current secondary at least once.
+  const ready = status.charge >= (WEAPON_CONFIG[status.weapon].cost / SECONDARY_MAX_CHARGE) * 100
+  return (
+    <Box
+      sx={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        p: 1.5,
+        pointerEvents: 'none',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'flex-start',
+      }}
+    >
+      <Stat label="SCORE" value={status.score.toLocaleString()} />
+      <Stack spacing={0.5} sx={{ alignItems: 'center', pt: 0.25 }}>
+        <Stack direction="row" spacing={0.75} aria-label={`${status.lives} lives`}>
+          {LIFE_SLOTS.slice(0, status.lives).map((slot) => (
+            <ShipPip key={slot} />
+          ))}
+        </Stack>
+        <Typography
+          sx={{
+            fontSize: 13,
+            fontWeight: 700,
+            letterSpacing: '0.12em',
+            lineHeight: 1.2,
+            color: ready ? 'primary.main' : 'text.secondary',
+            textShadow: ready ? '0 0 8px currentColor' : 'none',
+          }}
+        >
+          {WEAPON_CONFIG[status.weapon].name.toUpperCase()}
+        </Typography>
+        <Box sx={{ width: 96, height: 4, borderRadius: 2, bgcolor: 'rgba(255,255,255,0.12)', overflow: 'hidden' }}>
+          <Box
+            sx={{
+              width: `${status.charge}%`,
+              height: '100%',
+              bgcolor: ready ? 'primary.main' : 'secondary.main',
+              transition: 'width 0.12s linear',
+            }}
+          />
+        </Box>
       </Stack>
-      <Typography
-        sx={{
-          fontSize: 13,
-          fontWeight: 700,
-          letterSpacing: '0.12em',
-          lineHeight: 1.2,
-          color: status.ammo > 0 ? 'primary.main' : 'text.secondary',
-          textShadow: status.ammo > 0 ? '0 0 8px currentColor' : 'none',
-        }}
-      >
-        {WEAPON_CONFIG[status.weapon].name.toUpperCase()}
-        {status.ammo > 0 ? ` ×${status.ammo}` : ''}
-      </Typography>
-    </Stack>
-    <Stat label="BEST" value={status.best.toLocaleString()} align="right" />
-  </Box>
-)
+      <Stat label="BEST" value={status.best.toLocaleString()} align="right" />
+    </Box>
+  )
+}
 
 export default Hud

@@ -21,7 +21,7 @@ export type Ship = {
   health: number // hull points; ship is destroyed at <= 0
   shields: number // absorbs damage before hull, regenerates over time
   weapon: WeaponKind // current random secondary, rerolled each respawn
-  ammo: number // remaining secondary charges this life (0 = primary only)
+  charge: number // secondary energy (0..SECONDARY_MAX_CHARGE); spent per use, regenerates
   altCooldown: number // s until the secondary can fire again
   disabled: number // s of EMP lockout remaining (no thrust/turn/fire)
 }
@@ -184,5 +184,5 @@ export type EngineStatus = {
   best: number
   lives: number
   weapon: WeaponKind // the PLAYER ship's current secondary
-  ammo: number // the PLAYER ship's remaining secondary charges
+  charge: number // the PLAYER ship's secondary energy as a 0..100 percent (for the HUD bar)
 }

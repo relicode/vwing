@@ -31,7 +31,7 @@ const makeShip = (over: Partial<Ship>): Ship => ({
   health: 100,
   shields: 50,
   weapon: WeaponKind.SCATTERGUN,
-  ammo: 5,
+  charge: 100,
   altCooldown: 0,
   disabled: 0,
   ...over,
@@ -58,25 +58,25 @@ describe('assignWeapon', () => {
 })
 
 describe('fireSecondary — gating', () => {
-  test('spends a charge and arms the cooldown', () => {
-    const ship = makeShip({ weapon: WeaponKind.SCATTERGUN, ammo: 5 })
+  test('spends the energy cost and arms the cooldown', () => {
+    const ship = makeShip({ weapon: WeaponKind.SCATTERGUN, charge: 100 })
     const world = makeWorld({ ships: [ship] })
     fireSecondary(world, ship)
-    expect(ship.ammo).toBe(4)
+    expect(ship.charge).toBe(100 - WEAPON_CONFIG[WeaponKind.SCATTERGUN].cost)
     expect(ship.altCooldown).toBe(WEAPON_CONFIG[WeaponKind.SCATTERGUN].cooldown)
   })
 
-  test('is a no-op with no charges, while cooling down, or while disabled', () => {
-    const dry = makeShip({ ammo: 0 })
-    const cooling = makeShip({ ammo: 5, altCooldown: 0.4 })
-    const emp = makeShip({ ammo: 5, disabled: 1 })
+  test('is a no-op without enough energy, while cooling down, or while disabled', () => {
+    const dry = makeShip({ charge: 0 })
+    const cooling = makeShip({ charge: 100, altCooldown: 0.4 })
+    const emp = makeShip({ charge: 100, disabled: 1 })
     const world = makeWorld()
     expect(fireSecondary(world, dry)).toEqual([])
     expect(fireSecondary(world, cooling)).toEqual([])
     expect(fireSecondary(world, emp)).toEqual([])
     expect(world.bullets).toHaveLength(0)
     expect(world.devices).toHaveLength(0)
-    expect(cooling.ammo).toBe(5) // untouched
+    expect(cooling.charge).toBe(100) // untouched
   })
 })
 

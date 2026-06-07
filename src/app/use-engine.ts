@@ -10,7 +10,7 @@ const INITIAL_STATUS: EngineStatus = {
   best: 0,
   lives: SHIP_START_LIVES,
   weapon: WeaponKind.SCATTERGUN,
-  ammo: 0,
+  charge: 0,
 }
 
 // Boots the PixiJS engine once, tearing it down on unmount. Returns undefined until ready.

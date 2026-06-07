@@ -12,8 +12,10 @@ import {
   DeviceKind,
   GamePhase,
   INFANTRY_PICKUP_RADIUS,
+  INFANTRY_PICKUP_REFUND,
   INFANTRY_PICKUP_SPEED,
   PLAYER_ID,
+  SECONDARY_MAX_CHARGE,
   SHIP_FIRE_INTERVAL,
   SHIP_SPAWN_CLEAR_RADIUS,
   SHIP_START_LIVES,
@@ -21,7 +23,6 @@ import {
   SurfaceMaterial,
   VIEW_HEIGHT,
   VIEW_WIDTH,
-  WEAPON_CONFIG,
   WeaponKind,
 } from '$/game/constants'
 import { updateDevices } from '$/game/devices'
@@ -125,29 +126,32 @@ export const createEngine = async (): Promise<Engine> => {
   const listeners = new Set<() => void>()
   // The HUD reflects the local player (ships[0] by construction).
   const playerShip = (): Ship => world.ships[0]
+  // Secondary energy as a 0..100 percent — quantized so the HUD only re-renders ~20×/s while recharging.
+  const chargePct = (ship: Ship): number => Math.round((ship.charge / SECONDARY_MAX_CHARGE) * 100)
   let status: EngineStatus = {
     phase,
     score,
     lives,
     best,
     weapon: playerShip().weapon,
-    ammo: playerShip().ammo,
+    charge: chargePct(playerShip()),
   }
 
   const publish = (): void => {
     const flooredScore = Math.floor(score)
     const player = playerShip()
+    const charge = chargePct(player)
     if (
       status.phase === phase &&
       status.score === flooredScore &&
       status.lives === lives &&
       status.best === best &&
       status.weapon === player.weapon &&
-      status.ammo === player.ammo
+      status.charge === charge
     ) {
       return
     }
-    status = { phase, score: flooredScore, lives, best, weapon: player.weapon, ammo: player.ammo }
+    status = { phase, score: flooredScore, lives, best, weapon: player.weapon, charge }
     for (const listener of listeners) listener()
   }
 
@@ -259,10 +263,9 @@ export const createEngine = async (): Promise<Engine> => {
     }
   }
 
-  // An owner drifting slowly over its own landed/swimming infantry scoops one up, restoring
-  // an Infantry charge (and switching its secondary back to Infantry).
+  // An owner drifting slowly over its own landed/swimming infantry scoops one up, refunding
+  // secondary energy (and switching its secondary back to Infantry).
   const resolvePickups = (): void => {
-    const cap = WEAPON_CONFIG[WeaponKind.INFANTRY].ammo
     for (const { ship } of combatants) {
       if (Math.hypot(ship.vx, ship.vy) > INFANTRY_PICKUP_SPEED) continue
       const idx = world.devices.findIndex(
@@ -275,9 +278,8 @@ export const createEngine = async (): Promise<Engine> => {
       )
       if (idx < 0) continue
       world.devices.splice(idx, 1)
-      const wasInfantry = ship.weapon === WeaponKind.INFANTRY
       ship.weapon = WeaponKind.INFANTRY
-      ship.ammo = Math.min(cap, (wasInfantry ? ship.ammo : 0) + 1)
+      ship.charge = Math.min(SECONDARY_MAX_CHARGE, ship.charge + INFANTRY_PICKUP_REFUND)
       ship.altCooldown = 0
     }
   }

@@ -12,6 +12,7 @@ import {
   BOT_WALL_MARGIN,
   BULLET_SPEED,
   WALL_THICKNESS,
+  WEAPON_CONFIG,
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from '$/game/constants'
@@ -76,7 +77,7 @@ export const decideBot = (self: Ship, target: Ship, blocks: Block[]): BotDecisio
   // Thrust only helps when the nose is within 90° of the goal heading; otherwise the
   // engine would shove the bot the wrong way, so it turns to face the goal first.
   const thrustToward = (heading: number): boolean => Math.abs(wrapAngle(heading - self.angle)) < Math.PI / 2
-  const charged = self.ammo > 0 && self.altCooldown <= 0 && self.disabled <= 0
+  const charged = self.charge >= WEAPON_CONFIG[self.weapon].cost && self.altCooldown <= 0 && self.disabled <= 0
 
   const escapeHeading = wallEscapeHeading(self) ?? terrainEscapeHeading(self, blocks)
   if (escapeHeading !== undefined) {

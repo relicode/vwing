@@ -1,6 +1,8 @@
 import {
   GRAVITY,
   PLAYER_ID,
+  SECONDARY_MAX_CHARGE,
+  SECONDARY_REGEN,
   SHIP_DRAG,
   SHIP_MAX_HEALTH,
   SHIP_MAX_SHIELDS,
@@ -12,7 +14,6 @@ import {
   ShipKind,
   WATER_BUOYANCY,
   WATER_DRAG,
-  WEAPON_CONFIG,
   WeaponKind,
   WORLD_HEIGHT,
   WORLD_WIDTH,
@@ -61,7 +62,7 @@ export const createShip = (
     health: SHIP_MAX_HEALTH,
     shields: SHIP_MAX_SHIELDS,
     weapon,
-    ammo: WEAPON_CONFIG[weapon].ammo,
+    charge: SECONDARY_MAX_CHARGE,
     altCooldown: 0,
     disabled: 0,
   }
@@ -83,7 +84,7 @@ export const respawnShipAt = (ship: Ship, x: number, y: number, rng?: Rng, force
   ship.health = SHIP_MAX_HEALTH
   ship.shields = SHIP_MAX_SHIELDS
   ship.weapon = weapon
-  ship.ammo = WEAPON_CONFIG[weapon].ammo
+  ship.charge = SECONDARY_MAX_CHARGE
   ship.altCooldown = 0
   ship.disabled = 0
 }
@@ -121,4 +122,6 @@ export const updateShip = (ship: Ship, input: Input, dt: number, env?: ShipEnv):
   if (ship.invuln > 0) ship.invuln -= dt
   if (ship.disabled > 0) ship.disabled -= dt
   if (ship.shields < SHIP_MAX_SHIELDS) ship.shields = Math.min(SHIP_MAX_SHIELDS, ship.shields + SHIP_SHIELD_REGEN * dt)
+  if (ship.charge < SECONDARY_MAX_CHARGE)
+    ship.charge = Math.min(SECONDARY_MAX_CHARGE, ship.charge + SECONDARY_REGEN * dt)
 }
