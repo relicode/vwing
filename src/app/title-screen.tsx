@@ -48,6 +48,7 @@ const TitleScreen = ({ onStart, ready, weapon, onWeaponChange }: TitleScreenProp
       <Typography sx={{ color: 'text.secondary', fontSize: 13 }}>Secondary</Typography>
       <Select
         size="small"
+        displayEmpty
         value={weapon ?? ''}
         onChange={(event) => onWeaponChange((event.target.value || undefined) as WeaponKind | undefined)}
         sx={{ minWidth: 180, fontSize: 13, color: 'secondary.main' }}
