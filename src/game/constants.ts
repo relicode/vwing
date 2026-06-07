@@ -213,8 +213,11 @@ export const WATER_CANNON_SPREAD = 0.05 // rad jitter
 
 // Infantry Drop — held to stream units out one at a time; they parachute from high
 // drops, patrol the block they land on, and plink the nearest enemy in range/LOS. A unit
-// dies from any single hit, splats if it hits the ground too fast, swims (no shooting) if
-// it lands in water and drowns unless its owner scoops it up at low speed.
+// dies from any single hit, splats if it hits the ground too fast, falls if the block
+// under it is destroyed, dies instantly if it ends up embedded in a block, and is
+// splattered by any ship that rams through it. It swims (no shooting) if it lands in water
+// and drowns unless rescued. To be rescued, a unit walks/swims toward its own owner's
+// slow (landed) ship — reaching it restores the Infantry slot.
 export const INFANTRY_RADIUS = 5
 export const INFANTRY_FIRE_INTERVAL = 1.1 // s between rifle shots (landed)
 export const INFANTRY_GRENADE_FIRE_INTERVAL = 2.6 // s between grenade lobs (slower; landed grenadier)
@@ -228,19 +231,23 @@ export const INFANTRY_WALK_TURN_CHANCE = 0.012 // per-frame chance a patroller s
 export const INFANTRY_PICKUP_DELAY = 2 // s after deploy before a unit can be picked up
 export const INFANTRY_FALL_LETHAL = 300 // landing impact speed (px/s) above which a unit splats
 export const INFANTRY_SWIM_TIME = 6 // s a unit floats (can't shoot) in water before it drowns
-export const INFANTRY_SWIM_DRAG = 1.6 // horizontal damping coefficient while swimming
-export const INFANTRY_PICKUP_RADIUS = 30 // px: the owner this close can scoop a unit up
-export const INFANTRY_PICKUP_SPEED = 90 // px/s: the owner must be slower than this to pick up
+export const INFANTRY_SWIM_DRAG = 1.6 // horizontal damping coefficient while swimming (no rescuer near)
+export const INFANTRY_SWIM_SPEED = 34 // px/s a unit paddles toward a rescuing owner
+export const INFANTRY_PICKUP_RADIUS = 30 // px: a unit reaching this close to its slow owner is scooped up
+export const INFANTRY_PICKUP_SPEED = 90 // px/s: the owner must be slower than this to rescue a unit
+export const INFANTRY_RAM_SPEED = 150 // px/s: a ship faster than this splatters any trooper it touches
+export const INFANTRY_RESCUE_RANGE = 260 // px: a unit only walks/swims toward an owner this near
 export const INFANTRY_SINK_TIME = 1.5 // s a drowned unit sinks and fades before vanishing
 export const INFANTRY_SINK_SPEED = 36 // px/s it descends while sinking
 
-// Parachute: deploys on a fast fall and opens over PARACHUTE_OPEN_TIME, braking toward a
-// slow terminal descent. A high drop fully opens and lands safe; a too-low drop opens late
-// and still hits hard (the impact splat check below LETHAL still applies).
+// Parachute: deploys on a fast fall and opens over PARACHUTE_OPEN_TIME. The brake is
+// all-or-nothing — until the canopy is *fully* open it does nothing (the unit keeps
+// accelerating), then it snaps the descent to a slow terminal. So a high drop blooms in
+// time and lands soft; a too-low drop hits the ground before the canopy finishes and
+// splats (a clear, visible reason the trooper died).
 export const PARACHUTE_DEPLOY_SPEED = 200 // vy (px/s) past which a chute starts opening
 export const PARACHUTE_OPEN_TIME = 0.7 // s to ramp from just-deployed to fully open
-export const PARACHUTE_TERMINAL = 55 // px/s descent under a fully open chute
-export const PARACHUTE_BRAKE = 7 // pull strength toward terminal, scaled by openness
+export const PARACHUTE_TERMINAL = 55 // px/s descent once the canopy is fully open (hard clamp)
 
 // Seeker Missiles — limited-turn homing, area blast on contact.
 export const SEEKER_COUNT = 3

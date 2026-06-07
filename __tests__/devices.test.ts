@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { updateBeams } from '$/game/beams'
 import { DeviceKind, InfantryWeapon, ShipKind, SurfaceMaterial, WeaponKind } from '$/game/constants'
-import { updateDevices } from '$/game/devices'
+import { resolveInfantryContacts, updateDevices } from '$/game/devices'
 import { createRng } from '$/game/rng'
 import type { Device, Ship, World } from '$/game/types'
 
@@ -175,6 +175,7 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
 
   test('a landed unit persists past the old lifetime (no self-despawn)', () => {
     const world = makeWorld([], [infantry({ attached: true, x: 100, y: 100 })])
+    world.blocks = [{ x: 50, y: 106, w: 120, h: 40, material: SurfaceMaterial.ROCK }] // ground beneath
     for (let i = 0; i < 20; i += 1) updateDevices(world, 1) // 20 simulated seconds on the ground
     expect(world.devices.length).toBe(1)
   })
@@ -182,6 +183,7 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
   test('attached infantry shoots at an enemy in range', () => {
     const enemy = makeShip({ id: 1, kind: ShipKind.BOT, x: 200, y: 100 })
     const world = makeWorld([enemy], [infantry({ x: 200, y: 120, attached: true })])
+    world.blocks = [{ x: 140, y: 128, w: 120, h: 40, material: SurfaceMaterial.ROCK }] // ground beneath
     updateDevices(world, 0.016)
     expect(world.bullets.length).toBeGreaterThan(0)
   })
@@ -189,13 +191,17 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
   test('a landed unit holds fire when terrain blocks line of sight', () => {
     const enemy = makeShip({ id: 1, kind: ShipKind.BOT, x: 300, y: 100 })
     const world = makeWorld([enemy], [infantry({ x: 100, y: 100, attached: true })])
-    world.blocks = [{ x: 180, y: 60, w: 40, h: 80, material: SurfaceMaterial.BEDROCK }] // wall between them
+    world.blocks = [
+      { x: 40, y: 108, w: 120, h: 40, material: SurfaceMaterial.ROCK }, // ground beneath the unit
+      { x: 180, y: 60, w: 40, h: 80, material: SurfaceMaterial.BEDROCK }, // wall between them
+    ]
     updateDevices(world, 0.016)
     expect(world.bullets.length).toBe(0)
   })
 
   test('a landed unit patrols its block and never walks off the edges', () => {
     const world = makeWorld([], [infantry({ attached: true, x: 150, y: 94, groundLeft: 100, groundRight: 160 })])
+    world.blocks = [{ x: 100, y: 102, w: 60, h: 40, material: SurfaceMaterial.ROCK }] // the block it stands on
     for (let i = 0; i < 600; i += 1) updateDevices(world, 1 / 60) // 10s of patrolling
     const u = world.devices[0]
     expect(u?.kind).toBe(DeviceKind.INFANTRY)
@@ -219,8 +225,56 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
   test('a landed grenadier lobs a grenade at an enemy in range', () => {
     const enemy = makeShip({ id: 1, kind: ShipKind.BOT, x: 200, y: 100 })
     const world = makeWorld([enemy], [infantry({ weapon: InfantryWeapon.GRENADE, x: 100, y: 100, attached: true })])
+    world.blocks = [{ x: 40, y: 108, w: 120, h: 40, material: SurfaceMaterial.ROCK }] // ground beneath
     updateDevices(world, 0.016)
     expect(world.devices.some((d) => d.kind === DeviceKind.GRENADE)).toBe(true)
+  })
+
+  test('a landed unit falls when the block beneath it is destroyed', () => {
+    const world = makeWorld([], [infantry({ attached: true, x: 100, y: 100, groundLeft: 50, groundRight: 170 })])
+    world.blocks = [{ x: 50, y: 106, w: 120, h: 40, material: SurfaceMaterial.ROCK }]
+    updateDevices(world, 0.05)
+    const landed = world.devices[0]
+    if (landed?.kind === DeviceKind.INFANTRY) expect(landed.attached).toBe(true) // still standing
+    world.blocks = [] // the rock is shot away
+    updateDevices(world, 0.05) // loses footing this frame…
+    updateDevices(world, 0.1) // …and is falling the next
+    const u = world.devices[0]
+    expect(u?.kind).toBe(DeviceKind.INFANTRY)
+    if (u?.kind === DeviceKind.INFANTRY) {
+      expect(u.attached).toBe(false)
+      expect(u.vy).toBeGreaterThan(0)
+    }
+  })
+
+  test('a unit embedded in a block dies on the spot', () => {
+    const world = makeWorld([], [infantry({ attached: true, x: 100, y: 100, groundLeft: 50, groundRight: 170 })])
+    world.blocks = [{ x: 50, y: 80, w: 120, h: 80, material: SurfaceMaterial.ROCK }] // engulfs the unit
+    updateDevices(world, 0.016)
+    expect(world.devices.length).toBe(0)
+  })
+
+  test('a slow owner reaching its own trooper scoops it up and re-arms Infantry', () => {
+    const owner = makeShip({ id: 0, x: 100, y: 100, vx: 10, vy: 0, weapon: WeaponKind.RAIL, charge: 0 })
+    const world = makeWorld([owner], [infantry({ owner: 0, x: 100, y: 100, attached: true, pickupLock: 0 })])
+    resolveInfantryContacts(world)
+    expect(world.devices.length).toBe(0)
+    expect(owner.weapon).toBe(WeaponKind.INFANTRY)
+    expect(owner.charge).toBeGreaterThan(0)
+  })
+
+  test('a ship ramming through a trooper splatters it (own or enemy)', () => {
+    const rammer = makeShip({ id: 1, kind: ShipKind.BOT, x: 100, y: 100, vx: 300, vy: 0 })
+    const world = makeWorld([rammer], [infantry({ owner: 0, x: 100, y: 100, attached: true })])
+    resolveInfantryContacts(world)
+    expect(world.devices.length).toBe(0)
+  })
+
+  test('a slow owner cannot scoop a unit still in its pickup lockout', () => {
+    const owner = makeShip({ id: 0, x: 100, y: 100, vx: 0, vy: 0 })
+    const world = makeWorld([owner], [infantry({ owner: 0, x: 100, y: 100, attached: true, pickupLock: 1.5 })])
+    resolveInfantryContacts(world)
+    expect(world.devices.length).toBe(1) // locked out → untouched
   })
 
   test('lands in water and swims instead of attaching, holding fire', () => {
