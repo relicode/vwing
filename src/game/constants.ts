@@ -37,6 +37,15 @@ export enum WeaponKind {
   SINGULARITY = 'SINGULARITY',
 }
 
+// Static terrain surfaces. BEDROCK is indestructible; ROCK is removed by a weapon hit;
+// ICE is low-friction (the ship slides); GRASS grips like rock.
+export enum SurfaceMaterial {
+  BEDROCK = 'BEDROCK',
+  ROCK = 'ROCK',
+  GRASS = 'GRASS',
+  ICE = 'ICE',
+}
+
 // Deployed, world-resident entities spawned by some weapons (one Device[] array, switched on kind).
 export enum DeviceKind {
   MISSILE = 'MISSILE',
@@ -87,6 +96,15 @@ export const Color = {
   RAIL: 0xff5ad1,
   EMP: 0x7af7ff,
   SHRAPNEL: 0xffc97a,
+  // Terrain surfaces (fill + brighter edge).
+  BEDROCK: 0x2a3350,
+  BEDROCK_EDGE: 0x55659c,
+  ROCK: 0x5b4636,
+  ROCK_EDGE: 0x9a7a59,
+  GRASS: 0x3f7d3a,
+  GRASS_EDGE: 0x77c95f,
+  ICE: 0x8fd0e8,
+  ICE_EDGE: 0xd9f4ff,
 } as const
 
 // Global gravity: a constant downward pull. Thrust must beat it to climb.
@@ -252,6 +270,22 @@ export const WATER_BUOYANCY = 320 // px/s^2 upward at full submersion (beats GRA
 export const WATER_DRAG = 2.4 // extra exponential damping coefficient when submerged
 export const WATER_POOL_CAPACITY = 240 // max fill height (px)
 export const WATER_POOL_START_LEVEL = 150 // initial fill height (px)
+
+// ── Terrain landing model ─────────────────────────────────────────────────
+// On contact the ship is classified by `impact` = closing speed (px/s) along the
+// surface normal: gentle → land (rest + slide), middling → bounce, hard → crash.
+export const LAND_SPEED = 110 // impact below this rests the ship on the surface
+export const CRASH_SPEED = 340 // impact at/above this destroys the ship (costs a life)
+export const BOUNCE_RESTITUTION = 0.45 // fraction of normal velocity kept on a mid-speed bounce
+
+// Per-second tangential damping applied while a ship is resting on a surface:
+// ICE keeps almost all speed (slippery), the others grip and shed it quickly.
+export const SURFACE_FRICTION: Record<SurfaceMaterial, number> = {
+  [SurfaceMaterial.BEDROCK]: 6,
+  [SurfaceMaterial.ROCK]: 6,
+  [SurfaceMaterial.GRASS]: 7,
+  [SurfaceMaterial.ICE]: 0.3,
+}
 
 // Asteroid waves.
 export const ASTEROID_BASE_COUNT = 5 // large rocks in wave 1

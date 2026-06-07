@@ -1,4 +1,4 @@
-import type { AsteroidSize, DeviceKind, GamePhase, ShipKind, WeaponKind } from '$/game/constants'
+import type { AsteroidSize, DeviceKind, GamePhase, ShipKind, SurfaceMaterial, WeaponKind } from '$/game/constants'
 
 export type Vec2 = { x: number; y: number }
 
@@ -154,6 +154,25 @@ export type WaterPool = {
   width: number
   level: number // current fill height above the floor
   capacity: number // max fill height
+}
+
+// A static, landable terrain structure: an axis-aligned rectangle (top-left + size)
+// tagged with a surface material that drives destructibility and landing friction.
+export type Block = {
+  x: number
+  y: number
+  w: number
+  h: number
+  material: SurfaceMaterial
+}
+
+// A body of water: `y` is the surface (top), `h` the depth down to its bottom.
+// A ship below the surface within the x-span gets buoyancy + drag (see water.ts).
+export type WaterBody = {
+  x: number
+  y: number // surface (top) in world space
+  w: number
+  h: number // depth from the surface to the bottom
 }
 
 // The full mutable simulation. Owned by the engine closure (never module-level).
