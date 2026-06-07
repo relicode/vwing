@@ -305,6 +305,8 @@ export const WELL_DEPLOY_DIST = 240 // px ahead of the ship where the well ancho
 // their depths are authored in terrain-map.ts.
 export const WATER_BUOYANCY = 320 // px/s^2 upward at full submersion (beats GRAVITY → floats)
 export const WATER_DRAG = 2.4 // extra exponential damping coefficient when submerged
+export const SPLASH_MIN_SPEED = 130 // |vy| above which crossing the surface throws a splash
+export const SPLASH_PARTICLES = 11 // droplets per splash
 
 // ── Terrain landing model ─────────────────────────────────────────────────
 // On contact the ship is classified by `impact` = closing speed (px/s) along the
