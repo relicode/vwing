@@ -5,6 +5,7 @@ import {
   Color,
   DeviceKind,
   GamePhase,
+  InfantryWeapon,
   PLAYER_ID,
   SHIP_MAX_HEALTH,
   SHIP_MAX_SHIELDS,
@@ -100,12 +101,41 @@ const drawDevice = (g: Graphics, d: Device): void => {
       g.circle(d.x, d.y, d.radius * 0.4).fill({ color })
       break
     }
-    case DeviceKind.INFANTRY:
-      g.rect(d.x - d.radius * 0.5, d.y - d.radius, d.radius, d.radius * 1.6).fill({
-        color: Color.INFANTRY,
-        alpha: d.sinking > 0 ? 0.3 : d.swim > 0 ? 0.5 : 1, // fading as it sinks, dim while swimming
-      })
+    case DeviceKind.INFANTRY: {
+      // Cannon-Fodder-style trooper: head + torso, a weapon that reads its type, facing its
+      // movement/aim direction, with a parachute canopy overhead while descending.
+      const r = d.radius
+      const f = d.facing >= 0 ? 1 : -1
+      const alpha = d.sinking > 0 ? 0.3 : d.swim > 0 ? 0.55 : 1
+      if (d.chute >= 0) {
+        const open = 0.35 + d.chute * 0.65 // canopy widens as the chute opens
+        const cw = r * 3 * open
+        const cy = d.y - r * 3.4
+        g.moveTo(d.x - cw, cy)
+          .quadraticCurveTo(d.x, cy - r * 2 * open, d.x + cw, cy)
+          .stroke({ width: 2, color: Color.PARACHUTE, alpha: 0.9 })
+        g.moveTo(d.x - cw, cy)
+          .lineTo(d.x, d.y - r)
+          .stroke({ width: 1, color: Color.PARACHUTE, alpha: 0.55 })
+        g.moveTo(d.x + cw, cy)
+          .lineTo(d.x, d.y - r)
+          .stroke({ width: 1, color: Color.PARACHUTE, alpha: 0.55 })
+      }
+      g.rect(d.x - r * 0.5, d.y - r, r, r * 1.6).fill({ color: Color.INFANTRY, alpha }) // torso
+      g.circle(d.x, d.y - r * 1.2, r * 0.55).fill({ color: Color.INFANTRY, alpha }) // head
+      if (d.weapon === InfantryWeapon.GRENADE) {
+        // stubby launcher, angled up
+        g.moveTo(d.x, d.y - r * 0.2)
+          .lineTo(d.x + f * r * 1.7, d.y - r * 0.9)
+          .stroke({ width: 2.4, color: Color.GRENADE, alpha })
+      } else {
+        // thin rifle, level
+        g.moveTo(d.x, d.y - r * 0.2)
+          .lineTo(d.x + f * r * 2, d.y - r * 0.2)
+          .stroke({ width: 1.4, color: Color.SHIP_CORE, alpha })
+      }
       break
+    }
     case DeviceKind.GRENADE:
       g.circle(d.x, d.y, d.radius).fill({ color: Color.GRENADE })
       break
