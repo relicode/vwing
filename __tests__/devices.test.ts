@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { updateBeams } from '$/game/beams'
-import { DeviceKind, ShipKind, WALL_THICKNESS, WeaponKind, WORLD_HEIGHT } from '$/game/constants'
+import { DeviceKind, ShipKind, SurfaceMaterial, WeaponKind } from '$/game/constants'
 import { updateDevices } from '$/game/devices'
 import { createRng } from '$/game/rng'
 import type { Device, Ship, World } from '$/game/types'
@@ -134,43 +134,63 @@ describe('updateDevices — mines', () => {
 })
 
 describe('updateDevices — infantry / grenade / flak / well', () => {
-  test('infantry falls under gravity and attaches to the floor', () => {
-    const inf: Device = {
-      kind: DeviceKind.INFANTRY,
-      x: 100,
-      y: WORLD_HEIGHT - WALL_THICKNESS - 6 - 1, // just above the floor
-      vx: 0,
-      vy: 0,
-      owner: 0,
-      radius: 6,
-      life: 9,
-      attached: false,
-      fireCooldown: 1,
-    }
-    const world = makeWorld([], [inf])
+  const infantry = (over: Partial<Extract<Device, { kind: DeviceKind.INFANTRY }>>): Device => ({
+    kind: DeviceKind.INFANTRY,
+    x: 100,
+    y: 193,
+    vx: 0,
+    vy: 0,
+    owner: 0,
+    radius: 6,
+    life: 9,
+    attached: false,
+    swim: 0,
+    fireCooldown: 0,
+    ...over,
+  })
+
+  test('falls under gravity and lands on a block when it hits slowly', () => {
+    const world = makeWorld([], [infantry({})])
+    world.blocks = [{ x: 0, y: 200, w: 200, h: 80, material: SurfaceMaterial.ROCK }]
     updateDevices(world, 0.2)
     const live = world.devices[0]
-    expect(live.kind).toBe(DeviceKind.INFANTRY)
-    if (live.kind === DeviceKind.INFANTRY) expect(live.attached).toBe(true)
+    expect(live?.kind).toBe(DeviceKind.INFANTRY)
+    if (live?.kind === DeviceKind.INFANTRY) expect(live.attached).toBe(true)
+  })
+
+  test('splats when it lands too fast (dropped from too high)', () => {
+    const world = makeWorld([], [infantry({ vy: 400 })])
+    world.blocks = [{ x: 0, y: 200, w: 200, h: 80, material: SurfaceMaterial.ROCK }]
+    updateDevices(world, 0.05)
+    expect(world.devices.length).toBe(0)
   })
 
   test('attached infantry shoots at an enemy in range', () => {
     const enemy = makeShip({ id: 1, kind: ShipKind.BOT, x: 200, y: 100 })
-    const inf: Device = {
-      kind: DeviceKind.INFANTRY,
-      x: 200,
-      y: 120,
-      vx: 0,
-      vy: 0,
-      owner: 0,
-      radius: 6,
-      life: 9,
-      attached: true,
-      fireCooldown: 0,
-    }
-    const world = makeWorld([enemy], [inf])
+    const world = makeWorld([enemy], [infantry({ x: 200, y: 120, attached: true })])
     updateDevices(world, 0.016)
     expect(world.bullets.length).toBeGreaterThan(0)
+  })
+
+  test('lands in water and swims instead of attaching, holding fire', () => {
+    const enemy = makeShip({ id: 1, kind: ShipKind.BOT, x: 100, y: 60 }) // in range, but it must not shoot
+    const world = makeWorld([enemy], [infantry({ y: 194 })])
+    world.water = [{ x: 0, y: 200, w: 400, h: 200 }]
+    updateDevices(world, 0.2)
+    const live = world.devices[0]
+    expect(live?.kind).toBe(DeviceKind.INFANTRY)
+    if (live?.kind === DeviceKind.INFANTRY) {
+      expect(live.swim).toBeGreaterThan(0)
+      expect(live.attached).toBe(false)
+    }
+    expect(world.bullets.length).toBe(0)
+  })
+
+  test('a swimming unit drowns when its swim timer elapses', () => {
+    const world = makeWorld([], [infantry({ y: 205, swim: 0.05 })])
+    world.water = [{ x: 0, y: 200, w: 400, h: 200 }]
+    updateDevices(world, 0.1)
+    expect(world.devices.length).toBe(0)
   })
 
   test('grenade falls and bursts into shards on fuse', () => {
