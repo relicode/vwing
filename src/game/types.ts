@@ -1,4 +1,4 @@
-import type { DeviceKind, GamePhase, ShipKind, SurfaceMaterial, WeaponKind } from '$/game/constants'
+import type { DeviceKind, GamePhase, InfantryWeapon, ShipKind, SurfaceMaterial, WeaponKind } from '$/game/constants'
 
 export type Vec2 = { x: number; y: number }
 
@@ -90,9 +90,16 @@ export type Device =
       vy: number
       owner: number
       radius: number
-      attached: boolean // true once it lands on a surface (then it stays put + shoots)
+      weapon: InfantryWeapon // RIFLE (straight shots) or GRENADE (lobbed) — rolled on deploy
+      attached: boolean // true once it lands on a surface (then it patrols + shoots)
       swim: number // s of floating left while in water (0 = on land / airborne); drowns at 0
       sinking: number // s of sinking left after drowning (> 0 = a corpse descending + fading)
+      chute: number // parachute: -1 = none; 0..1 = deployed openness while descending
+      pickupLock: number // s before this unit can be picked up (anti instant re-grab)
+      walkDir: number // -1 / +1 patrol direction along the ground
+      facing: number // -1 / +1 render facing (aim direction, else walk direction)
+      groundLeft: number // patrol bound: left edge of the supporting block (world x)
+      groundRight: number // patrol bound: right edge of the supporting block (world x)
       fireCooldown: number
     }
   | {

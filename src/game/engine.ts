@@ -269,6 +269,7 @@ export const createEngine = async (): Promise<Engine> => {
         (d) =>
           d.kind === DeviceKind.INFANTRY &&
           d.owner === ship.id &&
+          d.pickupLock <= 0 &&
           (d.attached || d.swim > 0) &&
           circlesOverlap(ship.x, ship.y, INFANTRY_PICKUP_RADIUS, d.x, d.y, d.radius)
       )

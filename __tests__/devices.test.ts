@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { updateBeams } from '$/game/beams'
-import { DeviceKind, ShipKind, SurfaceMaterial, WeaponKind } from '$/game/constants'
+import { DeviceKind, InfantryWeapon, ShipKind, SurfaceMaterial, WeaponKind } from '$/game/constants'
 import { updateDevices } from '$/game/devices'
 import { createRng } from '$/game/rng'
 import type { Device, Ship, World } from '$/game/types'
@@ -142,9 +142,16 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     vy: 0,
     owner: 0,
     radius: 6,
+    weapon: InfantryWeapon.RIFLE,
     attached: false,
     swim: 0,
     sinking: 0,
+    chute: -1,
+    pickupLock: 0,
+    walkDir: 1,
+    facing: 1,
+    groundLeft: 0,
+    groundRight: 0,
     fireCooldown: 0,
     ...over,
   })
@@ -184,6 +191,35 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     world.blocks = [{ x: 180, y: 60, w: 40, h: 80, material: SurfaceMaterial.BEDROCK }] // wall between them
     updateDevices(world, 0.016)
     expect(world.bullets.length).toBe(0)
+  })
+
+  test('a landed unit patrols its block and never walks off the edges', () => {
+    const world = makeWorld([], [infantry({ attached: true, x: 150, y: 94, groundLeft: 100, groundRight: 160 })])
+    for (let i = 0; i < 600; i += 1) updateDevices(world, 1 / 60) // 10s of patrolling
+    const u = world.devices[0]
+    expect(u?.kind).toBe(DeviceKind.INFANTRY)
+    if (u?.kind === DeviceKind.INFANTRY) {
+      expect(u.x).toBeGreaterThanOrEqual(106) // groundLeft + radius
+      expect(u.x).toBeLessThanOrEqual(154) // groundRight - radius
+    }
+  })
+
+  test('a fast fall deploys a parachute that brakes the descent', () => {
+    const world = makeWorld([], [infantry({ y: 200, vy: 260 })]) // already past PARACHUTE_DEPLOY_SPEED
+    for (let i = 0; i < 60; i += 1) updateDevices(world, 1 / 60) // ~1s of descent, no ground
+    const u = world.devices[0]
+    expect(u?.kind).toBe(DeviceKind.INFANTRY)
+    if (u?.kind === DeviceKind.INFANTRY) {
+      expect(u.chute).toBeGreaterThanOrEqual(0) // chute deployed
+      expect(u.vy).toBeLessThan(260) // and braked the fall
+    }
+  })
+
+  test('a landed grenadier lobs a grenade at an enemy in range', () => {
+    const enemy = makeShip({ id: 1, kind: ShipKind.BOT, x: 200, y: 100 })
+    const world = makeWorld([enemy], [infantry({ weapon: InfantryWeapon.GRENADE, x: 100, y: 100, attached: true })])
+    updateDevices(world, 0.016)
+    expect(world.devices.some((d) => d.kind === DeviceKind.GRENADE)).toBe(true)
   })
 
   test('lands in water and swims instead of attaching, holding fire', () => {

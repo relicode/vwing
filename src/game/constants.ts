@@ -50,6 +50,12 @@ export enum DeviceKind {
   WELL = 'WELL',
 }
 
+// What a deployed infantry unit fights with (rolled per unit on deploy).
+export enum InfantryWeapon {
+  RIFLE = 'RIFLE',
+  GRENADE = 'GRENADE',
+}
+
 // Camera viewport (the canvas) and the larger world it pans across.
 export const VIEW_WIDTH = 900
 export const VIEW_HEIGHT = 600
@@ -80,6 +86,7 @@ export const Color = {
   MINE: 0xc0c6d4,
   MINE_ARMED: 0xff5a5a,
   INFANTRY: 0xcfe8a0,
+  PARACHUTE: 0xe6e2cf,
   GRENADE: 0x9fd36b,
   FLAK: 0xd8b46a,
   BLOOD: 0xff3b3b, // infantry death (shot / splatted / blasted)
@@ -147,7 +154,7 @@ export type WeaponConfig = { name: string; ammo: number; cooldown: number }
 export const WEAPON_CONFIG: Record<WeaponKind, WeaponConfig> = {
   [WeaponKind.SCATTERGUN]: { name: 'Scattergun', ammo: 8, cooldown: 0.5 },
   [WeaponKind.WATER_CANNON]: { name: 'Water Cannon', ammo: 60, cooldown: 0.05 },
-  [WeaponKind.INFANTRY]: { name: 'Infantry Drop', ammo: 2, cooldown: 1.2 },
+  [WeaponKind.INFANTRY]: { name: 'Infantry Drop', ammo: 12, cooldown: 0.3 }, // ammo = units; cooldown = hold-to-deploy cadence
   [WeaponKind.SEEKER]: { name: 'Seeker Missiles', ammo: 3, cooldown: 0.8 },
   [WeaponKind.RAIL]: { name: 'Rail Lance', ammo: 3, cooldown: 0.9 },
   [WeaponKind.GRENADE]: { name: 'Grenade Lob', ammo: 4, cooldown: 0.7 },
@@ -185,15 +192,21 @@ export const WATER_CANNON_SPEED = 520
 export const WATER_CANNON_LIFE = 0.5
 export const WATER_CANNON_SPREAD = 0.05 // rad jitter
 
-// Infantry Drop — units fall, land on a surface, and plink the nearest enemy. A unit
-// dies from any single hit, splats if dropped from too high, swims (no shooting) if it
-// lands in water and drowns unless its owner scoops it up at low speed.
-export const INFANTRY_COUNT = 3
+// Infantry Drop — held to stream units out one at a time; they parachute from high
+// drops, patrol the block they land on, and plink the nearest enemy in range/LOS. A unit
+// dies from any single hit, splats if it hits the ground too fast, swims (no shooting) if
+// it lands in water and drowns unless its owner scoops it up at low speed.
 export const INFANTRY_RADIUS = 5
-export const INFANTRY_FIRE_INTERVAL = 1.1
+export const INFANTRY_FIRE_INTERVAL = 1.1 // s between rifle shots (landed)
+export const INFANTRY_GRENADE_FIRE_INTERVAL = 2.6 // s between grenade lobs (slower; landed grenadier)
+export const INFANTRY_PARACHUTE_FIRE_INTERVAL = 3.2 // s between shots while descending (very slow)
 export const INFANTRY_SHOT_DAMAGE = 6
 export const INFANTRY_SHOT_SPEED = 380
 export const INFANTRY_RANGE = 520
+export const INFANTRY_GRENADE_CHANCE = 0.2 // 1 in 5 units carries a grenade launcher
+export const INFANTRY_WALK_SPEED = 26 // px/s patrol speed on a surface
+export const INFANTRY_WALK_TURN_CHANCE = 0.012 // per-frame chance a patroller spontaneously reverses
+export const INFANTRY_PICKUP_DELAY = 2 // s after deploy before a unit can be picked up
 export const INFANTRY_FALL_LETHAL = 300 // landing impact speed (px/s) above which a unit splats
 export const INFANTRY_SWIM_TIME = 6 // s a unit floats (can't shoot) in water before it drowns
 export const INFANTRY_SWIM_DRAG = 1.6 // horizontal damping coefficient while swimming
@@ -201,6 +214,14 @@ export const INFANTRY_PICKUP_RADIUS = 30 // px: the owner this close can scoop a
 export const INFANTRY_PICKUP_SPEED = 90 // px/s: the owner must be slower than this to pick up
 export const INFANTRY_SINK_TIME = 1.5 // s a drowned unit sinks and fades before vanishing
 export const INFANTRY_SINK_SPEED = 36 // px/s it descends while sinking
+
+// Parachute: deploys on a fast fall and opens over PARACHUTE_OPEN_TIME, braking toward a
+// slow terminal descent. A high drop fully opens and lands safe; a too-low drop opens late
+// and still hits hard (the impact splat check below LETHAL still applies).
+export const PARACHUTE_DEPLOY_SPEED = 200 // vy (px/s) past which a chute starts opening
+export const PARACHUTE_OPEN_TIME = 0.7 // s to ramp from just-deployed to fully open
+export const PARACHUTE_TERMINAL = 55 // px/s descent under a fully open chute
+export const PARACHUTE_BRAKE = 7 // pull strength toward terminal, scaled by openness
 
 // Seeker Missiles — limited-turn homing, area blast on contact.
 export const SEEKER_COUNT = 3
