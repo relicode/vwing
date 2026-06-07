@@ -225,7 +225,7 @@ export const createEngine = async (): Promise<Engine> => {
       )
       if (unit >= 0) {
         const inf = world.devices[unit]
-        spawnExplosion(world.particles, inf.x, inf.y, Color.INFANTRY, world.rng, 6)
+        spawnExplosion(world.particles, inf.x, inf.y, Color.BLOOD, world.rng, 6)
         world.devices.splice(unit, 1)
         continue
       }

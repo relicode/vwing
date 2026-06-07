@@ -145,6 +145,7 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     life: 9,
     attached: false,
     swim: 0,
+    sinking: 0,
     fireCooldown: 0,
     ...over,
   })
@@ -186,11 +187,35 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     expect(world.bullets.length).toBe(0)
   })
 
-  test('a swimming unit drowns when its swim timer elapses', () => {
+  test('a swimming unit drowns, then sinks away before vanishing', () => {
     const world = makeWorld([], [infantry({ y: 205, swim: 0.05 })])
     world.water = [{ x: 0, y: 200, w: 400, h: 200 }]
-    updateDevices(world, 0.1)
+    updateDevices(world, 0.1) // swim elapses → starts sinking (still present)
+    const sinking = world.devices[0]
+    expect(sinking?.kind).toBe(DeviceKind.INFANTRY)
+    if (sinking?.kind === DeviceKind.INFANTRY) expect(sinking.sinking).toBeGreaterThan(0)
+    updateDevices(world, 10) // sink time elapses → gone
     expect(world.devices.length).toBe(0)
+  })
+
+  test('a blast splatters a nearby enemy infantry unit', () => {
+    const enemyShip = makeShip({ id: 1, kind: ShipKind.BOT, x: 100, y: 100 }) // triggers the mine
+    const inf = infantry({ x: 120, y: 100, owner: 1, attached: true }) // enemy of the mine owner (0)
+    const mine: Device = {
+      kind: DeviceKind.MINE,
+      x: 100,
+      y: 100,
+      owner: 0,
+      radius: 6,
+      armTime: 0,
+      life: 5,
+      triggerRadius: 60,
+      blastRadius: 90,
+      damage: 40,
+    }
+    const world = makeWorld([enemyShip], [mine, inf])
+    updateDevices(world, 0.016)
+    expect(world.devices.some((d) => d.kind === DeviceKind.INFANTRY)).toBe(false)
   })
 
   test('grenade falls and bursts into shards on fuse', () => {

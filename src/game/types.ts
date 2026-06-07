@@ -93,6 +93,7 @@ export type Device =
       life: number
       attached: boolean // true once it lands on a surface (then it stays put + shoots)
       swim: number // s of floating left while in water (0 = on land / airborne); drowns at 0
+      sinking: number // s of sinking left after drowning (> 0 = a corpse descending + fading)
       fireCooldown: number
     }
   | {
