@@ -212,15 +212,19 @@ export const WATER_CANNON_LIFE = 0.5
 export const WATER_CANNON_SPREAD = 0.05 // rad jitter
 
 // Infantry Drop — held to stream units out one at a time; they parachute from high
-// drops, patrol the block they land on, and plink the nearest enemy in range/LOS. A unit
-// dies from any single hit, splats if it hits the ground too fast, falls if the block
-// under it is destroyed, dies instantly if it ends up embedded in a block, and is
-// splattered by any ship that rams through it. It swims (no shooting) if it lands in water
-// and drowns unless rescued. To be rescued, a unit walks/swims toward its own owner's
-// slow (landed) ship — reaching it restores the Infantry slot.
+// drops (swaying apart on the wind so a stream fans out instead of stacking), patrol the
+// block they land on, and plink the nearest enemy in range/LOS. A unit dies from any
+// single hit, splats if it hits the ground too fast, falls if the block under it is
+// destroyed, dies instantly if it ends up embedded in a block, and is splattered by any
+// ship that rams through it — except its *own* ship can't run it over during the deploy
+// lockout (`INFANTRY_PICKUP_DELAY`), so a fast drop doesn't instantly mince the trooper it
+// just released. It swims (no shooting) if it lands in water and drowns unless rescued. To
+// be rescued, a unit walks/swims toward its own owner's slow (landed) ship — reaching it
+// restores the Infantry slot.
 export const INFANTRY_RADIUS = 5
 export const INFANTRY_FIRE_INTERVAL = 1.1 // s between rifle shots (landed)
 export const INFANTRY_GRENADE_FIRE_INTERVAL = 2.6 // s between grenade lobs (slower; landed grenadier)
+export const INFANTRY_KNEEL_TIME = 1.6 // s a grenadier stays crouched after launching its bazooka
 export const INFANTRY_PARACHUTE_FIRE_INTERVAL = 3.2 // s between shots while descending (very slow)
 export const INFANTRY_SHOT_DAMAGE = 6
 export const INFANTRY_SHOT_SPEED = 380
@@ -244,10 +248,14 @@ export const INFANTRY_SINK_SPEED = 36 // px/s it descends while sinking
 // all-or-nothing — until the canopy is *fully* open it does nothing (the unit keeps
 // accelerating), then it snaps the descent to a slow terminal. So a high drop blooms in
 // time and lands soft; a too-low drop hits the ground before the canopy finishes and
-// splats (a clear, visible reason the trooper died).
+// splats (a clear, visible reason the trooper died). While a canopy is open the unit
+// gusts sideways (a bounded random walk) so a held-down stream of troopers spreads into a
+// fan rather than dropping in one stacked column.
 export const PARACHUTE_DEPLOY_SPEED = 200 // vy (px/s) past which a chute starts opening
 export const PARACHUTE_OPEN_TIME = 0.7 // s to ramp from just-deployed to fully open
 export const PARACHUTE_TERMINAL = 55 // px/s descent once the canopy is fully open (hard clamp)
+export const PARACHUTE_SWAY = 320 // px/s^2 random horizontal gusting applied while the canopy is open
+export const PARACHUTE_DRIFT = 60 // px/s cap on the sideways glide (keeps the wind-fan bounded)
 
 // Seeker Missiles — limited-turn homing, area blast on contact.
 export const SEEKER_COUNT = 3

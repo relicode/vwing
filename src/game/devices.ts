@@ -20,6 +20,7 @@ import {
   INFANTRY_FALL_LETHAL,
   INFANTRY_FIRE_INTERVAL,
   INFANTRY_GRENADE_FIRE_INTERVAL,
+  INFANTRY_KNEEL_TIME,
   INFANTRY_PARACHUTE_FIRE_INTERVAL,
   INFANTRY_PICKUP_RADIUS,
   INFANTRY_PICKUP_REFUND,
@@ -38,7 +39,9 @@ import {
   INFANTRY_WALK_TURN_CHANCE,
   InfantryWeapon,
   PARACHUTE_DEPLOY_SPEED,
+  PARACHUTE_DRIFT,
   PARACHUTE_OPEN_TIME,
+  PARACHUTE_SWAY,
   PARACHUTE_TERMINAL,
   SECONDARY_MAX_CHARGE,
   WALL_THICKNESS,
@@ -167,6 +170,7 @@ const infantryFire = (world: World, device: InfantryDevice, spawned: Device[], i
   const angle = Math.atan2(target.y - device.y, target.x - device.x)
   if (device.weapon === InfantryWeapon.GRENADE) {
     lobGrenade(spawned, device, angle)
+    if (device.attached) device.kneel = INFANTRY_KNEEL_TIME // crouch to brace the launcher (landed only)
   } else {
     pushBullet(
       world.bullets,
@@ -302,6 +306,7 @@ const stepDevice = (
 
     case DeviceKind.INFANTRY: {
       if (device.pickupLock > 0) device.pickupLock -= dt
+      if (device.kneel > 0) device.kneel -= dt // post-launch crouch winds down
       // Drowned corpse: sink and fade for a moment, then vanish (no explosion).
       if (device.sinking > 0) {
         device.sinking -= dt
@@ -339,6 +344,13 @@ const stepDevice = (
         if (device.chute < 0 && device.vy > PARACHUTE_DEPLOY_SPEED) device.chute = 0
         if (device.chute >= 0) {
           device.chute = Math.min(1, device.chute + dt / PARACHUTE_OPEN_TIME)
+          // Gust sideways (a bounded random walk) so a held-down stream of troopers fans
+          // out across the sky instead of falling in one stacked column.
+          device.vx = clamp(
+            device.vx + randRange(world.rng, -PARACHUTE_SWAY, PARACHUTE_SWAY) * dt,
+            -PARACHUTE_DRIFT,
+            PARACHUTE_DRIFT
+          )
           if (device.chute >= 1 && device.vy > PARACHUTE_TERMINAL) device.vy = PARACHUTE_TERMINAL
           infantryFire(world, device, spawned, INFANTRY_PARACHUTE_FIRE_INTERVAL, dt) // fire slowly while descending
         }
@@ -482,8 +494,9 @@ export const updateDevices = (world: World, dt: number): Ship[] => {
 
 // Resolve ship-vs-trooper overlaps: an owner drifting slowly over its own (re-armable) unit
 // scoops it up — refunding secondary energy and re-arming the Infantry slot — while any ship
-// fast enough to ram (own or enemy) splatters the trooper it ploughs through. Iterates from
-// the tail so removals don't disturb pending indices.
+// fast enough to ram (own or enemy) splatters the trooper it ploughs through, save for an
+// owner still inside its trooper's deploy lockout (so a fast drop can't instantly mince it).
+// Iterates from the tail so removals don't disturb pending indices.
 export const resolveInfantryContacts = (world: World): void => {
   for (const ship of world.ships) {
     const speed = Math.hypot(ship.vx, ship.vy)
@@ -507,6 +520,9 @@ export const resolveInfantryContacts = (world: World): void => {
         continue
       }
       if (ramming && circlesOverlap(ship.x, ship.y, ship.radius, d.x, d.y, d.radius)) {
+        // A ship still in its own trooper's deploy lockout can't mince it — otherwise a fast
+        // drop would splatter the unit the instant it left the hull. Enemies ram freely.
+        if (d.owner === ship.id && d.pickupLock > 0) continue
         spawnExplosion(world.particles, d.x, d.y, Color.BLOOD, world.rng, 6)
         world.devices.splice(i, 1)
       }

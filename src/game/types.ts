@@ -95,12 +95,13 @@ export type Device =
       swim: number // s of floating left while in water (0 = on land / airborne); drowns at 0
       sinking: number // s of sinking left after drowning (> 0 = a corpse descending + fading)
       chute: number // parachute: -1 = none; 0..1 = deployed openness while descending
-      pickupLock: number // s before this unit can be picked up (anti instant re-grab)
+      pickupLock: number // s before this unit can be picked up (anti instant re-grab) — also grants immunity from its own ship's ram
       walkDir: number // -1 / +1 patrol direction along the ground
       facing: number // -1 / +1 render facing (aim direction, else walk direction)
       groundLeft: number // patrol bound: left edge of the supporting block (world x)
       groundRight: number // patrol bound: right edge of the supporting block (world x)
       fireCooldown: number
+      kneel: number // s of post-launch crouch remaining (grenadier braces to fire its bazooka)
     }
   | {
       kind: DeviceKind.GRENADE // gravity arc → shrapnel ring on fuse

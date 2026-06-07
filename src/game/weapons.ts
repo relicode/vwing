@@ -184,6 +184,7 @@ const spawnInfantry = (world: World, ship: Ship): void => {
     groundLeft: 0,
     groundRight: 0,
     fireCooldown: randRange(world.rng, 0, INFANTRY_FIRE_INTERVAL),
+    kneel: 0,
   })
 }
 

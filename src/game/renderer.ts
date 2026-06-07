@@ -125,7 +125,87 @@ const drawWaterBodies = (g: Graphics, water: WaterBody[]): void => {
   }
 }
 
-const drawDevice = (g: Graphics, d: Device): void => {
+type InfantrySprite = Extract<Device, { kind: DeviceKind.INFANTRY }>
+
+// A shoulder-fired bazooka braced across a trooper's shoulder at (sx, sy): a fat tube with
+// the rear venturi behind the shoulder and the flared muzzle reaching forward and up.
+const drawShoulderBazooka = (g: Graphics, sx: number, sy: number, f: number, r: number, alpha: number): void => {
+  const rearX = sx - f * r * 1.0 // venturi, behind the shoulder
+  const rearY = sy + r * 0.12
+  const muzX = sx + f * r * 2.3 // muzzle, reaching forward and raised
+  const muzY = sy - r * 0.7
+  g.moveTo(rearX, rearY).lineTo(muzX, muzY).stroke({ width: 3.4, color: Color.GRENADE, alpha }) // tube
+  g.circle(muzX, muzY, r * 0.5).fill({ color: Color.GRENADE, alpha }) // flared muzzle
+  g.circle(rearX, rearY, r * 0.32).fill({ color: Color.SMOKE, alpha }) // rear venturi
+}
+
+// A grenadier crouched on one knee just after launching: a leaning torso, a raised forward
+// knee and a planted rear knee, with the bazooka braced on the lowered shoulder. `body` is
+// the owner-tinted hull colour.
+const drawKneelingGrenadier = (g: Graphics, d: InfantrySprite, body: number, alpha: number): void => {
+  const r = d.radius
+  const f = d.facing >= 0 ? 1 : -1
+  const footY = d.y + r // ground line under the unit
+  const hipX = d.x - f * r * 0.15
+  const hipY = d.y + r * 0.4
+  const shoulderX = d.x + f * r * 0.35
+  const shoulderY = d.y - r * 0.45
+  g.moveTo(hipX, hipY).lineTo(shoulderX, shoulderY).stroke({ width: r, color: body, alpha }) // leaning torso
+  g.circle(shoulderX + f * r * 0.12, shoulderY - r * 0.4, r * 0.52).fill({ color: body, alpha }) // head
+  g.moveTo(hipX, hipY)
+    .lineTo(d.x + f * r * 0.95, hipY + r * 0.05)
+    .stroke({ width: 1.8, color: body, alpha }) // forward thigh
+  g.moveTo(d.x + f * r * 0.95, hipY + r * 0.05)
+    .lineTo(d.x + f * r * 0.95, footY)
+    .stroke({ width: 1.8, color: body, alpha }) // forward shin to the planted foot
+  g.moveTo(hipX, hipY)
+    .lineTo(d.x - f * r * 0.65, footY)
+    .stroke({ width: 1.8, color: body, alpha }) // rear knee down to the ground
+  drawShoulderBazooka(g, shoulderX, shoulderY, f, r, alpha)
+}
+
+// A trooper afloat in water: head + half-submerged torso breaking the surface, with arms
+// that either wave for help (treading) or pull a freestyle stroke toward the swim heading
+// (paddling to a rescuing ship). `time` drives the animation; no weapon (they hold fire).
+const SWIM_PADDLE_VX = 12 // |vx| above which the unit is actively stroking toward a rescuer (vs. treading)
+const drawSwimmer = (g: Graphics, d: InfantrySprite, body: number, time: number): void => {
+  const r = d.radius
+  const f = d.facing >= 0 ? 1 : -1
+  const alpha = 0.75
+  const bob = Math.sin(time * 4 + d.x * 0.12) * r * 0.14 // gentle bobbing with the swell
+  const hy = d.y - r * 0.9 + bob
+  const sh = hy + r * 0.55 // shoulder line, just at the waterline
+  g.rect(d.x - r * 0.45, sh, r * 0.9, r * 0.95).fill({ color: body, alpha }) // half-sunk torso
+  g.circle(d.x, hy, r * 0.55).fill({ color: body, alpha }) // head
+  if (Math.abs(d.vx) > SWIM_PADDLE_VX) {
+    // Freestyle: a lead arm reaches forward and a trailing arm recovers, swapping on the stroke.
+    const s = Math.sin(time * 14)
+    g.moveTo(d.x, sh)
+      .lineTo(d.x + f * r * (1.5 + s * 0.5), sh - r * (0.1 + s * 0.5))
+      .stroke({ width: 1.7, color: body, alpha })
+    g.moveTo(d.x, sh)
+      .lineTo(d.x - f * r * (1.0 - s * 0.4), sh + r * 0.35)
+      .stroke({ width: 1.7, color: body, alpha })
+  } else {
+    // Treading water: both arms raised, waving for rescue.
+    const w = Math.sin(time * 9) * 0.55
+    g.moveTo(d.x, sh)
+      .lineTo(d.x - r * 1.25, sh - r * (1.15 + w))
+      .stroke({ width: 1.7, color: body, alpha })
+    g.moveTo(d.x, sh)
+      .lineTo(d.x + r * 1.25, sh - r * (1.15 - w))
+      .stroke({ width: 1.7, color: body, alpha })
+  }
+  // A couple of ripple ticks fanning out at the waterline.
+  g.moveTo(d.x - r * 1.7, d.y)
+    .lineTo(d.x - r * 0.8, d.y)
+    .stroke({ width: 1, color: Color.WATER_EDGE, alpha: 0.6 })
+  g.moveTo(d.x + r * 0.8, d.y)
+    .lineTo(d.x + r * 1.7, d.y)
+    .stroke({ width: 1, color: Color.WATER_EDGE, alpha: 0.6 })
+}
+
+const drawDevice = (g: Graphics, d: Device, time: number): void => {
   switch (d.kind) {
     case DeviceKind.MISSILE: {
       const a = Math.atan2(d.vy, d.vx)
@@ -143,11 +223,17 @@ const drawDevice = (g: Graphics, d: Device): void => {
       break
     }
     case DeviceKind.INFANTRY: {
-      // Cannon-Fodder-style trooper: head + torso, a weapon that reads its type, facing its
-      // movement/aim direction, with a parachute canopy overhead while descending.
+      // Cannon-Fodder-style trooper, tinted to the deploying ship's hull: head + torso, a
+      // weapon that reads its type, facing its movement/aim, parachute canopy while descending.
       const r = d.radius
       const f = d.facing >= 0 ? 1 : -1
-      const alpha = d.sinking > 0 ? 0.3 : d.swim > 0 ? 0.55 : 1
+      const body = d.owner === PLAYER_ID ? Color.SHIP : Color.ENEMY // same colour as its owner
+      // Afloat (but not yet a drowned corpse): a distinct swimming pose, waving / paddling.
+      if (d.swim > 0 && d.sinking <= 0) {
+        drawSwimmer(g, d, body, time)
+        break
+      }
+      const alpha = d.sinking > 0 ? 0.3 : 1
       if (d.chute >= 0) {
         const open = 0.35 + d.chute * 0.65 // canopy widens as the chute opens
         const cw = r * 3 * open
@@ -162,13 +248,15 @@ const drawDevice = (g: Graphics, d: Device): void => {
           .lineTo(d.x, d.y - r)
           .stroke({ width: 1, color: Color.PARACHUTE, alpha: 0.55 })
       }
-      g.rect(d.x - r * 0.5, d.y - r, r, r * 1.6).fill({ color: Color.INFANTRY, alpha }) // torso
-      g.circle(d.x, d.y - r * 1.2, r * 0.55).fill({ color: Color.INFANTRY, alpha }) // head
+      // A landed grenadier braces on one knee while/just after launching its bazooka.
+      if (d.attached && d.weapon === InfantryWeapon.GRENADE && d.kneel > 0) {
+        drawKneelingGrenadier(g, d, body, alpha)
+        break
+      }
+      g.rect(d.x - r * 0.5, d.y - r, r, r * 1.6).fill({ color: body, alpha }) // torso
+      g.circle(d.x, d.y - r * 1.2, r * 0.55).fill({ color: body, alpha }) // head
       if (d.weapon === InfantryWeapon.GRENADE) {
-        // stubby launcher, angled up
-        g.moveTo(d.x, d.y - r * 0.2)
-          .lineTo(d.x + f * r * 1.7, d.y - r * 0.9)
-          .stroke({ width: 2.4, color: Color.GRENADE, alpha })
+        drawShoulderBazooka(g, d.x, d.y - r, f, r, alpha) // standing, tube braced on the shoulder
       } else {
         // thin rifle, level
         g.moveTo(d.x, d.y - r * 0.2)
@@ -282,7 +370,7 @@ export const createRenderer = (rng: Rng): Renderer => {
       drawWaterBodies(terrainGfx, world.water)
     }
     dynGfx.clear()
-    for (const device of world.devices) drawDevice(dynGfx, device)
+    for (const device of world.devices) drawDevice(dynGfx, device, world.time)
     for (const bullet of world.bullets) {
       const color = bullet.color ?? (bullet.owner === PLAYER_ID ? Color.BULLET : Color.BULLET_ENEMY)
       dynGfx.circle(bullet.x, bullet.y, bullet.radius * 2.2).fill({ color, alpha: 0.18 }) // soft glow
