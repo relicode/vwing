@@ -224,7 +224,11 @@ export const WATER_CANNON_SPREAD = 0.05 // rad jitter
 export const INFANTRY_RADIUS = 5
 export const INFANTRY_FIRE_INTERVAL = 1.1 // s between rifle shots (landed)
 export const INFANTRY_GRENADE_FIRE_INTERVAL = 2.6 // s between grenade lobs (slower; landed grenadier)
-export const INFANTRY_KNEEL_TIME = 1.6 // s a grenadier stays crouched after launching its bazooka
+// A landed grenadier plants itself to shoot: it drops to a knee and holds dead still for
+// INFANTRY_KNEEL_TIME, letting the round fly once the crouch winds down to INFANTRY_KNEEL_FIRE_AT
+// (a brief aim wind-up), then holds the rest of the crouch as recovery before standing up free.
+export const INFANTRY_KNEEL_TIME = 1.6 // s the crouch lasts (wind-up + recovery), still the whole time
+export const INFANTRY_KNEEL_FIRE_AT = 0.9 // kneel value (s left) at which the braced bazooka fires
 export const INFANTRY_PARACHUTE_FIRE_INTERVAL = 3.2 // s between shots while descending (very slow)
 export const INFANTRY_SHOT_DAMAGE = 6
 export const INFANTRY_SHOT_SPEED = 380

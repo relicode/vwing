@@ -20,6 +20,7 @@ import {
   INFANTRY_FALL_LETHAL,
   INFANTRY_FIRE_INTERVAL,
   INFANTRY_GRENADE_FIRE_INTERVAL,
+  INFANTRY_KNEEL_FIRE_AT,
   INFANTRY_KNEEL_TIME,
   INFANTRY_PARACHUTE_FIRE_INTERVAL,
   INFANTRY_PICKUP_RADIUS,
@@ -159,18 +160,32 @@ const lobGrenade = (spawned: Device[], device: InfantryDevice, angle: number): v
   })
 }
 
-// Fire at the nearest enemy in range with clear line of sight, at the given cadence.
-// Rifles shoot straight; grenadiers lob. Ticks the cooldown every frame regardless.
+// The nearest enemy ship within range and with a clear line of sight, or undefined.
+const infantryTarget = (world: World, device: InfantryDevice): Ship | undefined => {
+  const target = nearestEnemyOf(device.owner, device.x, device.y, world.ships)
+  if (!target || Math.hypot(target.x - device.x, target.y - device.y) > INFANTRY_RANGE) return undefined
+  if (!hasLineOfSight(device.x, device.y, target.x, target.y, world.blocks)) return undefined
+  return target
+}
+
+// A small spark at the barrel tip when a unit fires, pointed along `angle`.
+const muzzleFlash = (world: World, device: InfantryDevice, angle: number, color: number): void => {
+  const mx = device.x + Math.cos(angle) * device.radius * 1.8
+  const my = device.y + Math.sin(angle) * device.radius * 1.8
+  spawnExplosion(world.particles, mx, my, color, world.rng, 3)
+}
+
+// Fire at the nearest enemy in range with clear line of sight, at the given cadence. Used by
+// rifles (landed) and any unit shooting while it descends. Ticks the cooldown every frame.
 const infantryFire = (world: World, device: InfantryDevice, spawned: Device[], interval: number, dt: number): void => {
   device.fireCooldown -= dt
   if (device.fireCooldown > 0) return
-  const target = nearestEnemyOf(device.owner, device.x, device.y, world.ships)
-  if (!target || Math.hypot(target.x - device.x, target.y - device.y) > INFANTRY_RANGE) return
-  if (!hasLineOfSight(device.x, device.y, target.x, target.y, world.blocks)) return
+  const target = infantryTarget(world, device)
+  if (!target) return
   const angle = Math.atan2(target.y - device.y, target.x - device.x)
   if (device.weapon === InfantryWeapon.GRENADE) {
     lobGrenade(spawned, device, angle)
-    if (device.attached) device.kneel = INFANTRY_KNEEL_TIME // crouch to brace the launcher (landed only)
+    muzzleFlash(world, device, angle, Color.GRENADE)
   } else {
     pushBullet(
       world.bullets,
@@ -185,13 +200,19 @@ const infantryFire = (world: World, device: InfantryDevice, spawned: Device[], i
         color: Color.INFANTRY,
       }
     )
+    muzzleFlash(world, device, angle, Color.SPARK)
   }
-  // Muzzle flash at the barrel tip.
-  const flash = device.weapon === InfantryWeapon.GRENADE ? Color.GRENADE : Color.SPARK
-  const mx = device.x + Math.cos(angle) * device.radius * 1.8
-  const my = device.y + Math.sin(angle) * device.radius * 1.8
-  spawnExplosion(world.particles, mx, my, flash, world.rng, 3)
   device.fireCooldown = interval
+}
+
+// A crouched grenadier lets one round fly at the current target (if still in sight). Driven by
+// the landed kneel-fire cycle — no cooldown of its own; the crouch timing sets the cadence.
+const grenadierLob = (world: World, device: InfantryDevice, spawned: Device[]): void => {
+  const target = infantryTarget(world, device)
+  if (!target) return // target slipped out of sight during the wind-up — dry click
+  const angle = Math.atan2(target.y - device.y, target.x - device.x)
+  lobGrenade(spawned, device, angle)
+  muzzleFlash(world, device, angle, Color.GRENADE)
 }
 
 // The unit's own owner ship when it's a viable rescuer: present and drifting slowly enough
@@ -233,6 +254,23 @@ const patrolInfantry = (device: InfantryDevice, world: World, dt: number): void 
     device.walkDir = -1
   }
   device.facing = device.walkDir
+}
+
+// A landed unit between firing actions: walk toward a slow rescuing owner sharing its block
+// (to be scooped up), otherwise patrol it. The vertical gate keeps the rescuer to a ship resting
+// at the unit's level (not hovering above), within reach of the pickup overlap once it arrives.
+const repositionLanded = (world: World, device: InfantryDevice, dt: number): void => {
+  const rescuer = rescuingOwner(world, device)
+  if (
+    rescuer &&
+    rescuer.x >= device.groundLeft &&
+    rescuer.x <= device.groundRight &&
+    Math.abs(rescuer.y - device.y) <= INFANTRY_PICKUP_RADIUS
+  ) {
+    walkToward(device, rescuer.x, dt)
+  } else {
+    patrolInfantry(device, world, dt)
+  }
 }
 
 // Advance one device. Mutates the device and the world (spawns shards/shots/blasts),
@@ -306,7 +344,6 @@ const stepDevice = (
 
     case DeviceKind.INFANTRY: {
       if (device.pickupLock > 0) device.pickupLock -= dt
-      if (device.kneel > 0) device.kneel -= dt // post-launch crouch winds down
       // Drowned corpse: sink and fade for a moment, then vanish (no explosion).
       if (device.sinking > 0) {
         device.sinking -= dt
@@ -359,21 +396,36 @@ const stepDevice = (
         for (const block of world.blocks) {
           const c = circleRectContact(device.x, device.y, device.radius, block.x, block.y, block.w, block.h)
           if (!c) continue
-          const impact = -(device.vx * c.nx + device.vy * c.ny)
-          if (impact > INFANTRY_FALL_LETHAL) {
-            spawnExplosion(world.particles, device.x, device.y, Color.BLOOD, world.rng, 6)
-            return false
+          // A landing only counts on a block's TOP with the feet actually over it (x within the
+          // span) — that's where it has real footing. A side or corner contact is a wall: push
+          // clear and keep falling so the unit slides off instead of latching on and re-thumping.
+          const onTop = c.ny < 0 && device.x > block.x && device.x < block.x + block.w
+          if (onTop) {
+            const impact = -(device.vx * c.nx + device.vy * c.ny)
+            if (impact > INFANTRY_FALL_LETHAL) {
+              spawnExplosion(world.particles, device.x, device.y, Color.BLOOD, world.rng, 6)
+              return false
+            }
+            device.x += c.nx * c.depth
+            device.y += c.ny * c.depth
+            device.vx = 0
+            device.vy = 0
+            device.attached = true
+            device.chute = -1
+            device.groundLeft = block.x
+            device.groundRight = block.x + block.w
+            spawnExplosion(world.particles, device.x, device.y + device.radius, Color.ROCK_EDGE, world.rng, 4) // landing dust
+            break
           }
+          // Wall / underside: push out of the block and cancel only the velocity driving into it,
+          // leaving the fall (and the chute brake) intact so the unit slides down and off.
           device.x += c.nx * c.depth
           device.y += c.ny * c.depth
-          device.vx = 0
-          device.vy = 0
-          device.attached = true
-          device.chute = -1
-          device.groundLeft = block.x
-          device.groundRight = block.x + block.w
-          spawnExplosion(world.particles, device.x, device.y + device.radius, Color.ROCK_EDGE, world.rng, 4) // landing dust
-          break
+          const into = device.vx * c.nx + device.vy * c.ny
+          if (into < 0) {
+            device.vx -= into * c.nx
+            device.vy -= into * c.ny
+          }
         }
         if (!device.attached) {
           const surface = waterSurfaceAt(world.water, device.x)
@@ -396,23 +448,33 @@ const stepDevice = (
         device.chute = -1
         return true
       }
-      // Walk toward a rescuing owner landed on this same block, else patrol; either way, fire.
-      // The vertical gate keeps it to a ship resting at the unit's level (not hovering above),
-      // and within reach of the pickup overlap once the unit arrives at its x.
-      const rescuer = rescuingOwner(world, device)
-      if (
-        rescuer &&
-        rescuer.x >= device.groundLeft &&
-        rescuer.x <= device.groundRight &&
-        Math.abs(rescuer.y - device.y) <= INFANTRY_PICKUP_RADIUS
-      ) {
-        walkToward(device, rescuer.x, dt)
-      } else {
-        patrolInfantry(device, world, dt)
+      // A heavy weapon (grenadier) plants itself to shoot: it repositions freely until the cadence
+      // is up and a target is in sight, then drops to a knee and holds DEAD STILL — winds up, lets
+      // the round fly mid-crouch, holds through the recovery, then stands back up free to move.
+      if (device.weapon === InfantryWeapon.GRENADE) {
+        if (device.kneel > 0) {
+          const before = device.kneel
+          device.kneel -= dt
+          if (before > INFANTRY_KNEEL_FIRE_AT && device.kneel <= INFANTRY_KNEEL_FIRE_AT) {
+            grenadierLob(world, device, spawned) // the round flies at the wind-up's end
+          }
+          return true // crouched: stay perfectly still (no patrol/walk)
+        }
+        device.fireCooldown -= dt
+        repositionLanded(world, device, dt)
+        if (device.fireCooldown <= 0) {
+          const target = infantryTarget(world, device)
+          if (target) {
+            device.facing = target.x >= device.x ? 1 : -1 // square up to the target
+            device.kneel = INFANTRY_KNEEL_TIME // drop to a knee; fires once the wind-up elapses
+            device.fireCooldown = INFANTRY_GRENADE_FIRE_INTERVAL
+          }
+        }
+        return true
       }
-      const interval =
-        device.weapon === InfantryWeapon.GRENADE ? INFANTRY_GRENADE_FIRE_INTERVAL : INFANTRY_FIRE_INTERVAL
-      infantryFire(world, device, spawned, interval, dt)
+      // Rifle: reposition (walk-to-rescue or patrol) and fire on the move, standing.
+      repositionLanded(world, device, dt)
+      infantryFire(world, device, spawned, INFANTRY_FIRE_INTERVAL, dt)
       return true // landed unit persists until it's killed or picked up
     }
 
