@@ -164,7 +164,6 @@ const stepDevice = (world: World, device: Device, dt: number, dead: Set<Ship>, d
     }
 
     case DeviceKind.INFANTRY: {
-      device.life -= dt
       // Drowned corpse: sink and fade for a moment, then vanish (no explosion).
       if (device.sinking > 0) {
         device.sinking -= dt
@@ -183,7 +182,7 @@ const stepDevice = (world: World, device: Device, dt: number, dead: Set<Ship>, d
           device.sinking = INFANTRY_SINK_TIME
           return true
         }
-        return device.life > 0
+        return true
       }
       // Airborne: fall, then land on a surface (splat if it hit too fast) or start swimming.
       if (!device.attached) {
@@ -212,7 +211,7 @@ const stepDevice = (world: World, device: Device, dt: number, dead: Set<Ship>, d
             device.vy = 0
           }
         }
-        return device.life > 0
+        return true
       }
       // Landed turret: plink the nearest enemy in range at a low fire rate.
       device.fireCooldown -= dt
@@ -236,7 +235,7 @@ const stepDevice = (world: World, device: Device, dt: number, dead: Set<Ship>, d
           device.fireCooldown = INFANTRY_FIRE_INTERVAL
         }
       }
-      return device.life > 0
+      return true // landed turret persists until it's killed or picked up
     }
 
     case DeviceKind.GRENADE: {

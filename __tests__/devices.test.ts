@@ -142,7 +142,6 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     vy: 0,
     owner: 0,
     radius: 6,
-    life: 9,
     attached: false,
     swim: 0,
     sinking: 0,
@@ -164,6 +163,12 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     world.blocks = [{ x: 0, y: 200, w: 200, h: 80, material: SurfaceMaterial.ROCK }]
     updateDevices(world, 0.05)
     expect(world.devices.length).toBe(0)
+  })
+
+  test('a landed unit persists past the old lifetime (no self-despawn)', () => {
+    const world = makeWorld([], [infantry({ attached: true, x: 100, y: 100 })])
+    for (let i = 0; i < 20; i += 1) updateDevices(world, 1) // 20 simulated seconds on the ground
+    expect(world.devices.length).toBe(1)
   })
 
   test('attached infantry shoots at an enemy in range', () => {

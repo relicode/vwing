@@ -189,7 +189,6 @@ export const WATER_CANNON_SPREAD = 0.05 // rad jitter
 // dies from any single hit, splats if dropped from too high, swims (no shooting) if it
 // lands in water and drowns unless its owner scoops it up at low speed.
 export const INFANTRY_COUNT = 3
-export const INFANTRY_LIFE = 9
 export const INFANTRY_RADIUS = 5
 export const INFANTRY_FIRE_INTERVAL = 1.1
 export const INFANTRY_SHOT_DAMAGE = 6
