@@ -27,8 +27,9 @@ import { assignWeapon } from '$/game/weapons'
 export type ShipEnv = { water: WaterBody[] }
 
 // Default secondary when no rng is supplied (the deterministic path the unit tests use).
+// `forced` (a debug override) pins the weapon when set, bypassing the random roll.
 const DEFAULT_WEAPON = WeaponKind.SCATTERGUN
-const rollWeapon = (rng?: Rng): WeaponKind => (rng ? assignWeapon(rng) : DEFAULT_WEAPON)
+const rollWeapon = (rng?: Rng, forced?: WeaponKind): WeaponKind => forced ?? (rng ? assignWeapon(rng) : DEFAULT_WEAPON)
 
 export const PLAYER_SPAWN_X = WORLD_WIDTH / 2
 export const PLAYER_SPAWN_Y = WORLD_HEIGHT * 0.4
@@ -41,9 +42,10 @@ export const createShip = (
   x: number = PLAYER_SPAWN_X,
   y: number = PLAYER_SPAWN_Y,
   id: number = PLAYER_ID,
-  rng?: Rng
+  rng?: Rng,
+  forced?: WeaponKind
 ): Ship => {
-  const weapon = rollWeapon(rng)
+  const weapon = rollWeapon(rng, forced)
   return {
     id,
     kind,
@@ -66,9 +68,10 @@ export const createShip = (
 }
 
 // Reset a ship in place at a spawn point: full hull/shields, stopped, facing up,
-// invulnerable, and rolling a fresh random secondary (when an rng is supplied).
-export const respawnShipAt = (ship: Ship, x: number, y: number, rng?: Rng): void => {
-  const weapon = rollWeapon(rng)
+// invulnerable, and rolling a fresh random secondary (when an rng is supplied,
+// unless `forced` pins it).
+export const respawnShipAt = (ship: Ship, x: number, y: number, rng?: Rng, forced?: WeaponKind): void => {
+  const weapon = rollWeapon(rng, forced)
   ship.x = x
   ship.y = y
   ship.vx = 0
@@ -85,7 +88,8 @@ export const respawnShipAt = (ship: Ship, x: number, y: number, rng?: Rng): void
   ship.disabled = 0
 }
 
-export const respawnShip = (ship: Ship, rng?: Rng): void => respawnShipAt(ship, PLAYER_SPAWN_X, PLAYER_SPAWN_Y, rng)
+export const respawnShip = (ship: Ship, rng?: Rng, forced?: WeaponKind): void =>
+  respawnShipAt(ship, PLAYER_SPAWN_X, PLAYER_SPAWN_Y, rng, forced)
 
 // Newtonian integration: turn, optional thrust along the nose, global gravity,
 // gentle drag, then advance. Position is unbounded here — wall death is the engine's call.

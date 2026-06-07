@@ -18,6 +18,7 @@ import {
   SurfaceMaterial,
   VIEW_HEIGHT,
   VIEW_WIDTH,
+  type WeaponKind,
 } from '$/game/constants'
 import { updateDevices } from '$/game/devices'
 import { createInput, type Input } from '$/game/input'
@@ -49,7 +50,7 @@ export type Engine = {
   canvas: HTMLCanvasElement
   getStatus: () => EngineStatus
   subscribe: (listener: () => void) => () => void
-  start: () => void
+  start: (weapon?: WeaponKind) => void // weapon = debug override; undefined = random per life
   destroy: () => void
 }
 
@@ -65,10 +66,10 @@ const writeBest = (value: number): void => {
   globalThis.localStorage?.setItem(BEST_KEY, String(value))
 }
 
-const createWorld = (seed: number): World => {
+const createWorld = (seed: number, forcedWeapon?: WeaponKind): World => {
   const rng = createRng(seed)
-  const player = createShip(ShipKind.PLAYER, PLAYER_SPAWN_X, PLAYER_SPAWN_Y, PLAYER_ID, rng)
-  const bot = createShip(ShipKind.BOT, BOT_SPAWN_X, BOT_SPAWN_Y, BOT_ID, rng)
+  const player = createShip(ShipKind.PLAYER, PLAYER_SPAWN_X, PLAYER_SPAWN_Y, PLAYER_ID, rng, forcedWeapon)
+  const bot = createShip(ShipKind.BOT, BOT_SPAWN_X, BOT_SPAWN_Y, BOT_ID, rng, forcedWeapon)
   const { blocks, water } = createTerrain()
   return {
     time: 0,
@@ -105,6 +106,7 @@ export const createEngine = async (): Promise<Engine> => {
   let score = 0
   let lives = SHIP_START_LIVES
   let best = readBest()
+  let forcedWeapon: WeaponKind | undefined // debug: pins every ship's secondary when set
   let world = createWorld(makeSeed())
 
   // The player drives ships[0] with the keyboard; bots get an AI Input bound to the
@@ -175,10 +177,10 @@ export const createEngine = async (): Promise<Engine> => {
         endGame()
         return
       }
-      respawnShip(ship, world.rng)
+      respawnShip(ship, world.rng, forcedWeapon)
     } else {
       score += BOT_KILL_SCORE
-      respawnShipAt(ship, BOT_SPAWN_X, BOT_SPAWN_Y, world.rng)
+      respawnShipAt(ship, BOT_SPAWN_X, BOT_SPAWN_Y, world.rng, forcedWeapon)
     }
     clearSpawnArea(ship.x, ship.y)
   }
@@ -281,10 +283,11 @@ export const createEngine = async (): Promise<Engine> => {
     renderer.draw(world, phase)
   })
 
-  const start = (): void => {
+  const start = (weapon?: WeaponKind): void => {
+    forcedWeapon = weapon
     score = 0
     lives = SHIP_START_LIVES
-    world = createWorld(makeSeed())
+    world = createWorld(makeSeed(), forcedWeapon)
     combatants = buildCombatants(world)
     phase = GamePhase.PLAYING
     publish()
