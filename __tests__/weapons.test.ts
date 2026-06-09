@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import {
   DeviceKind,
+  INCENDIARY_PELLETS,
   MINE_COUNT,
   SCATTERGUN_PELLETS,
   SEEKER_COUNT,
@@ -57,6 +58,12 @@ describe('assignWeapon', () => {
     const rng = createRng(42)
     for (let i = 0; i < 30; i += 1) expect(WEAPON_POOL).toContain(assignWeapon(rng))
   })
+
+  test('offers all eleven weapons, including the incendiary', () => {
+    expect(WEAPON_POOL).toHaveLength(11)
+    expect(WEAPON_POOL).toContain(WeaponKind.INCENDIARY)
+    expect(new Set(WEAPON_POOL).size).toBe(WEAPON_POOL.length) // no duplicates
+  })
 })
 
 describe('fireSecondary — gating', () => {
@@ -90,12 +97,21 @@ describe('fireSecondary — bullet/beam weapons', () => {
     expect(world.bullets).toHaveLength(SCATTERGUN_PELLETS)
   })
 
-  test('Water Cannon emits a knockback droplet', () => {
+  test('Water Cannon emits a knockback droplet tagged to wet terrain', () => {
     const ship = makeShip({ weapon: WeaponKind.WATER_CANNON })
     const world = makeWorld({ ships: [ship] })
     fireSecondary(world, ship)
     expect(world.bullets).toHaveLength(1)
     expect(world.bullets[0].push ?? 0).toBeGreaterThan(0)
+    expect(world.bullets[0].wet).toBe(true)
+  })
+
+  test('Incendiary emits a cone of burning pellets', () => {
+    const ship = makeShip({ weapon: WeaponKind.INCENDIARY })
+    const world = makeWorld({ ships: [ship] })
+    fireSecondary(world, ship)
+    expect(world.bullets).toHaveLength(INCENDIARY_PELLETS)
+    expect(world.bullets.every((b) => b.burn === true)).toBe(true)
   })
 
   test('Rail Lance beams and damages a target in line', () => {

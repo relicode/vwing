@@ -1,7 +1,16 @@
 import { describe, expect, test } from 'bun:test'
 
 import { createBotInput, decideBot } from '$/game/bot'
-import { BOT_ID, PLAYER_ID, ShipKind, SurfaceMaterial, WeaponKind, WORLD_HEIGHT, WORLD_WIDTH } from '$/game/constants'
+import {
+  BOT_ID,
+  PLAYER_ID,
+  ShipKind,
+  StructureType,
+  Surface,
+  WeaponKind,
+  WORLD_HEIGHT,
+  WORLD_WIDTH,
+} from '$/game/constants'
 import type { Block, Ship, World } from '$/game/types'
 
 const CENTER_X = WORLD_WIDTH / 2
@@ -35,7 +44,8 @@ const makeBlock = (x: number, y: number, w: number, h: number): Block => ({
   y,
   w,
   h,
-  material: SurfaceMaterial.ROCK,
+  structure: StructureType.EARTH,
+  surface: Surface.EARTH,
 })
 
 describe('decideBot', () => {

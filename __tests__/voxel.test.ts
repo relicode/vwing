@@ -1,7 +1,16 @@
 import { describe, expect, test } from 'bun:test'
 
-import { SurfaceMaterial, VOXEL_CELL, WORLD_HEIGHT, WORLD_WIDTH } from '$/game/constants'
-import { carveVoxel, createVoxelTerrain, hasDebris, stepVoxel, voxelToBlocks } from '$/game/voxel'
+import { StructureType, SURFACE_REGROW_TIME, Surface, VOXEL_CELL, WORLD_HEIGHT, WORLD_WIDTH } from '$/game/constants'
+import {
+  burnSurface,
+  carveVoxel,
+  createVoxelTerrain,
+  findPool,
+  hasDebris,
+  stepVoxel,
+  voxelToBlocks,
+  wetSurface,
+} from '$/game/voxel'
 
 // Count filled destructible cells in the static grid (excludes bedrock + falling debris).
 const filledCells = (mat: Uint8Array): number => {
@@ -55,7 +64,7 @@ describe('createVoxelTerrain', () => {
     const blocks = voxelToBlocks(vt)
     expect(blocks.length).toBeGreaterThan(0)
     expect(blocks.length).toBeLessThan(filledCells(vt.mat)) // greedy meshing actually merges
-    expect(blocks.some((b) => b.material === SurfaceMaterial.BEDROCK)).toBe(true)
+    expect(blocks.some((b) => b.structure === StructureType.METAL)).toBe(true)
   })
 })
 
@@ -149,5 +158,71 @@ describe('connectivity + debris', () => {
     expect(hasDebris(vt)).toBe(false)
     // Only the 7 crater cells are truly gone; all 14 sliver cells re-stamp where the chunk settles.
     expect(filledCells(vt.mat)).toBe(before - 7)
+  })
+})
+
+// Total pixel area of a given surface across the derived blocks (greedily meshed → coarse but stable).
+const surfaceArea = (vt: ReturnType<typeof createVoxelTerrain>, surface: Surface): number =>
+  voxelToBlocks(vt).reduce((sum, b) => (b.surface === surface ? sum + b.w * b.h : sum), 0)
+
+describe('surface transitions (burn / wet / regrow)', () => {
+  // Island A's grass cap sits at block(600, 590, 260, 30) — a strip of GRASS over earth.
+  const GRASS_X = 730
+  const GRASS_Y = 600
+
+  test('burnSurface scorches grass to bare earth (structure intact, no carve) and is idempotent', () => {
+    const vt = createVoxelTerrain()
+    const filledBefore = filledCells(vt.mat) // structure (cell count) must be untouched by a burn
+    const grassBefore = surfaceArea(vt, Surface.GRASS)
+    expect(grassBefore).toBeGreaterThan(0)
+
+    expect(burnSurface(vt, GRASS_X, GRASS_Y, 30)).toBe(true)
+    expect(surfaceArea(vt, Surface.GRASS)).toBeLessThan(grassBefore) // grass turned to earth
+    expect(filledCells(vt.mat)).toBe(filledBefore) // burning removes no cells (structure intact)
+    expect(burnSurface(vt, GRASS_X, GRASS_Y, 30)).toBe(false) // nothing left to scorch there
+  })
+
+  test('wetSurface regrows grass on the burned top after SURFACE_REGROW_TIME', () => {
+    const vt = createVoxelTerrain()
+    burnSurface(vt, GRASS_X, GRASS_Y, 30) // bare the top first
+    const grassBurned = surfaceArea(vt, Surface.GRASS)
+
+    expect(wetSurface(vt, GRASS_X, GRASS_Y, 30)).toBe(true) // the exposed top is now wet
+    // Below the regrow time nothing has changed yet…
+    stepVoxel(vt, SURFACE_REGROW_TIME * 0.5)
+    expect(surfaceArea(vt, Surface.GRASS)).toBe(grassBurned)
+    // …past it the wetted top cells flip back to grass.
+    stepVoxel(vt, SURFACE_REGROW_TIME * 0.6)
+    expect(surfaceArea(vt, Surface.GRASS)).toBeGreaterThan(grassBurned)
+  })
+
+  test('a dry surface does not regrow without wetting', () => {
+    const vt = createVoxelTerrain()
+    burnSurface(vt, GRASS_X, GRASS_Y, 30)
+    const grassBurned = surfaceArea(vt, Surface.GRASS)
+    for (let i = 0; i < 600; i += 1) stepVoxel(vt, 1 / 30) // 20s of idle time
+    expect(surfaceArea(vt, Surface.GRASS)).toBe(grassBurned) // no water → no regrowth
+  })
+})
+
+describe('findPool (basin detection)', () => {
+  test('a flat surface does not pool', () => {
+    const vt = createVoxelTerrain()
+    // Just above the flat top of the submerged earth pillar at block(420, 1300, 240, …).
+    expect(findPool(vt, 540, 1295)).toBeUndefined()
+  })
+
+  test('a carved dip pools to its rim; an open ledge does not', () => {
+    const vt = createVoxelTerrain()
+    carveVoxel(vt, 540, 1305, 18) // notch the pillar top, leaving earth lips on both sides
+    const pool = findPool(vt, 540, 1320)
+    expect(pool).toBeDefined()
+    if (pool) {
+      expect(pool.w).toBeGreaterThan(0)
+      expect(pool.h).toBeGreaterThan(0)
+      expect(pool.y).toBeCloseTo(1300, -1) // surface sits at the surviving rim row (~y 1300)
+    }
+    // The far open corner of the arena (no rims) must still refuse to pool.
+    expect(findPool(vt, 1200, 200)).toBeUndefined()
   })
 })

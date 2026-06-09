@@ -27,10 +27,11 @@ export const DEATHMATCH_FRAG_SCORE = 1 // points a kill awards its shooter in DE
 export const PLAYER_ID = 0
 export const BOT_ID = 1
 
-// The ten random secondary weapons; one is rolled onto each ship on every (re)spawn.
+// The eleven random secondary weapons; one is rolled onto each ship on every (re)spawn.
 export enum WeaponKind {
   SCATTERGUN = 'SCATTERGUN',
   WATER_CANNON = 'WATER_CANNON',
+  INCENDIARY = 'INCENDIARY',
   INFANTRY = 'INFANTRY',
   SEEKER = 'SEEKER',
   RAIL = 'RAIL',
@@ -41,13 +42,22 @@ export enum WeaponKind {
   SINGULARITY = 'SINGULARITY',
 }
 
-// Static terrain surfaces. BEDROCK is indestructible; ROCK is removed by a weapon hit;
-// ICE is low-friction (the ship slides); GRASS grips like rock.
-export enum SurfaceMaterial {
-  BEDROCK = 'BEDROCK',
-  ROCK = 'ROCK',
+// Terrain is two independent layers. STRUCTURE is the material body: EARTH is destructible
+// (voxelized, carves into craters), METAL is indestructible (an out-of-grid anchor that never
+// falls and grounds the floating-island flood-fill). SURFACE is the cover on top, which
+// transforms without touching the structure: GRASS burns to bare EARTH, bare EARTH regrows to
+// GRASS when wetted, ICE is slippery. WATER is a surface in the design vocabulary but is modeled
+// as WaterBody overlays (see water.ts), never a stored grid cell.
+export enum StructureType {
+  EARTH = 'EARTH',
+  METAL = 'METAL',
+}
+
+export enum Surface {
+  EARTH = 'EARTH',
   GRASS = 'GRASS',
   ICE = 'ICE',
+  WATER = 'WATER',
 }
 
 // Deployed, world-resident entities spawned by some weapons (one Device[] array, switched on kind).
@@ -193,6 +203,7 @@ export type WeaponConfig = { name: string; cost: number; cooldown: number }
 export const WEAPON_CONFIG: Record<WeaponKind, WeaponConfig> = {
   [WeaponKind.SCATTERGUN]: { name: 'Scattergun', cost: 22, cooldown: 0.5 },
   [WeaponKind.WATER_CANNON]: { name: 'Water Cannon', cost: 3, cooldown: 0.05 }, // cheap stream
+  [WeaponKind.INCENDIARY]: { name: 'Incendiary', cost: 18, cooldown: 0.45 },
   [WeaponKind.INFANTRY]: { name: 'Infantry Drop', cost: 14, cooldown: 0.3 }, // per trooper while held
   [WeaponKind.SEEKER]: { name: 'Seeker Missiles', cost: 55, cooldown: 0.8 },
   [WeaponKind.RAIL]: { name: 'Rail Lance', cost: 80, cooldown: 0.9 },
@@ -203,10 +214,11 @@ export const WEAPON_CONFIG: Record<WeaponKind, WeaponConfig> = {
   [WeaponKind.SINGULARITY]: { name: 'Singularity', cost: 100, cooldown: 1.5 }, // a full bar
 }
 
-// Pool the random respawn assignment draws from (all ten, equal odds).
+// Pool the random respawn assignment draws from (all eleven, equal odds).
 export const WEAPON_POOL: readonly WeaponKind[] = [
   WeaponKind.SCATTERGUN,
   WeaponKind.WATER_CANNON,
+  WeaponKind.INCENDIARY,
   WeaponKind.INFANTRY,
   WeaponKind.SEEKER,
   WeaponKind.RAIL,
@@ -224,12 +236,21 @@ export const SCATTERGUN_DAMAGE = 12
 export const SCATTERGUN_SPEED = 540
 export const SCATTERGUN_LIFE = 0.35
 
-// Water Cannon — knockback stream that drains/fills pools.
+// Water Cannon — knockback stream that wets terrain (earth→grass) and pools water in basins.
 export const WATER_CANNON_DAMAGE = 2
 export const WATER_CANNON_PUSH = 120 // velocity impulse applied to a hit ship
 export const WATER_CANNON_SPEED = 520
 export const WATER_CANNON_LIFE = 0.5
 export const WATER_CANNON_SPREAD = 0.05 // rad jitter
+export const WATER_CANNON_WET_RADIUS = 26 // px radius of earth→grass wetting on a terrain hit
+
+// Incendiary — a short cone of flame that scorches grass→earth and lightly burns ships.
+export const INCENDIARY_PELLETS = 5
+export const INCENDIARY_SPREAD = 0.22 // rad half-cone
+export const INCENDIARY_DAMAGE = 7
+export const INCENDIARY_SPEED = 460
+export const INCENDIARY_LIFE = 0.4
+export const INCENDIARY_BURN_RADIUS = 22 // px radius of grass→earth scorch on a terrain hit
 
 // Infantry Drop — held to stream units out one at a time; they parachute from high
 // drops (swaying apart on the wind so a stream fans out instead of stacking), patrol the
@@ -347,6 +368,16 @@ export const WATER_DRAG = 2.4 // extra exponential damping coefficient when subm
 export const SPLASH_MIN_SPEED = 130 // |vy| above which crossing the surface throws a splash
 export const SPLASH_PARTICLES = 11 // droplets per splash
 
+// ── Water pooling (basin detection) ─────────────────────────────────────────
+// A water-cannon terrain hit looks for a cupped basin around the impact: terrain lips rising on
+// both sides within POOL_HALF_WIDTH cells and a floor within POOL_MAX_DEPTH cells below. A found
+// basin becomes (or merges into) a WaterBody. Bounded + deterministic; no per-cell fluid sim.
+export const POOL_HALF_WIDTH = 40 // cells scanned each side of a hit for a containing rim
+export const POOL_MAX_RISE = 30 // cells a basin rim may sit above the hit
+export const POOL_MAX_DEPTH = 40 // cells below the hit searched for the basin floor
+export const POOL_MIN_WIDTH = 2 // cells: ignore puddles narrower than this
+export const MAX_WATER_BODIES = 24 // cap on authored + dynamic water bodies
+
 // ── Destructible terrain (voxel grid) ───────────────────────────────────────
 // Destructible materials (rock/grass/ice) are modeled as a grid of small cells. A shot
 // carves a crater sized to the projectile; cells no longer connected to the "main static
@@ -359,6 +390,9 @@ export const CARVE_RADIUS_BASE = 5 // px crater radius floor (even a tiny pellet
 export const CARVE_RADIUS_SCALE = 2.4 // crater radius = projectile radius × this + base (bigger shot → bigger hole)
 export const DEBRIS_TERMINAL = 520 // px/s terminal fall speed of a loosed chunk
 export const DEBRIS_MAX_BODIES = 32 // safety cap on simultaneous falling chunks (excess is discarded)
+// Surfaces transform without touching structure: an incendiary scorches grass→bare earth on hit;
+// the water cannon wets bare earth, which regrows grass after SURFACE_REGROW_TIME of being wet.
+export const SURFACE_REGROW_TIME = 6 // s a wetted bare-earth cell takes to regrow grass
 
 // ── Terrain landing model ─────────────────────────────────────────────────
 // On contact the ship is classified by `impact` = closing speed (px/s) along the
@@ -367,11 +401,13 @@ export const LAND_SPEED = 130 // impact below this rests the ship on the surface
 export const CRASH_SPEED = 430 // impact at/above this destroys the ship (costs a life)
 export const BOUNCE_RESTITUTION = 0.45 // fraction of normal velocity kept on a mid-speed bounce
 
-// Per-second tangential damping applied while a ship is resting on a surface:
-// ICE keeps almost all speed (slippery), the others grip and shed it quickly.
-export const SURFACE_FRICTION: Record<SurfaceMaterial, number> = {
-  [SurfaceMaterial.BEDROCK]: 6,
-  [SurfaceMaterial.ROCK]: 6,
-  [SurfaceMaterial.GRASS]: 7,
-  [SurfaceMaterial.ICE]: 0.3,
+// Per-second tangential damping applied while a ship is resting on a surface, keyed by the
+// block's SURFACE: ICE keeps almost all speed (slippery), the others grip and shed it quickly.
+// Bare metal anchors carry surface EARTH, so they grip like earth. WATER is never a resting
+// surface (it is a WaterBody), included only for enum exhaustiveness.
+export const SURFACE_FRICTION: Record<Surface, number> = {
+  [Surface.EARTH]: 6,
+  [Surface.GRASS]: 7,
+  [Surface.ICE]: 0.3,
+  [Surface.WATER]: 0,
 }

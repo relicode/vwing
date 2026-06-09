@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { updateBeams } from '$/game/beams'
-import { DeviceKind, InfantryWeapon, ShipKind, SurfaceMaterial, WeaponKind } from '$/game/constants'
+import { DeviceKind, InfantryWeapon, ShipKind, StructureType, Surface, WeaponKind } from '$/game/constants'
 import { resolveInfantryContacts, updateDevices } from '$/game/devices'
 import { createRng } from '$/game/rng'
 import type { Device, Ship, World } from '$/game/types'
@@ -161,7 +161,7 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
 
   test('falls under gravity and lands on a block when it hits slowly', () => {
     const world = makeWorld([], [infantry({})])
-    world.blocks = [{ x: 0, y: 200, w: 200, h: 80, material: SurfaceMaterial.ROCK }]
+    world.blocks = [{ x: 0, y: 200, w: 200, h: 80, structure: StructureType.EARTH, surface: Surface.EARTH }]
     updateDevices(world, 0.2)
     const live = world.devices[0]
     expect(live?.kind).toBe(DeviceKind.INFANTRY)
@@ -170,14 +170,14 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
 
   test('splats when it lands too fast (dropped from too high)', () => {
     const world = makeWorld([], [infantry({ vy: 400 })])
-    world.blocks = [{ x: 0, y: 200, w: 200, h: 80, material: SurfaceMaterial.ROCK }]
+    world.blocks = [{ x: 0, y: 200, w: 200, h: 80, structure: StructureType.EARTH, surface: Surface.EARTH }]
     updateDevices(world, 0.05)
     expect(world.devices.length).toBe(0)
   })
 
   test('a landed unit persists past the old lifetime (no self-despawn)', () => {
     const world = makeWorld([], [infantry({ attached: true, x: 100, y: 100 })])
-    world.blocks = [{ x: 50, y: 106, w: 120, h: 40, material: SurfaceMaterial.ROCK }] // ground beneath
+    world.blocks = [{ x: 50, y: 106, w: 120, h: 40, structure: StructureType.EARTH, surface: Surface.EARTH }] // ground beneath
     for (let i = 0; i < 20; i += 1) updateDevices(world, 1) // 20 simulated seconds on the ground
     expect(world.devices.length).toBe(1)
   })
@@ -185,7 +185,7 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
   test('attached infantry shoots at an enemy in range', () => {
     const enemy = makeShip({ id: 1, kind: ShipKind.BOT, x: 200, y: 100 })
     const world = makeWorld([enemy], [infantry({ x: 200, y: 120, attached: true })])
-    world.blocks = [{ x: 140, y: 128, w: 120, h: 40, material: SurfaceMaterial.ROCK }] // ground beneath
+    world.blocks = [{ x: 140, y: 128, w: 120, h: 40, structure: StructureType.EARTH, surface: Surface.EARTH }] // ground beneath
     updateDevices(world, 0.016)
     expect(world.bullets.length).toBeGreaterThan(0)
   })
@@ -194,8 +194,8 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     const enemy = makeShip({ id: 1, kind: ShipKind.BOT, x: 300, y: 100 })
     const world = makeWorld([enemy], [infantry({ x: 100, y: 100, attached: true })])
     world.blocks = [
-      { x: 40, y: 108, w: 120, h: 40, material: SurfaceMaterial.ROCK }, // ground beneath the unit
-      { x: 180, y: 60, w: 40, h: 80, material: SurfaceMaterial.BEDROCK }, // wall between them
+      { x: 40, y: 108, w: 120, h: 40, structure: StructureType.EARTH, surface: Surface.EARTH }, // ground beneath the unit
+      { x: 180, y: 60, w: 40, h: 80, structure: StructureType.METAL, surface: Surface.EARTH }, // wall between them
     ]
     updateDevices(world, 0.016)
     expect(world.bullets.length).toBe(0)
@@ -203,7 +203,7 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
 
   test('a landed unit patrols its block and never walks off the edges', () => {
     const world = makeWorld([], [infantry({ attached: true, x: 150, y: 94, groundLeft: 100, groundRight: 160 })])
-    world.blocks = [{ x: 100, y: 102, w: 60, h: 40, material: SurfaceMaterial.ROCK }] // the block it stands on
+    world.blocks = [{ x: 100, y: 102, w: 60, h: 40, structure: StructureType.EARTH, surface: Surface.EARTH }] // the block it stands on
     for (let i = 0; i < 600; i += 1) updateDevices(world, 1 / 60) // 10s of patrolling
     const u = world.devices[0]
     expect(u?.kind).toBe(DeviceKind.INFANTRY)
@@ -239,7 +239,7 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
   test('a landed grenadier plants on one knee to fire, lobbing mid-crouch', () => {
     const enemy = makeShip({ id: 1, kind: ShipKind.BOT, x: 200, y: 100 })
     const world = makeWorld([enemy], [infantry({ weapon: InfantryWeapon.GRENADE, x: 100, y: 100, attached: true })])
-    world.blocks = [{ x: 40, y: 108, w: 120, h: 40, material: SurfaceMaterial.ROCK }] // ground beneath
+    world.blocks = [{ x: 40, y: 108, w: 120, h: 40, structure: StructureType.EARTH, surface: Surface.EARTH }] // ground beneath
     updateDevices(world, 0.016) // cadence ready + target in sight → drops to a knee (no lob yet)
     const crouched = world.devices.find((d) => d.kind === DeviceKind.INFANTRY)
     if (crouched?.kind === DeviceKind.INFANTRY) expect(crouched.kneel).toBeGreaterThan(0) // kneeling first
@@ -265,7 +265,7 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
         }),
       ]
     )
-    world.blocks = [{ x: 40, y: 108, w: 120, h: 40, material: SurfaceMaterial.ROCK }]
+    world.blocks = [{ x: 40, y: 108, w: 120, h: 40, structure: StructureType.EARTH, surface: Surface.EARTH }]
     for (let i = 0; i < 10; i += 1) updateDevices(world, 1 / 60) // ~0.17s, stays above INFANTRY_KNEEL_FIRE_AT
     const u = world.devices.find((d) => d.kind === DeviceKind.INFANTRY)
     if (u?.kind === DeviceKind.INFANTRY) {
@@ -276,7 +276,7 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
 
   test('a falling unit grazing the side of a wall slides past instead of sticking', () => {
     const world = makeWorld([], [infantry({ x: 96, y: 100, vx: 0, vy: 50 })])
-    world.blocks = [{ x: 100, y: 0, w: 40, h: 400, material: SurfaceMaterial.BEDROCK }] // a tall wall to its right
+    world.blocks = [{ x: 100, y: 0, w: 40, h: 400, structure: StructureType.METAL, surface: Surface.EARTH }] // a tall wall to its right
     updateDevices(world, 0.05)
     const u = world.devices[0]
     expect(u?.kind).toBe(DeviceKind.INFANTRY)
@@ -288,7 +288,7 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
 
   test('a landed unit falls when the block beneath it is destroyed', () => {
     const world = makeWorld([], [infantry({ attached: true, x: 100, y: 100, groundLeft: 50, groundRight: 170 })])
-    world.blocks = [{ x: 50, y: 106, w: 120, h: 40, material: SurfaceMaterial.ROCK }]
+    world.blocks = [{ x: 50, y: 106, w: 120, h: 40, structure: StructureType.EARTH, surface: Surface.EARTH }]
     updateDevices(world, 0.05)
     const landed = world.devices[0]
     if (landed?.kind === DeviceKind.INFANTRY) expect(landed.attached).toBe(true) // still standing
@@ -305,7 +305,7 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
 
   test('a unit embedded in a block dies on the spot', () => {
     const world = makeWorld([], [infantry({ attached: true, x: 100, y: 100, groundLeft: 50, groundRight: 170 })])
-    world.blocks = [{ x: 50, y: 80, w: 120, h: 80, material: SurfaceMaterial.ROCK }] // engulfs the unit
+    world.blocks = [{ x: 50, y: 80, w: 120, h: 80, structure: StructureType.EARTH, surface: Surface.EARTH }] // engulfs the unit
     updateDevices(world, 0.016)
     expect(world.devices.length).toBe(0)
   })

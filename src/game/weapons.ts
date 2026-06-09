@@ -14,6 +14,11 @@ import {
   GRENADE_FUSE,
   GRENADE_RADIUS,
   GRENADE_SPEED,
+  INCENDIARY_DAMAGE,
+  INCENDIARY_LIFE,
+  INCENDIARY_PELLETS,
+  INCENDIARY_SPEED,
+  INCENDIARY_SPREAD,
   INFANTRY_FIRE_INTERVAL,
   INFANTRY_GRENADE_CHANCE,
   INFANTRY_PICKUP_DELAY,
@@ -229,7 +234,19 @@ export const fireSecondary = (world: World, ship: Ship): Ship[] => {
         life: WATER_CANNON_LIFE,
         damage: WATER_CANNON_DAMAGE,
         push: WATER_CANNON_PUSH,
+        wet: true, // wets bare earth → grass and pools in basins on a terrain hit
         color: Color.WATER_EDGE,
+      })
+      return []
+    case WeaponKind.INCENDIARY:
+      spawnBurst(world.bullets, ship, world.rng, {
+        count: INCENDIARY_PELLETS,
+        spread: INCENDIARY_SPREAD,
+        speed: INCENDIARY_SPEED,
+        life: INCENDIARY_LIFE,
+        damage: INCENDIARY_DAMAGE,
+        burn: true, // scorches grass → bare earth on a terrain hit
+        color: Color.THRUST,
       })
       return []
     case WeaponKind.RAIL: {

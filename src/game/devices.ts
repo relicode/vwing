@@ -356,7 +356,7 @@ const stepDevice = (
       // owner or drift to a stop — begin sinking on drown.
       if (device.swim > 0) {
         device.swim -= dt
-        const surface = waterSurfaceAt(world.water, device.x)
+        const surface = waterSurfaceAt(world.water, device.x, device.y)
         if (surface !== undefined) device.y = surface + device.radius * 0.2
         device.vy = 0
         const rescuer = rescuingOwner(world, device)
@@ -430,7 +430,7 @@ const stepDevice = (
           }
         }
         if (!device.attached) {
-          const surface = waterSurfaceAt(world.water, device.x)
+          const surface = waterSurfaceAt(world.water, device.x, device.y)
           if (surface !== undefined && device.y + device.radius >= surface) {
             device.swim = INFANTRY_SWIM_TIME
             device.vy = 0
