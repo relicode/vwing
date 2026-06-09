@@ -5,7 +5,7 @@ import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
 import { useCallback, useEffect, useState } from 'react'
 
-import Overlay from '$/app/overlay'
+import Overlay from '$/app/Overlay'
 import { NET_GAME_NAME_MAX } from '$/game/constants'
 import { fetchGames, serverOrigin } from '$/net/client'
 import { type GameSummary, gameNameKey, JoinIntent, sanitizeGameName } from '$/net/protocol'
