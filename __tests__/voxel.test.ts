@@ -10,6 +10,31 @@ const filledCells = (mat: Uint8Array): number => {
   return n
 }
 
+// Empty one full-height column of island C (block(1900,760,160,70) → cols 190–205, rows 76–82) at
+// x≈1925 (col 192), severing the cols 190–191 sliver from the cols 193–205 main mass. The crater
+// itself removes 7 cells (col 192 × 7 rows); the 14-cell sliver is lifted into a falling chunk.
+const severIslandSliver = (vt: ReturnType<typeof createVoxelTerrain>): void => {
+  for (let row = 76; row <= 82; row += 1) carveVoxel(vt, 1925, row * VOXEL_CELL + 5, 4)
+}
+
+// Count filled static-grid cells inside an inclusive [c0,c1]×[r0,r1] cell rectangle.
+const filledInRect = (
+  vt: ReturnType<typeof createVoxelTerrain>,
+  c0: number,
+  c1: number,
+  r0: number,
+  r1: number
+): number => {
+  let n = 0
+  for (let row = r0; row <= r1; row += 1)
+    for (let col = c0; col <= c1; col += 1) if (vt.mat[row * vt.cols + col] !== 0) n += 1
+  return n
+}
+
+// Size of the pinned island that currently contains a given cell index (0 if no pin holds it).
+const pinSizeContaining = (vt: ReturnType<typeof createVoxelTerrain>, cell: number): number =>
+  vt.pinned.find((pin) => pin.has(cell))?.size ?? 0
+
 describe('createVoxelTerrain', () => {
   test('sizes the grid to the world and rasterizes the hand-authored arena', () => {
     const vt = createVoxelTerrain()
@@ -51,13 +76,41 @@ describe('carveVoxel', () => {
     expect(carveVoxel(vt, 540, 1380, 18)).toBe(false) // already hollowed: nothing left to remove
   })
 
-  test('biting into a floating island looses it as falling debris', () => {
+  test('boring a hole through a floating island leaves the connected remainder aloft', () => {
     const vt = createVoxelTerrain()
     const pinsBefore = vt.pinned.length
-    // Island C — the standalone rock platform at block(1900,760,160,70).
+    const before = filledCells(vt.mat)
+    // Island C — the standalone rock platform at block(1900,760,160,70). A hole in its middle
+    // never disconnects it, so it must keep floating with nothing breaking off.
     expect(carveVoxel(vt, 1980, 795, 12)).toBe(true)
-    expect(hasDebris(vt)).toBe(true) // the island broke loose
-    expect(vt.pinned.length).toBeLessThan(pinsBefore) // its pin dissolved; the other islands keep theirs
+    expect(filledCells(vt.mat)).toBeLessThan(before) // material was removed
+    expect(hasDebris(vt)).toBe(false) // still one connected piece → nothing falls
+    expect(vt.pinned.length).toBe(pinsBefore) // and the island stays pinned/aloft
+  })
+
+  test('severing a fragment off a floating island drops only the fragment, not the whole island', () => {
+    const vt = createVoxelTerrain()
+    const pinsBefore = vt.pinned.length
+    severIslandSliver(vt)
+    expect(hasDebris(vt)).toBe(true) // the severed left sliver lost its footing and falls
+    expect(vt.pinned.length).toBe(pinsBefore) // island C is still pinned — its main mass stays aloft
+    // The LARGER piece must be the one that stays: assert the main mass is intact in the grid and the
+    // sliver was lifted out — so a 'keep the smallest piece' regression (the original bug) is caught.
+    expect(filledInRect(vt, 193, 205, 76, 82)).toBe(91) // 13×7 main mass still anchored in place
+    expect(filledInRect(vt, 190, 191, 76, 82)).toBe(0) // the 2-col sliver is gone from the static grid
+  })
+
+  test('carving one island leaves the other islands’ pins untouched', () => {
+    const vt = createVoxelTerrain()
+    const islandACell = 65 * vt.cols + 70 // inside floating island A (block(600,620,260,90))
+    const islandBCell = 45 * vt.cols + 145 // inside floating island B (block(1380,430,220,80))
+    const aBefore = pinSizeContaining(vt, islandACell)
+    const bBefore = pinSizeContaining(vt, islandBCell)
+    expect(aBefore).toBeGreaterThan(0)
+    expect(bBefore).toBeGreaterThan(0)
+    severIslandSliver(vt) // bites island C only
+    expect(pinSizeContaining(vt, islandACell)).toBe(aBefore) // A's pin is byte-for-byte unchanged
+    expect(pinSizeContaining(vt, islandBCell)).toBe(bBefore) // and so is B's
   })
 })
 
@@ -86,15 +139,15 @@ describe('connectivity + debris', () => {
     expect(stepVoxel(vt, 1 / 30)).toBe(false)
   })
 
-  test('a falling chunk conserves material: cells lost from the grid land back into it', () => {
+  test('a falling chunk conserves material: every lifted cell lands back into the grid', () => {
     const vt = createVoxelTerrain()
     const before = filledCells(vt.mat)
-    carveVoxel(vt, 1980, 795, 12) // loose island C
-    const removedToAir = before - filledCells(vt.mat) // cells now in flight (lifted out of the grid)
-    expect(removedToAir).toBeGreaterThan(0)
+    severIslandSliver(vt) // 7 crater cells removed + a 14-cell sliver lifted into a falling chunk
+    expect(before - filledCells(vt.mat)).toBe(7 + 14) // both the crater and the airborne sliver left the grid
+    expect(hasDebris(vt)).toBe(true)
     for (let i = 0; i < 600 && hasDebris(vt); i += 1) stepVoxel(vt, 1 / 30)
     expect(hasDebris(vt)).toBe(false)
-    // After settling, the lifted cells are stamped back: the grid regains (most of) them.
-    expect(filledCells(vt.mat)).toBeGreaterThan(before - removedToAir)
+    // Only the 7 crater cells are truly gone; all 14 sliver cells re-stamp where the chunk settles.
+    expect(filledCells(vt.mat)).toBe(before - 7)
   })
 })

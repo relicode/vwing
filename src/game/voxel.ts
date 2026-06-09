@@ -12,8 +12,8 @@ import type { Block, WaterBody } from '$/game/types'
 
 // Destructible terrain as a grid of small cells. Bedrock stays as indestructible anchor
 // rectangles; rock/grass/ice are voxelized so a shot can carve a crater and any piece that
-// loses its connection to the "main static surface" (bedrock, the floor, or an undisturbed
-// floating island) breaks off and falls as a debris chunk that re-settles where it lands.
+// loses its connection to a stable anchor (bedrock, the floor, or a floating island's pinned
+// main mass) breaks off and falls as a debris chunk that re-settles where it lands.
 // Collision + rendering still consume rectangles: the static grid and each falling chunk are
 // greedily meshed into Block[] (see voxelToBlocks) whenever anything changes.
 
@@ -297,7 +297,8 @@ export const createVoxelTerrain = (): VoxelTerrain => {
   }
 
   // Anything not grounded at birth is an intentional floating island: pin its component so it
-  // hovers, but record it so the pin dissolves the instant the island is shot (see carveVoxel).
+  // hovers. Carving the island later shrinks the pin to whatever main mass survives, so only the
+  // fragments severed from that mass fall while the rest stays aloft (see carveVoxel).
   const anchored = new Uint8Array(cols * rows)
   floodFilled(vt, groundingSeeds(vt), anchored)
   const visited = new Uint8Array(cols * rows)
@@ -331,8 +332,51 @@ export const createVoxelTerrain = (): VoxelTerrain => {
   return vt
 }
 
-// Carve a circular crater at (x, y). Removes covered destructible cells, dissolves the pin of
-// any floating island it bites into (so the island can now fall), and re-flows any pieces left
+// Of a floating island's pin, the largest 4-connected sub-set of cells that are still filled: the
+// island's surviving "main mass". When a carve splits an island, this becomes its new anchor, so
+// the main body keeps hovering while severed minor fragments lose their pin and fall. Connectivity
+// stays inside the pin (the magic anchor), but reflowDebris still re-grounds anything bridged to it
+// by other terrain. Ties break on lowest cell index (top-left wins) to stay deterministic.
+const largestPinComponent = (vt: VoxelTerrain, pin: Set<number>): Set<number> => {
+  const seen = new Set<number>()
+  let best = new Set<number>()
+  let bestSeed = vt.cols * vt.rows
+  for (const start of pin) {
+    if (vt.mat[start] === EMPTY || seen.has(start)) continue
+    const component = new Set<number>()
+    let seed = start
+    const stack = [start]
+    seen.add(start)
+    while (stack.length > 0) {
+      const j = stack.pop() as number
+      component.add(j)
+      if (j < seed) seed = j
+      const col = j % vt.cols
+      const row = (j / vt.cols) | 0
+      const neighbours = [
+        col > 0 ? j - 1 : -1,
+        col < vt.cols - 1 ? j + 1 : -1,
+        row > 0 ? j - vt.cols : -1,
+        row < vt.rows - 1 ? j + vt.cols : -1,
+      ]
+      for (const n of neighbours) {
+        if (n >= 0 && pin.has(n) && vt.mat[n] !== EMPTY && !seen.has(n)) {
+          seen.add(n)
+          stack.push(n)
+        }
+      }
+    }
+    if (component.size > best.size || (component.size === best.size && seed < bestSeed)) {
+      best = component
+      bestSeed = seed
+    }
+  }
+  return best
+}
+
+// Carve a circular crater at (x, y). Removes covered destructible cells; if the crater bites into a
+// floating island, that island is re-pinned to its largest surviving piece so the main mass keeps
+// hovering while any fragment severed from it loses its anchor and drops. Re-flows whatever is left
 // unsupported. Returns whether the terrain changed (so the caller can refresh derived blocks).
 export const carveVoxel = (vt: VoxelTerrain, x: number, y: number, radius: number): boolean => {
   const r2 = radius * radius
@@ -354,13 +398,19 @@ export const carveVoxel = (vt: VoxelTerrain, x: number, y: number, radius: numbe
     }
   }
   if (removed.length === 0) return false
-  // A shot that bites into a floating island releases its pin, so the rest of it can drop.
+  // A shot that bites a floating island shrinks its pin to the surviving main mass, so only the
+  // pieces severed from that mass lose their anchor and fall — the rest keeps floating.
   if (vt.pinned.length > 0) {
-    const bitten = new Set(removed)
-    vt.pinned = vt.pinned.filter((pin) => {
-      for (const i of pin) if (bitten.has(i)) return false
-      return true
-    })
+    const nextPinned: Set<number>[] = []
+    for (const pin of vt.pinned) {
+      if (!removed.some((i) => pin.has(i))) {
+        nextPinned.push(pin)
+        continue
+      }
+      const mass = largestPinComponent(vt, pin)
+      if (mass.size > 0) nextPinned.push(mass)
+    }
+    vt.pinned = nextPinned
   }
   reflowDebris(vt)
   return true
