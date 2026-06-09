@@ -281,14 +281,20 @@ const rescuingOwner = (world: World, device: InfantryDevice): Ship | undefined =
   return Math.hypot(owner.vx, owner.vy) <= INFANTRY_PICKUP_SPEED ? owner : undefined
 }
 
+// Clamp x to a unit's walkable span on its block (feet kept inside both edges). When the block is
+// narrower than the unit there is no valid interior, so clamp()'s inverted bounds (min > max) would
+// snap the unit to a bogus edge every frame — instead hold it centred so a big trooper on a thin
+// ledge stays put. patrolInfantry guards this inline; the other movers route through here.
+const clampToGround = (device: InfantryDevice, x: number): number => {
+  const min = device.groundLeft + device.radius
+  const max = device.groundRight - device.radius
+  return max <= min ? (device.groundLeft + device.groundRight) / 2 : clamp(x, min, max)
+}
+
 // March toward a target x along the supporting block (clamped to its edges) to be picked up.
 const walkToward = (device: InfantryDevice, targetX: number, dt: number): void => {
   device.walkDir = targetX >= device.x ? 1 : -1
-  device.x = clamp(
-    device.x + device.walkDir * INFANTRY_WALK_SPEED * dt,
-    device.groundLeft + device.radius,
-    device.groundRight - device.radius
-  )
+  device.x = clampToGround(device, device.x + device.walkDir * INFANTRY_WALK_SPEED * dt)
   device.facing = device.walkDir
 }
 
@@ -322,7 +328,7 @@ const repositionLanded = (world: World, device: InfantryDevice, dt: number): voi
     rescuer &&
     rescuer.x >= device.groundLeft &&
     rescuer.x <= device.groundRight &&
-    Math.abs(rescuer.y - device.y) <= INFANTRY_PICKUP_RADIUS
+    Math.abs(rescuer.y - device.y) <= INFANTRY_PICKUP_RADIUS + device.radius
   ) {
     walkToward(device, rescuer.x, dt)
   } else {
@@ -519,11 +525,7 @@ const stepDevice = (
       // sliding, the trooper glides (clamped to its block) and can't shoot until it stops.
       if (device.slide !== 0 || (ground.surface === Surface.ICE && world.rng() < INFANTRY_ICE_SLIP_CHANCE)) {
         if (device.slide === 0) device.slide = device.walkDir * INFANTRY_SLIP_SPEED // a fresh slip
-        device.x = clamp(
-          device.x + device.slide * dt,
-          device.groundLeft + device.radius,
-          device.groundRight - device.radius
-        )
+        device.x = clampToGround(device, device.x + device.slide * dt)
         device.slide *= Math.exp(-INFANTRY_SLIP_FRICTION * dt)
         if (Math.abs(device.slide) < INFANTRY_SLIP_STOP_SPEED) device.slide = 0
         device.facing = device.walkDir
@@ -540,11 +542,7 @@ const stepDevice = (
         device.walkDir = away
         device.facing = away
         device.kneel = 0
-        device.x = clamp(
-          device.x + away * INFANTRY_RUN_SPEED * dt,
-          device.groundLeft + device.radius,
-          device.groundRight - device.radius
-        )
+        device.x = clampToGround(device, device.x + away * INFANTRY_RUN_SPEED * dt)
         return true
       }
       device.running = false
