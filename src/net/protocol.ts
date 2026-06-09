@@ -33,6 +33,13 @@ export enum MsgType {
   REJECTED = 'REJECTED', // join refused (room full / bad name)
 }
 
+// Why a client opened the socket: HOST refuses to reuse a live game name; JOIN refuses to
+// connect to one that doesn't exist. Sent as the `intent` query param on the /ws upgrade.
+export enum JoinIntent {
+  HOST = 'host',
+  JOIN = 'join',
+}
+
 export type ClientMessage = { t: MsgType.INPUT; input: InputSnapshot }
 
 export type ServerMessage =
@@ -66,10 +73,17 @@ export const decodeServer = (raw: string): ServerMessage | undefined => {
   }
 }
 
-// Trim/normalize a hosted game name to a safe lobby key (also used as a Redis key and a
-// WebSocket topic): keep letters/digits/underscore plus spaces and hyphens, collapse
-// whitespace runs, and cap the length.
-const UNSAFE_NAME_CHARS = /[^\w -]+/g
+// Trim/normalize a hosted game name to a safe display name. NFC-normalize first so combining
+// sequences precompose, then keep Unicode letters/digits/marks plus spaces, underscores and
+// hyphens (so international names like "Café" or "アリーナ" survive), collapse whitespace runs,
+// and cap the length. Control/format/punctuation/emoji are dropped.
+const UNSAFE_NAME_CHARS = /[^\p{L}\p{N}\p{M} _-]+/gu
 const WHITESPACE_RUN = /\s+/g
 export const sanitizeGameName = (raw: string, max: number): string =>
-  raw.replace(UNSAFE_NAME_CHARS, '').replace(WHITESPACE_RUN, ' ').trim().slice(0, max)
+  raw.normalize('NFC').replace(UNSAFE_NAME_CHARS, '').replace(WHITESPACE_RUN, ' ').trim().slice(0, max)
+
+// Canonical identity of a hosted game — what uniqueness is tested against. Case-insensitive and
+// compatibility-normalized (NFKC), so names differing only by letter case or Unicode form map to
+// the same game and can't be double-hosted ("Arena" == "arena", precomposed "é" == combining
+// "é", fullwidth "Ａ" == "a"). Diacritics are preserved (café ≠ cafe — genuinely distinct names).
+export const gameNameKey = (name: string): string => name.normalize('NFKC').toLowerCase()

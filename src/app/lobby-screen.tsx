@@ -8,13 +8,13 @@ import { useCallback, useEffect, useState } from 'react'
 import Overlay from '$/app/overlay'
 import { NET_GAME_NAME_MAX } from '$/game/constants'
 import { fetchGames, serverOrigin } from '$/net/client'
-import { type GameSummary, sanitizeGameName } from '$/net/protocol'
+import { type GameSummary, gameNameKey, JoinIntent, sanitizeGameName } from '$/net/protocol'
 
 const PILOT_KEY = 'vwing.pilot'
 const readPilot = (): string => globalThis.localStorage?.getItem(PILOT_KEY) ?? ''
 
 type LobbyScreenProps = {
-  onJoin: (game: string, pilot: string) => void
+  onJoin: (game: string, pilot: string, intent: JoinIntent) => void
   onBack: () => void
 }
 
@@ -23,6 +23,7 @@ const LobbyScreen = ({ onJoin, onBack }: LobbyScreenProps) => {
   const [pilot, setPilot] = useState<string>(readPilot)
   const [host, setHost] = useState('')
   const [error, setError] = useState<string>()
+  const [hostError, setHostError] = useState<string>()
 
   // Poll the lobby every couple of seconds so hosted games appear/disappear live.
   useEffect(() => {
@@ -46,15 +47,21 @@ const LobbyScreen = ({ onJoin, onBack }: LobbyScreenProps) => {
     }
   }, [])
 
-  const join = useCallback(
-    (game: string) => {
+  const connect = useCallback(
+    (game: string, intent: JoinIntent) => {
       const cleanGame = sanitizeGameName(game, NET_GAME_NAME_MAX)
       if (!cleanGame) return
+      // Refuse to host onto a name already in the lobby (the server enforces this too — case-
+      // insensitively and Unicode-normalized; this is just instant feedback before connecting).
+      if (intent === JoinIntent.HOST && games.some((g) => gameNameKey(g.name) === gameNameKey(cleanGame))) {
+        setHostError(`“${cleanGame}” is already hosted — pick another name.`)
+        return
+      }
       const cleanPilot = sanitizeGameName(pilot, NET_GAME_NAME_MAX) || 'Pilot'
       globalThis.localStorage?.setItem(PILOT_KEY, cleanPilot)
-      onJoin(cleanGame, cleanPilot)
+      onJoin(cleanGame, cleanPilot, intent)
     },
-    [onJoin, pilot]
+    [onJoin, pilot, games]
   )
 
   return (
@@ -72,20 +79,33 @@ const LobbyScreen = ({ onJoin, onBack }: LobbyScreenProps) => {
         sx={{ width: '100%' }}
       />
 
-      <Stack direction="row" spacing={1} sx={{ width: '100%' }}>
-        <TextField
-          size="small"
-          label="Host a game"
-          placeholder="game name"
-          value={host}
-          onChange={(event) => setHost(event.target.value)}
-          onKeyDown={(event) => event.key === 'Enter' && join(host)}
-          slotProps={{ htmlInput: { maxLength: NET_GAME_NAME_MAX } }}
-          sx={{ flex: 1 }}
-        />
-        <Button variant="contained" onClick={() => join(host)} disabled={!sanitizeGameName(host, NET_GAME_NAME_MAX)}>
-          Host
-        </Button>
+      <Stack spacing={0.5} sx={{ width: '100%' }}>
+        <Stack direction="row" spacing={1} sx={{ width: '100%' }}>
+          <TextField
+            size="small"
+            label="Host a game"
+            placeholder="game name"
+            value={host}
+            error={Boolean(hostError)}
+            onChange={(event) => {
+              setHost(event.target.value)
+              setHostError(undefined)
+            }}
+            onKeyDown={(event) => event.key === 'Enter' && connect(host, JoinIntent.HOST)}
+            slotProps={{ htmlInput: { maxLength: NET_GAME_NAME_MAX } }}
+            sx={{ flex: 1 }}
+          />
+          <Button
+            variant="contained"
+            onClick={() => connect(host, JoinIntent.HOST)}
+            disabled={!sanitizeGameName(host, NET_GAME_NAME_MAX)}
+          >
+            Host
+          </Button>
+        </Stack>
+        {hostError ? (
+          <Typography sx={{ color: 'error.main', fontSize: 12, alignSelf: 'flex-start' }}>{hostError}</Typography>
+        ) : null}
       </Stack>
 
       <Box sx={{ width: '100%' }}>
@@ -113,7 +133,7 @@ const LobbyScreen = ({ onJoin, onBack }: LobbyScreenProps) => {
                     size="small"
                     variant="outlined"
                     disabled={game.players >= game.maxPlayers}
-                    onClick={() => join(game.name)}
+                    onClick={() => connect(game.name, JoinIntent.JOIN)}
                   >
                     Join
                   </Button>

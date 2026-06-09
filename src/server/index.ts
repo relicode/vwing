@@ -8,12 +8,14 @@ import {
   NET_PERSIST_EVERY,
   NET_TICK_RATE,
 } from '$/game/constants'
-import { decodeClient, encode, MsgType, sanitizeGameName } from '$/net/protocol'
+import { decodeClient, encode, gameNameKey, JoinIntent, MsgType, sanitizeGameName } from '$/net/protocol'
 import { createRoom, type Room } from '$/server/room'
 import type { Store } from '$/server/store'
 
 // Per-connection data carried on each WebSocket (assigned at upgrade, finalized on open).
-type ConnData = { game: string; name: string; shipId: number }
+// `game` is the display name; `key` is its canonical (case-insensitive, normalized) identity,
+// which is what rooms are indexed by so two casings of a name are the same game.
+type ConnData = { game: string; key: string; name: string; intent: JoinIntent; shipId: number }
 
 type RoomState = {
   room: Room
@@ -35,18 +37,23 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
   const dt = 1 / NET_TICK_RATE
   let tickCount = 0
 
-  const getOrCreateRoom = (name: string): RoomState => {
-    const existing = rooms.get(name)
-    if (existing) return existing
-    const created: RoomState = { room: createRoom(name), topic: `game:${name}`, persistTick: 0, emptySince: undefined }
-    rooms.set(name, created)
-    void store.registerGame(name, { players: 0, maxPlayers: NET_MAX_PLAYERS })
-    console.log(`[server] room created: "${name}"`)
+  // Always creates a fresh room indexed by its canonical key (and topic); the caller decides
+  // whether that's allowed — host into a free key, join into an existing one.
+  const createRoomState = (key: string, displayName: string): RoomState => {
+    const created: RoomState = {
+      room: createRoom(displayName),
+      topic: `game:${key}`,
+      persistTick: 0,
+      emptySince: undefined,
+    }
+    rooms.set(key, created)
+    void store.registerGame(displayName, { players: 0, maxPlayers: NET_MAX_PLAYERS })
+    console.log(`[server] room created: "${displayName}"`)
     return created
   }
 
-  const disposeRoom = (rs: RoomState): void => {
-    rooms.delete(rs.room.name)
+  const disposeRoom = (key: string, rs: RoomState): void => {
+    rooms.delete(key)
     void store.unregisterGame(rs.room.name)
     void store.deleteState(rs.room.name)
     console.log(`[server] room disposed: "${rs.room.name}"`)
@@ -77,7 +84,8 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
         const game = sanitizeGameName(url.searchParams.get('game') ?? '', NET_GAME_NAME_MAX)
         const rawName = sanitizeGameName(url.searchParams.get('name') ?? '', NET_GAME_NAME_MAX)
         if (!game) return new Response('Missing game name', { status: 400, headers: CORS })
-        const data: ConnData = { game, name: rawName || 'Pilot', shipId: -1 }
+        const intent = url.searchParams.get('intent') === JoinIntent.HOST ? JoinIntent.HOST : JoinIntent.JOIN
+        const data: ConnData = { game, key: gameNameKey(game), name: rawName || 'Pilot', intent, shipId: -1 }
         return srv.upgrade(request, { data })
           ? undefined
           : new Response('Upgrade failed', { status: 400, headers: CORS })
@@ -87,7 +95,22 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
     },
     websocket: {
       open: (ws: ServerWebSocket<ConnData>) => {
-        const rs = getOrCreateRoom(ws.data.game)
+        const { key, intent, game } = ws.data
+        const existing = rooms.get(key)
+        // Enforce intent against the canonical key: you can't host onto a name that's already
+        // live, and you can't join one that doesn't exist.
+        if (intent === JoinIntent.HOST && existing) {
+          const reason = `“${existing.room.name}” is already hosted — pick another name.`
+          ws.send(encode({ t: MsgType.REJECTED, reason }))
+          ws.close()
+          return
+        }
+        if (intent === JoinIntent.JOIN && !existing) {
+          ws.send(encode({ t: MsgType.REJECTED, reason: 'That game is no longer open.' }))
+          ws.close()
+          return
+        }
+        const rs = existing ?? createRoomState(key, game)
         const shipId = rs.room.join(ws.data.name)
         if (shipId === undefined) {
           ws.send(encode({ t: MsgType.REJECTED, reason: 'Game is full' }))
@@ -99,21 +122,22 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
         ws.subscribe(rs.topic)
         ws.send(encode({ t: MsgType.WELCOME, selfId: shipId, game: rs.room.name, tickRate: NET_TICK_RATE }))
         void store.registerGame(rs.room.name, { players: rs.room.playerCount(), maxPlayers: NET_MAX_PLAYERS })
+        const verb = intent === JoinIntent.HOST ? 'hosted' : 'joined'
         console.log(
-          `[server] "${ws.data.name}" joined "${rs.room.name}" as #${shipId} (${rs.room.playerCount()} in room)`
+          `[server] "${ws.data.name}" ${verb} "${rs.room.name}" as #${shipId} (${rs.room.playerCount()} in room)`
         )
       },
       message: (ws: ServerWebSocket<ConnData>, raw) => {
         if (ws.data.shipId < 0) return
         try {
           const message = decodeClient(typeof raw === 'string' ? raw : raw.toString())
-          if (message) rooms.get(ws.data.game)?.room.setInput(ws.data.shipId, message.input)
+          if (message) rooms.get(ws.data.key)?.room.setInput(ws.data.shipId, message.input)
         } catch {
           // A malformed packet must never take down the room loop or other players.
         }
       },
       close: (ws: ServerWebSocket<ConnData>) => {
-        const rs = rooms.get(ws.data.game)
+        const rs = rooms.get(ws.data.key)
         if (!rs || ws.data.shipId < 0) return
         ws.unsubscribe(rs.topic)
         rs.room.leave(ws.data.shipId)
@@ -129,9 +153,9 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
   const emptyTtlTicks = NET_EMPTY_ROOM_TTL * NET_TICK_RATE
   const loop = setInterval(() => {
     tickCount += 1
-    for (const rs of rooms.values()) {
+    for (const [key, rs] of rooms) {
       if (rs.room.isEmpty()) {
-        if (rs.emptySince !== undefined && tickCount - rs.emptySince >= emptyTtlTicks) disposeRoom(rs)
+        if (rs.emptySince !== undefined && tickCount - rs.emptySince >= emptyTtlTicks) disposeRoom(key, rs)
         continue
       }
       const events = rs.room.step(dt)
