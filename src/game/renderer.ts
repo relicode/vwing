@@ -8,18 +8,18 @@ import {
   DeviceKind,
   GamePhase,
   InfantryWeapon,
-  PLAYER_ID,
   SHAKE_FREQ,
   SHIP_MAX_HEALTH,
   SHIP_MAX_SHIELDS,
-  ShipKind,
   SurfaceMaterial,
   VIEW_HEIGHT,
   VIEW_WIDTH,
+  WORLD_HEIGHT,
+  WORLD_WIDTH,
 } from '$/game/constants'
 import { clamp } from '$/game/math'
 import { randRange } from '$/game/rng'
-import type { Beam, Block, Device, Particle, Rng, Ship, Vec2, WaterBody, World } from '$/game/types'
+import type { Beam, Block, Device, Particle, RenderWorld, Rng, Ship, Vec2, WaterBody } from '$/game/types'
 
 type Star = { x: number; y: number; depth: number; size: number }
 
@@ -28,7 +28,7 @@ const WING_SPREAD = 2.4 // radians from nose to each tail corner
 
 export type Renderer = {
   view: Container
-  draw: (world: World, phase: GamePhase) => void
+  draw: (world: RenderWorld, phase: GamePhase, selfId: number) => void
   destroy: () => void
 }
 
@@ -205,7 +205,7 @@ const drawSwimmer = (g: Graphics, d: InfantrySprite, body: number, time: number)
     .stroke({ width: 1, color: Color.WATER_EDGE, alpha: 0.6 })
 }
 
-const drawDevice = (g: Graphics, d: Device, time: number): void => {
+const drawDevice = (g: Graphics, d: Device, time: number, selfId: number): void => {
   switch (d.kind) {
     case DeviceKind.MISSILE: {
       const a = Math.atan2(d.vy, d.vx)
@@ -227,7 +227,7 @@ const drawDevice = (g: Graphics, d: Device, time: number): void => {
       // weapon that reads its type, facing its movement/aim, parachute canopy while descending.
       const r = d.radius
       const f = d.facing >= 0 ? 1 : -1
-      const body = d.owner === PLAYER_ID ? Color.SHIP : Color.ENEMY // same colour as its owner
+      const body = d.owner === selfId ? Color.SHIP : Color.ENEMY // same colour as its owner
       // Afloat (but not yet a drowned corpse): a distinct swimming pose, waving / paddling.
       if (d.swim > 0 && d.sinking <= 0) {
         drawSwimmer(g, d, body, time)
@@ -298,11 +298,11 @@ const drawBars = (g: Graphics, ship: Ship): void => {
   g.rect(x, y - 4, w * clamp(ship.shields / SHIP_MAX_SHIELDS, 0, 1), 2).fill({ color: Color.SHIELD })
 }
 
-const drawShip = (g: Graphics, ship: Ship, time: number): void => {
+const drawShip = (g: Graphics, ship: Ship, time: number, isSelf: boolean): void => {
   if (ship.invuln > 0 && Math.floor(time * 12) % 2 === 0) return
   const a = ship.angle
   const r = ship.radius
-  const hull = ship.kind === ShipKind.PLAYER ? Color.SHIP : Color.ENEMY
+  const hull = isSelf ? Color.SHIP : Color.ENEMY
   if (ship.thrusting) {
     const flick = 0.6 + (Math.floor(time * 40) % 3) * 0.28
     g.poly([
@@ -335,17 +335,17 @@ export const createRenderer = (rng: Rng): Renderer => {
   worldLayer.addChild(terrainGfx, dynGfx)
   view.addChild(starLayer, worldLayer)
   const stars = createStars(rng)
-  // Terrain is static; redraw the cached layer only when its block count changes
-  // (i.e. a rock was destroyed, or a fresh run reset the arena).
-  let terrainBlockCount = -1
+  // Redraw the cached terrain layer only when it actually changes — the sim bumps
+  // world.terrainVersion on every carve and while debris is falling, and once per fresh run.
+  let terrainVersion = -1
   // Eased camera state (smooth follow); undefined until the first frame snaps to the target.
   let camX: number | undefined
   let camY = 0
   let lastTime = 0
 
-  const draw = (world: World, phase: GamePhase): void => {
-    const player = world.ships.find((ship) => ship.kind === ShipKind.PLAYER) ?? world.ships[0]
-    const target = cameraOrigin(player)
+  const draw = (world: RenderWorld, phase: GamePhase, selfId: number): void => {
+    const self = world.ships.find((ship) => ship.id === selfId) ?? world.ships[0]
+    const target = cameraOrigin(self ?? { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 })
     if (camX === undefined || Math.hypot(target.x - camX, target.y - camY) > CAMERA_SNAP_DIST) {
       camX = target.x // first frame or a big jump (respawn): snap, don't drift across the arena
       camY = target.y
@@ -363,16 +363,16 @@ export const createRenderer = (rng: Rng): Renderer => {
     view.position.set(shakeX, shakeY)
     worldLayer.position.set(-camera.x, -camera.y)
     drawStars(starLayer, stars, camera)
-    if (world.blocks.length !== terrainBlockCount) {
-      terrainBlockCount = world.blocks.length
+    if (world.terrainVersion !== terrainVersion) {
+      terrainVersion = world.terrainVersion
       terrainGfx.clear()
       drawBlocks(terrainGfx, world.blocks)
       drawWaterBodies(terrainGfx, world.water)
     }
     dynGfx.clear()
-    for (const device of world.devices) drawDevice(dynGfx, device, world.time)
+    for (const device of world.devices) drawDevice(dynGfx, device, world.time, selfId)
     for (const bullet of world.bullets) {
-      const color = bullet.color ?? (bullet.owner === PLAYER_ID ? Color.BULLET : Color.BULLET_ENEMY)
+      const color = bullet.color ?? (bullet.owner === selfId ? Color.BULLET : Color.BULLET_ENEMY)
       dynGfx.circle(bullet.x, bullet.y, bullet.radius * 2.2).fill({ color, alpha: 0.18 }) // soft glow
       dynGfx.circle(bullet.x, bullet.y, bullet.radius).fill({ color })
     }
@@ -380,7 +380,8 @@ export const createRenderer = (rng: Rng): Renderer => {
     drawParticles(dynGfx, world.particles)
     // Ships are drawn only in-play: in TITLE/GAME_OVER updateShip never runs, so their
     // spawn invulnerability never ticks down and they'd blink forever over the backdrop.
-    if (phase === GamePhase.PLAYING) for (const ship of world.ships) drawShip(dynGfx, ship, world.time)
+    if (phase === GamePhase.PLAYING)
+      for (const ship of world.ships) drawShip(dynGfx, ship, world.time, ship.id === selfId)
   }
 
   const destroy = (): void => {

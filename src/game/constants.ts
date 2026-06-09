@@ -13,6 +13,16 @@ export enum ShipKind {
   BOT = 'BOT',
 }
 
+// How a simulation scores and respawns. CAMPAIGN is the offline run (the human has a
+// finite life count + a point score, bots respawn endlessly); DEATHMATCH is online PvP
+// (everyone respawns endlessly and a kill is worth one frag to its shooter).
+export enum SimMode {
+  CAMPAIGN = 'CAMPAIGN',
+  DEATHMATCH = 'DEATHMATCH',
+}
+
+export const DEATHMATCH_FRAG_SCORE = 1 // points a kill awards its shooter in DEATHMATCH
+
 // Stable owner ids tagged onto bullets so shots never hit their firer.
 export const PLAYER_ID = 0
 export const BOT_ID = 1
@@ -55,6 +65,16 @@ export enum InfantryWeapon {
   RIFLE = 'RIFLE',
   GRENADE = 'GRENADE',
 }
+
+// ── Online multiplayer ──────────────────────────────────────────────────────
+// The authoritative server steps each game room at NET_TICK_RATE and broadcasts a full
+// world snapshot; clients stream their input and render the snapshots they receive.
+export const NET_TICK_RATE = 30 // server sim + broadcast ticks per second
+export const NET_DEFAULT_PORT = 8787 // game server (HTTP lobby + WebSocket) port
+export const NET_MAX_PLAYERS = 8 // combatants per game room
+export const NET_PERSIST_EVERY = 15 // ticks between full-state writes to Redis (2×/s at 30 Hz)
+export const NET_EMPTY_ROOM_TTL = 30 // s an emptied room lingers (state kept in Redis) before disposal
+export const NET_GAME_NAME_MAX = 24 // max characters in a hosted game name
 
 // Camera follow + screen shake.
 export const CAMERA_EASE_RATE = 9 // higher = snappier follow (per-second easing toward the target)
@@ -326,6 +346,19 @@ export const WATER_BUOYANCY = 320 // px/s^2 upward at full submersion (beats GRA
 export const WATER_DRAG = 2.4 // extra exponential damping coefficient when submerged
 export const SPLASH_MIN_SPEED = 130 // |vy| above which crossing the surface throws a splash
 export const SPLASH_PARTICLES = 11 // droplets per splash
+
+// ── Destructible terrain (voxel grid) ───────────────────────────────────────
+// Destructible materials (rock/grass/ice) are modeled as a grid of small cells. A shot
+// carves a crater sized to the projectile; cells no longer connected to the "main static
+// surface" (bedrock, the floor, or an undisturbed floating island) break loose and fall as
+// debris that re-settles where it lands. Bedrock is indestructible and anchors everything.
+// Collision/rendering still use rectangles: the grid (and each debris chunk) is greedily
+// meshed into Block[] each time it changes. Cell size trades fidelity for cost.
+export const VOXEL_CELL = 10 // px per destructible cell (WORLD 2400×1500 → 240×150 grid)
+export const CARVE_RADIUS_BASE = 5 // px crater radius floor (even a tiny pellet leaves a mark)
+export const CARVE_RADIUS_SCALE = 2.4 // crater radius = projectile radius × this + base (bigger shot → bigger hole)
+export const DEBRIS_TERMINAL = 520 // px/s terminal fall speed of a loosed chunk
+export const DEBRIS_MAX_BODIES = 32 // safety cap on simultaneous falling chunks (excess is discarded)
 
 // ── Terrain landing model ─────────────────────────────────────────────────
 // On contact the ship is classified by `impact` = closing speed (px/s) along the

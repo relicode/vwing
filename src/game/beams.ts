@@ -40,6 +40,9 @@ export const fireRail = (world: World, ship: Ship): Ship | undefined => {
     maxLife: RAIL_BEAM_LIFE,
     color: Color.RAIL,
   })
-  if (hit) applyDamage(hit, RAIL_DAMAGE)
+  if (hit) {
+    applyDamage(hit, RAIL_DAMAGE)
+    hit.lastHitBy = ship.id
+  }
   return hit
 }

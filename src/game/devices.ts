@@ -113,6 +113,7 @@ const areaDamage = (
     if (ship.id === ownerId || ship.invuln > 0 || ship === exclude) continue
     if (Math.hypot(ship.x - x, ship.y - y) > radius) continue
     applyDamage(ship, damage)
+    ship.lastHitBy = ownerId
     if (isDead(ship)) dead.add(ship)
   }
   for (const device of world.devices) {
@@ -304,6 +305,7 @@ const stepDevice = (
         if (!circlesOverlap(device.x, device.y, device.radius, ship.x, ship.y, ship.radius)) continue
         if (device.damage > 0) {
           applyDamage(ship, device.damage)
+          ship.lastHitBy = device.owner
           if (isDead(ship)) dead.add(ship)
           if (device.blastRadius > 0) {
             areaDamage(

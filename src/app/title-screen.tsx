@@ -21,13 +21,13 @@ const ControlRow = ({ keys, action }: ControlRowProps) => (
 )
 
 type TitleScreenProps = {
-  onStart: () => void
-  ready: boolean
-  weapon: WeaponKind | undefined // debug override; undefined = random per life
+  onPractice: () => void
+  onMultiplayer: () => void
+  weapon: WeaponKind | undefined // debug override for Practice (undefined = random per life)
   onWeaponChange: (weapon: WeaponKind | undefined) => void
 }
 
-const TitleScreen = ({ onStart, ready, weapon, onWeaponChange }: TitleScreenProps) => (
+const TitleScreen = ({ onPractice, onMultiplayer, weapon, onWeaponChange }: TitleScreenProps) => (
   <Overlay>
     <Typography
       variant="h2"
@@ -43,15 +43,18 @@ const TitleScreen = ({ onStart, ready, weapon, onWeaponChange }: TitleScreenProp
     <Typography sx={{ color: 'text.secondary', mt: -1, lineHeight: 1.7 }}>
       Fight the gravity.
       <br />
-      Land soft.
-      <br />
-      Dodge the cliffs.
+      Dogfight your friends.
     </Typography>
-    <Button variant="contained" size="large" onClick={onStart} disabled={!ready} autoFocus sx={{ px: 5, mt: 1 }}>
-      {ready ? 'Launch' : 'Loading…'}
-    </Button>
+    <Stack direction="row" spacing={1.5} sx={{ mt: 1 }}>
+      <Button variant="contained" size="large" onClick={onMultiplayer} autoFocus sx={{ px: 4 }}>
+        Multiplayer
+      </Button>
+      <Button variant="outlined" size="large" color="secondary" onClick={onPractice} sx={{ px: 4 }}>
+        Practice
+      </Button>
+    </Stack>
     <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mt: 1 }}>
-      <Typography sx={{ color: 'text.secondary', fontSize: 13 }}>Secondary</Typography>
+      <Typography sx={{ color: 'text.secondary', fontSize: 13 }}>Practice secondary</Typography>
       <Select
         size="small"
         displayEmpty
