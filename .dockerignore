@@ -1,0 +1,17 @@
+# Build context hygiene — keep the image small and the cache stable. Anything the
+# server/build doesn't need (deps are reinstalled, dist is rebuilt) stays out.
+.git
+.github
+.claude
+.vscode
+node_modules
+dist
+__tests__
+**/*.test.ts
+*.md
+.env
+.env.*
+.mcp.json
+Dockerfile
+.dockerignore
+compose.yaml

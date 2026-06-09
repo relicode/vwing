@@ -1,0 +1,84 @@
+# V-Wing production stack: the Bun game server behind Traefik, with Redis for
+# authoritative game/lobby state. Compose Spec (no obsolete `version:` key).
+#
+#   docker compose up -d --build
+#   # then open http://localhost  (set APP_DOMAIN for a real host)
+#
+# Config via env (Compose auto-reads ./.env — see .env.example):
+#   APP_DOMAIN   host Traefik routes to the app   (default: localhost)
+#   ACME_EMAIL   email for Let's Encrypt          (only if you enable HTTPS below)
+
+name: vwing
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: vwing:latest
+    restart: unless-stopped
+    environment:
+      PORT: 8787
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks: [web, internal] # `web` for Traefik to reach it; `internal` for Redis
+    # Healthcheck is baked into the image (HEALTHCHECK in the Dockerfile, hitting /api/health).
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: vwing_web
+      traefik.http.routers.vwing.rule: Host(`${APP_DOMAIN:-localhost}`)
+      traefik.http.routers.vwing.entrypoints: web
+      traefik.http.services.vwing.loadbalancer.server.port: "8787"
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Durable: append-only log + an hourly RDB snapshot, persisted to a named volume.
+    command: ["redis-server", "--appendonly", "yes", "--save", "3600", "1"]
+    volumes:
+      - redis-data:/data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 3s
+
+  traefik:
+    image: traefik:v3.6
+    restart: unless-stopped
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedByDefault=false
+      - --entryPoints.web.address=:80
+      # ── Enable HTTPS: set APP_DOMAIN to a real host + ACME_EMAIL, uncomment below
+      #    and the 443 port + letsencrypt volume, and switch the router to websecure.
+      # - --entryPoints.websecure.address=:443
+      # - --entryPoints.web.http.redirections.entrypoint.to=websecure
+      # - --entryPoints.web.http.redirections.entrypoint.scheme=https
+      # - --certificatesResolvers.le.acme.email=${ACME_EMAIL:-}
+      # - --certificatesResolvers.le.acme.storage=/letsencrypt/acme.json
+      # - --certificatesResolvers.le.acme.tlschallenge=true
+    ports:
+      - "80:80"
+      # - "443:443"
+    volumes:
+      # Read-only Docker socket so Traefik can watch container labels. For a hardened
+      # setup, front this with a docker-socket-proxy instead of mounting it directly.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # - letsencrypt:/letsencrypt
+    networks: [web]
+
+networks:
+  web:
+    name: vwing_web
+  internal:
+    name: vwing_internal
+    internal: true # no outbound/inbound host access — isolates Redis
+
+volumes:
+  redis-data:
+  # letsencrypt:
