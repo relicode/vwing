@@ -36,8 +36,8 @@ export enum MsgType {
 // Why a client opened the socket: HOST refuses to reuse a live game name; JOIN refuses to
 // connect to one that doesn't exist. Sent as the `intent` query param on the /ws upgrade.
 export enum JoinIntent {
-  HOST = 'host',
-  JOIN = 'join',
+  HOST = 'HOST',
+  JOIN = 'JOIN',
 }
 
 export type ClientMessage = { t: MsgType.INPUT; input: InputSnapshot }

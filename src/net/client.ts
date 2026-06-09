@@ -119,7 +119,7 @@ export const connectGame = async (game: string, name: string, intent: JoinIntent
     notify()
   }
 
-  const url = `${wsBase()}/ws?game=${encodeURIComponent(game)}&name=${encodeURIComponent(name)}&intent=${intent}`
+  const url = `${wsBase()}/ws?game=${encodeURIComponent(game)}&name=${encodeURIComponent(name)}&intent=${encodeURIComponent(intent)}`
   const ws = new WebSocket(url)
 
   ws.onmessage = (event) => {
