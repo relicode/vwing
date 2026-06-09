@@ -34,6 +34,7 @@ const TitleScreen = ({ onPractice, onMultiplayer, weapon, onWeaponChange }: Titl
       sx={{
         fontWeight: 900,
         letterSpacing: '0.16em',
+        whiteSpace: 'nowrap',
         color: 'primary.main',
         textShadow: '0 0 24px rgba(51,245,163,0.6)',
       }}
