@@ -13,7 +13,6 @@ import {
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from '$/game/constants'
-import { createTerrain } from '$/game/terrain-map'
 import type { Block, WaterBody } from '$/game/types'
 
 // Destructible terrain as a grid of small cells. Metal stays as indestructible anchor
@@ -264,8 +263,7 @@ const stampBody = (vt: VoxelTerrain, body: DebrisBody): void => {
 // Build the destructible terrain from the hand-authored arena: metal blocks become anchors,
 // every earth block is rasterized into the cell grid by its surface, and each free-floating
 // (non-grounded) island is recorded as a pinned component so it stays aloft until a shot disturbs it.
-export const createVoxelTerrain = (): VoxelTerrain => {
-  const { blocks, water } = createTerrain()
+export const createVoxelTerrain = (blocks: Block[], water: WaterBody[]): VoxelTerrain => {
   const cell = VOXEL_CELL
   const cols = Math.ceil(WORLD_WIDTH / cell)
   const rows = Math.ceil(WORLD_HEIGHT / cell)
@@ -273,17 +271,26 @@ export const createVoxelTerrain = (): VoxelTerrain => {
   const bedrockMask = new Uint8Array(cols * rows)
   const bedrock: Block[] = []
 
+  // One pass over the authored blocks: METAL becomes an indestructible bedrock anchor (kept out of
+  // the grid) AND is rasterized straight into bedrockMask; EARTH is voxelized into mat by surface.
+  // Rasterizing each block's own cell range here is O(filled cells) — far cheaper than the old
+  // O(cols*rows*|bedrock|) per-cell scan that dominated init cost on the larger grid.
   for (const block of blocks) {
-    if (block.structure === StructureType.METAL) {
-      bedrock.push(block)
-      continue
-    }
-    const id = ID_OF[block.surface]
-    if (id === undefined) continue
     const c0 = Math.max(0, Math.floor(block.x / cell))
     const c1 = Math.min(cols - 1, Math.floor((block.x + block.w - 0.001) / cell))
     const r0 = Math.max(0, Math.floor(block.y / cell))
     const r1 = Math.min(rows - 1, Math.floor((block.y + block.h - 0.001) / cell))
+    if (block.structure === StructureType.METAL) {
+      bedrock.push(block)
+      for (let row = r0; row <= r1; row += 1) {
+        for (let col = c0; col <= c1; col += 1) {
+          if (pointInBlock(block, centerX(cell, col), centerY(cell, row))) bedrockMask[row * cols + col] = 1
+        }
+      }
+      continue
+    }
+    const id = ID_OF[block.surface]
+    if (id === undefined) continue
     for (let row = r0; row <= r1; row += 1) {
       for (let col = c0; col <= c1; col += 1) {
         if (pointInBlock(block, centerX(cell, col), centerY(cell, row))) mat[row * cols + col] = id
@@ -303,14 +310,6 @@ export const createVoxelTerrain = (): VoxelTerrain => {
     water,
     staticBlocks: [],
     regrow: new Map(),
-  }
-
-  for (let row = 0; row < rows; row += 1) {
-    for (let col = 0; col < cols; col += 1) {
-      const x = centerX(cell, col)
-      const y = centerY(cell, row)
-      if (bedrock.some((b) => pointInBlock(b, x, y))) bedrockMask[row * cols + col] = 1
-    }
   }
 
   // Anything not grounded at birth is an intentional floating island: pin its component so it

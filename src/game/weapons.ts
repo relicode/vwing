@@ -172,8 +172,8 @@ const spawnInfantry = (world: World, ship: Ship): void => {
   const walkDir = world.rng() < 0.5 ? -1 : 1
   world.devices.push({
     kind: DeviceKind.INFANTRY,
-    x: ship.x + randRange(world.rng, -6, 6),
-    y: ship.y + ship.radius,
+    x: ship.x + randRange(world.rng, -8, 8),
+    y: ship.y + ship.radius + INFANTRY_RADIUS, // clear the whole (now taller) body below the hull
     vx: ship.vx * 0.4,
     vy: Math.max(0, ship.vy * 0.4),
     owner: ship.id,

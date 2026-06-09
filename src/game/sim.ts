@@ -23,6 +23,7 @@ import {
   SPLASH_MIN_SPEED,
   SPLASH_PARTICLES,
   StructureType,
+  TERRAIN_SALT,
   THRUST_PARTICLE_LIFE,
   THRUST_PARTICLE_SPEED,
   WATER_CANNON_WET_RADIUS,
@@ -88,10 +89,12 @@ export type Sim = {
   getCombatant: (id: number) => Combatant | undefined
 }
 
-// A blank arena: seeded rng + the hand-authored terrain, with empty entity lists. Ships
+// A blank arena: seeded rng + the procedurally generated terrain, with empty entity lists. Ships
 // are attached by the sim from its combatants.
 export const createWorld = (seed: number): World => {
-  const { blocks, water } = createTerrain()
+  // Generate the arena once, off a salted sub-stream, so it's deterministic per seed (identical on
+  // server + client) without consuming draws from the run's main rng (which feeds combat/particles).
+  const { blocks, water } = createTerrain(createRng((seed ^ TERRAIN_SALT) >>> 0))
   return {
     time: 0,
     ships: [],
@@ -114,8 +117,11 @@ const SPAWN_POINTS: readonly Vec2[] = [0.18, 0.34, 0.5, 0.66, 0.82].flatMap((fx)
   [0.22, 0.4].map((fy) => ({ x: WORLD_WIDTH * fx, y: WORLD_HEIGHT * fy }))
 )
 
-const pointBlocked = (world: World, x: number, y: number, r: number): boolean =>
-  world.blocks.some((b) => circleRectContact(x, y, r, b.x, b.y, b.w, b.h) !== undefined)
+const pointBlocked = (world: World, x: number, y: number, r: number): boolean => {
+  const surface = waterSurfaceAt(world.water, x, y)
+  if (surface !== undefined && y + r >= surface) return true // at/under a water surface — not a dry spawn
+  return world.blocks.some((b) => circleRectContact(x, y, r, b.x, b.y, b.w, b.h) !== undefined)
+}
 
 // The open spawn anchor farthest from every `occupant` (so a (re)spawn isn't a face-off).
 // Blocked anchors are skipped; falls back to the first anchor if all are blocked.
@@ -148,7 +154,7 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
 
   // The destructible terrain is authoritative; `world.blocks` is the rectangle view derived
   // from it (for collision, rendering, and the network snapshot).
-  const voxel = createVoxelTerrain()
+  const voxel = createVoxelTerrain(world.blocks, world.water)
   let terrainDirty = false // a carve happened this frame; refresh derived blocks before drawing
   const refreshTerrain = (): void => {
     world.blocks = voxelToBlocks(voxel)

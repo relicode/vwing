@@ -107,12 +107,27 @@ export const SHAKE_FREQ = 47 // rad/s wobble frequency of the shake offset
 export const SHIP_DEATH_SHAKE = 17 // shake amplitude (px) on a ship explosion
 export const BLAST_SHAKE = 11 // shake amplitude (px) on a mine/seeker blast
 
-// Camera viewport (the canvas) and the larger world it pans across.
-export const VIEW_WIDTH = 900
-export const VIEW_HEIGHT = 600
-export const WORLD_WIDTH = 2400
-export const WORLD_HEIGHT = 1500
-export const WALL_THICKNESS = 26 // thickness of the bedrock border frame (authored in terrain-map.ts)
+// Camera viewport (the canvas) and the larger world it pans across. The viewport is a fixed
+// 16:10 design resolution (same world-window for every client — fair for PvP) sized so it never
+// upscales on the assumed ~1280×800-or-larger display: the WebGL buffer is >= the on-screen box,
+// so it only ever downscales (stays crisp). Bigger than the old 900×600 so sprite detail reads.
+export const VIEW_WIDTH = 1280
+export const VIEW_HEIGHT = 800
+export const WORLD_WIDTH = 10800
+export const WORLD_HEIGHT = 6750
+export const WALL_THICKNESS = 26 // thickness of the bedrock border frame (emitted by terrain-map.ts)
+
+// ── Procedural arena generation (terrain-map.ts createTerrain) ───────────────
+// The arena is generated once per run from a seeded sub-stream so it is deterministic per seed
+// (identical on server + client) yet varied between runs. Layout is banded: an open SKY band up top
+// carrying every spawn, a MID band of grasslands / rock / caves, and a LOW band of sea + pools.
+export const TERRAIN_SALT = 0x9e3779b9 // xor'd into the seed for the terrain rng sub-stream
+export const SPAWN_KEEPOUT_RADIUS = 400 // px disc around every spawn kept free of structure + water
+export const BOT_SPAWN_OFFSET_PX = 575 // px right of the player the bot spawns (≈0.45 viewport — on-screen at any world size)
+export const BAND_SKY_BOTTOM = 0.45 // fraction of WORLD_HEIGHT: open airspace above this (all spawns live here)
+export const PLATEAU_MIN_CELLS = 8 // min flat-run width (cells) so plateau tops are wide patrol ledges
+export const CAVE_MOUTH_CELLS = 5 // min cave-mouth width (cells) so a ship flies in/out (>= ship diameter)
+export const MAX_AUTHORED_WATER = 4 // sea + a pool or two (headroom under the runtime MAX_WATER_BODIES cap)
 
 // Neon-on-near-black palette, stored as 0xRRGGBB for PixiJS fills.
 export const Color = {
@@ -142,6 +157,8 @@ export const Color = {
   GRENADE: 0x9fd36b,
   FLAK: 0xd8b46a,
   BLOOD: 0xff3b3b, // infantry death (shot / splatted / blasted)
+  INK: 0x10131a, // near-black — infantry eyes / mouths
+  SHADOW: 0x000000, // ground shadow under a figure (low alpha; only shows over terrain)
   WELL: 0xb388ff,
   RAIL: 0xff5ad1,
   EMP: 0x7af7ff,
@@ -275,7 +292,7 @@ export const INCENDIARY_BURN_RADIUS = 22 // px radius of grass→earth scorch on
 // just released. It swims (no shooting) if it lands in water and drowns unless rescued. To
 // be rescued, a unit walks/swims toward its own owner's slow (landed) ship — reaching it
 // restores the Infantry slot.
-export const INFANTRY_RADIUS = 5
+export const INFANTRY_RADIUS = 9 // bigger so Cannon-Fodder-style detail reads at the 1280×800 viewport
 export const INFANTRY_FIRE_INTERVAL = 1.1 // s between rifle shots (landed)
 export const INFANTRY_GRENADE_FIRE_INTERVAL = 2.6 // s between grenade lobs (slower; landed grenadier)
 // A landed grenadier plants itself to shoot: it drops to a knee and holds dead still for
@@ -416,7 +433,7 @@ export const MAX_WATER_BODIES = 24 // cap on authored + dynamic water bodies
 // debris that re-settles where it lands. Bedrock is indestructible and anchors everything.
 // Collision/rendering still use rectangles: the grid (and each debris chunk) is greedily
 // meshed into Block[] each time it changes. Cell size trades fidelity for cost.
-export const VOXEL_CELL = 10 // px per destructible cell (WORLD 2400×1500 → 240×150 grid)
+export const VOXEL_CELL = 18 // px per destructible cell (WORLD 10800×6750 → 600×375 grid, ~225k cells)
 export const CARVE_RADIUS_BASE = 5 // px crater radius floor (even a tiny pellet leaves a mark)
 export const CARVE_RADIUS_SCALE = 2.4 // crater radius = projectile radius × this + base (bigger shot → bigger hole)
 export const DEBRIS_TERMINAL = 520 // px/s terminal fall speed of a loosed chunk

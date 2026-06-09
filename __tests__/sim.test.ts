@@ -86,19 +86,28 @@ describe('createSim — campaign', () => {
 describe('createSim — destructible terrain', () => {
   test('firing into a destructible surface carves it and bumps the terrain version', () => {
     const world = createWorld(7)
-    // Park a ship just above the submerged rock pillar at block(420,1300,240,…), nose down.
     const gunner = combatant(0, 540, 1280, Number.POSITIVE_INFINITY)
-    gunner.ship.angle = Math.PI / 2 // forward = +y (straight down into the rock)
-    gunner.ship.invuln = 999 // keep it from dying on the rock while it shoots
+    gunner.ship.angle = Math.PI / 2 // forward = +y (straight down into the earth)
+    gunner.ship.invuln = 999 // keep it from dying on the terrain while it shoots
     gunner.input = inputFromSnapshot({ turn: 0, thrusting: false, firing: true, altFiring: false })
     const sim = createSim(world, [gunner], { mode: SimMode.DEATHMATCH })
+    // The arena is procedural, so target whatever destructible earth this seed produced: park the
+    // gunner just above the highest exposed earth top and let its downward stream carve into it.
+    const air = (x: number, y: number): boolean =>
+      !world.blocks.some((b) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h)
+    const target = world.blocks
+      .filter((b) => b.structure === StructureType.EARTH && b.w >= 36 && air(b.x + b.w / 2, b.y - 30))
+      .sort((a, b) => a.y - b.y)[0]
+    expect(target).toBeDefined()
+    gunner.ship.x = target.x + target.w / 2
+    gunner.ship.y = target.y - 24
 
     const versionBefore = world.terrainVersion
     const rockAreaBefore = destructibleArea(world.blocks)
     for (let i = 0; i < 30; i += 1) sim.step(1 / 60)
 
     expect(world.terrainVersion).toBeGreaterThan(versionBefore) // a carve happened and blocks were rebuilt
-    expect(destructibleArea(world.blocks)).toBeLessThan(rockAreaBefore) // the rock actually lost mass
+    expect(destructibleArea(world.blocks)).toBeLessThan(rockAreaBefore) // the earth actually lost mass
   })
 })
 
