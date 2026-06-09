@@ -2,16 +2,20 @@ import { RedisClient } from 'bun'
 
 import type { GameSummary } from '$/net/protocol'
 
-// Where game state and the lobby live. The server writes the *entire* world JSON per game
-// (the user's requirement) plus a lobby entry per active room. A Redis-backed store is used
-// whenever a server is reachable; otherwise an in-memory store keeps a single-process server
-// fully functional (and lets tests run without Redis).
+// Where the lobby lives and where each room's world snapshot is persisted. The server writes the
+// *entire* world JSON per game (the user's requirement) plus a lobby entry per active room. That
+// snapshot is a write-side operational artifact — for inspection / external recovery tooling, not
+// auto-restore: the live server intentionally (re)creates rooms fresh (players reconnect into a new
+// arena), and the snapshot omits the server-internal voxel-terrain grid (it lives in the createSim
+// closure, not on `world`), so carved terrain is never rehydrated. A Redis-backed store is used
+// whenever a server is reachable; otherwise an in-memory store keeps a single-process server fully
+// functional (and lets tests run without Redis).
 
 const STATE_KEY = (game: string): string => `vwing:state:${game}`
 const SUMMARY_KEY = (game: string): string => `vwing:game:${game}`
 const GAMES_SET = 'vwing:games'
 const SUMMARY_TTL = 30 // s; refreshed by each room's heartbeat, so a crashed server expires out of the lobby
-const STATE_TTL = 3600 // s; persisted state lingers an hour for recovery/inspection
+const STATE_TTL = 3600 // s; the persisted snapshot lingers an hour for inspection / external tooling
 
 // Keyed by a game's canonical (case-insensitive, normalized) key — same index the server's
 // `rooms` map uses — so the lobby never lists two casings of one game. `name` carries the
@@ -20,7 +24,9 @@ export type StoredSummary = { name: string; players: number; maxPlayers: number 
 
 export type Store = {
   kind: 'redis' | 'memory'
-  // Persist / recover the full serialized world for a game.
+  // Snapshot persistence for a game (write / read-back / drop). The server only writes (saveState)
+  // and cleans up (deleteState); loadState is the read accessor for external recovery tooling and
+  // tests — the live server does not auto-rehydrate from it (rooms always start fresh).
   saveState: (game: string, json: string) => Promise<void>
   loadState: (game: string) => Promise<string | undefined>
   deleteState: (game: string) => Promise<void>

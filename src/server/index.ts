@@ -171,7 +171,7 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
       rs.persistTick += 1
       if (rs.persistTick >= NET_PERSIST_EVERY) {
         rs.persistTick = 0
-        void store.saveState(key, JSON.stringify(rs.room.snapshot([]))) // entire game state → Redis
+        void store.saveState(key, JSON.stringify(rs.room.snapshot([]))) // world snapshot → store (write-only; see store.ts)
         // refresh lobby TTL
         void store.registerGame(key, {
           name: rs.room.name,
