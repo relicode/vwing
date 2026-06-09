@@ -10,7 +10,16 @@ import {
 import { randRange } from '$/game/rng'
 import type { Bullet, Rng, Ship } from '$/game/types'
 
-type BulletPayload = { owner: number; damage: number; life: number; radius?: number; push?: number; color?: number }
+type BulletPayload = {
+  owner: number
+  damage: number
+  life: number
+  radius?: number
+  push?: number
+  burn?: boolean
+  wet?: boolean
+  color?: number
+}
 type BurstConfig = {
   count: number
   spread: number
@@ -18,6 +27,8 @@ type BurstConfig = {
   life: number
   damage: number
   push?: number
+  burn?: boolean
+  wet?: boolean
   color?: number
 }
 
@@ -58,6 +69,8 @@ export const pushBullet = (
     owner: payload.owner,
     damage: payload.damage,
     push: payload.push,
+    burn: payload.burn,
+    wet: payload.wet,
     color: payload.color,
   })
 }
@@ -74,7 +87,15 @@ export const spawnBurst = (bullets: Bullet[], ship: Ship, rng: Rng, cfg: BurstCo
       ship.y + dirY * ship.radius,
       ship.vx + dirX * cfg.speed,
       ship.vy + dirY * cfg.speed,
-      { owner: ship.id, damage: cfg.damage, life: cfg.life, push: cfg.push, color: cfg.color }
+      {
+        owner: ship.id,
+        damage: cfg.damage,
+        life: cfg.life,
+        push: cfg.push,
+        burn: cfg.burn,
+        wet: cfg.wet,
+        color: cfg.color,
+      }
     )
   }
 }

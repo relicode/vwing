@@ -6,16 +6,16 @@ import {
   SHIP_MAX_HEALTH,
   ShipKind,
   SimMode,
-  SurfaceMaterial,
+  StructureType,
 } from '$/game/constants'
 import { inputFromSnapshot, NEUTRAL_INPUT } from '$/game/input'
 import { createShip } from '$/game/ship'
 import { type Combatant, createSim, createWorld } from '$/game/sim'
 import type { Block, Bullet } from '$/game/types'
 
-// Total pixel area of destructible (non-bedrock) terrain — shrinks as rock is shot away.
+// Total pixel area of destructible (earth, non-metal) terrain — shrinks as earth is shot away.
 const destructibleArea = (blocks: Block[]): number =>
-  blocks.reduce((sum, b) => (b.material === SurfaceMaterial.BEDROCK ? sum : sum + b.w * b.h), 0)
+  blocks.reduce((sum, b) => (b.structure === StructureType.METAL ? sum : sum + b.w * b.h), 0)
 
 const combatant = (id: number, x: number, y: number, lives: number): Combatant => {
   const ship = createShip(ShipKind.PLAYER, x, y, id)
@@ -99,6 +99,21 @@ describe('createSim — destructible terrain', () => {
 
     expect(world.terrainVersion).toBeGreaterThan(versionBefore) // a carve happened and blocks were rebuilt
     expect(destructibleArea(world.blocks)).toBeLessThan(rockAreaBefore) // the rock actually lost mass
+  })
+})
+
+describe('createSim — water', () => {
+  test('ship buoyancy reads water pooled into world.water after the sim was created', () => {
+    const world = createWorld(8)
+    const floater = combatant(0, 500, 400, Number.POSITIVE_INFINITY)
+    const sim = createSim(world, [floater], { mode: SimMode.DEATHMATCH })
+    // A pool forms mid-run (as the water cannon does), replacing the world.water array. The ship
+    // sits fully under the new surface, so buoyancy (which beats gravity) must push it upward —
+    // proving the ship-physics env reads world.water live rather than a stale start-of-run snapshot.
+    sim.world.water = [{ x: 0, y: 380, w: 5000, h: 400 }]
+    floater.ship.vy = 0
+    sim.step(1 / 60)
+    expect(floater.ship.vy).toBeLessThan(0)
   })
 })
 

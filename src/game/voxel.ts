@@ -2,7 +2,13 @@ import {
   DEBRIS_MAX_BODIES,
   DEBRIS_TERMINAL,
   GRAVITY,
-  SurfaceMaterial,
+  POOL_HALF_WIDTH,
+  POOL_MAX_DEPTH,
+  POOL_MAX_RISE,
+  POOL_MIN_WIDTH,
+  StructureType,
+  SURFACE_REGROW_TIME,
+  Surface,
   VOXEL_CELL,
   WORLD_HEIGHT,
   WORLD_WIDTH,
@@ -10,28 +16,30 @@ import {
 import { createTerrain } from '$/game/terrain-map'
 import type { Block, WaterBody } from '$/game/types'
 
-// Destructible terrain as a grid of small cells. Bedrock stays as indestructible anchor
-// rectangles; rock/grass/ice are voxelized so a shot can carve a crater and any piece that
-// loses its connection to a stable anchor (bedrock, the floor, or a floating island's pinned
-// main mass) breaks off and falls as a debris chunk that re-settles where it lands.
-// Collision + rendering still consume rectangles: the static grid and each falling chunk are
-// greedily meshed into Block[] (see voxelToBlocks) whenever anything changes.
+// Destructible terrain as a grid of small cells. Metal stays as indestructible anchor
+// rectangles; earth cells are voxelized (each carrying its surface: bare earth / grass / ice)
+// so a shot can carve a crater and any piece that loses its connection to a stable anchor
+// (metal, the floor, or a floating island's pinned main mass) breaks off and falls as a debris
+// chunk that re-settles where it lands. Collision + rendering still consume rectangles: the
+// static grid and each falling chunk are greedily meshed into Block[] (see voxelToBlocks)
+// whenever anything changes.
 
 const EMPTY = 0
-// Material ids stored in the grid (kept in sync with MATERIAL_OF below).
-const ROCK = 1
+// Surface ids stored in the grid. Every grid cell is structure EARTH (metal lives out of the
+// grid as bedrock anchors), so a cell value is just its surface (kept in sync with SURFACE_OF).
+const EARTH = 1 // bare earth
 const GRASS = 2
 const ICE = 3
 
-const MATERIAL_OF: Record<number, SurfaceMaterial> = {
-  [ROCK]: SurfaceMaterial.ROCK,
-  [GRASS]: SurfaceMaterial.GRASS,
-  [ICE]: SurfaceMaterial.ICE,
+const SURFACE_OF: Record<number, Surface> = {
+  [EARTH]: Surface.EARTH,
+  [GRASS]: Surface.GRASS,
+  [ICE]: Surface.ICE,
 }
-const ID_OF: Partial<Record<SurfaceMaterial, number>> = {
-  [SurfaceMaterial.ROCK]: ROCK,
-  [SurfaceMaterial.GRASS]: GRASS,
-  [SurfaceMaterial.ICE]: ICE,
+const ID_OF: Partial<Record<Surface, number>> = {
+  [Surface.EARTH]: EARTH,
+  [Surface.GRASS]: GRASS,
+  [Surface.ICE]: ICE,
 }
 
 // A loosed chunk falling under gravity. It moves vertically in whole-cell steps (timed by the
@@ -57,6 +65,7 @@ export type VoxelTerrain = {
   bodies: DebrisBody[]
   water: readonly WaterBody[]
   staticBlocks: Block[] // cached greedy mesh of `mat`, recomputed on change
+  regrow: Map<number, number> // wetted bare-earth cells → s left until they regrow grass (server-side only)
 }
 
 const idx = (vt: { cols: number }, col: number, row: number): number => row * vt.cols + col
@@ -90,7 +99,14 @@ const meshGrid = (mat: Uint8Array, cols: number, rows: number, cell: number, ox:
         if (extend) h += 1
       }
       for (let r = 0; r < h; r += 1) for (let k = 0; k < w; k += 1) used[(row + r) * cols + col + k] = 1
-      blocks.push({ x: ox + col * cell, y: oy + row * cell, w: w * cell, h: h * cell, material: MATERIAL_OF[m] })
+      blocks.push({
+        x: ox + col * cell,
+        y: oy + row * cell,
+        w: w * cell,
+        h: h * cell,
+        structure: StructureType.EARTH,
+        surface: SURFACE_OF[m],
+      })
     }
   }
   return blocks
@@ -245,9 +261,9 @@ const stampBody = (vt: VoxelTerrain, body: DebrisBody): void => {
   }
 }
 
-// Build the destructible terrain from the hand-authored arena: bedrock blocks become anchors,
-// every other surface is rasterized into the cell grid, and each free-floating (non-grounded)
-// island is recorded as a pinned component so it stays aloft until a shot disturbs it.
+// Build the destructible terrain from the hand-authored arena: metal blocks become anchors,
+// every earth block is rasterized into the cell grid by its surface, and each free-floating
+// (non-grounded) island is recorded as a pinned component so it stays aloft until a shot disturbs it.
 export const createVoxelTerrain = (): VoxelTerrain => {
   const { blocks, water } = createTerrain()
   const cell = VOXEL_CELL
@@ -258,11 +274,11 @@ export const createVoxelTerrain = (): VoxelTerrain => {
   const bedrock: Block[] = []
 
   for (const block of blocks) {
-    if (block.material === SurfaceMaterial.BEDROCK) {
+    if (block.structure === StructureType.METAL) {
       bedrock.push(block)
       continue
     }
-    const id = ID_OF[block.material]
+    const id = ID_OF[block.surface]
     if (id === undefined) continue
     const c0 = Math.max(0, Math.floor(block.x / cell))
     const c1 = Math.min(cols - 1, Math.floor((block.x + block.w - 0.001) / cell))
@@ -286,6 +302,7 @@ export const createVoxelTerrain = (): VoxelTerrain => {
     bodies: [],
     water,
     staticBlocks: [],
+    regrow: new Map(),
   }
 
   for (let row = 0; row < rows; row += 1) {
@@ -416,12 +433,145 @@ export const carveVoxel = (vt: VoxelTerrain, x: number, y: number, radius: numbe
   return true
 }
 
-// Advance falling debris one frame; lands chunks back into the grid where they come to rest.
-// Returns whether anything moved or settled (so the caller refreshes derived blocks).
-export const stepVoxel = (vt: VoxelTerrain, dt: number): boolean => {
-  if (vt.bodies.length === 0) return false
+// Scorch the GRASS surface to bare EARTH inside a circle (incendiary). Structure is untouched
+// (no carve); cancels any pending regrow on the burned cells. Re-meshes if anything changed.
+// Returns whether the terrain changed (so the caller refreshes derived blocks).
+export const burnSurface = (vt: VoxelTerrain, x: number, y: number, radius: number): boolean => {
+  const r2 = radius * radius
+  const c0 = Math.max(0, Math.floor((x - radius) / vt.cell))
+  const c1 = Math.min(vt.cols - 1, Math.floor((x + radius) / vt.cell))
+  const r0 = Math.max(0, Math.floor((y - radius) / vt.cell))
+  const r1 = Math.min(vt.rows - 1, Math.floor((y + radius) / vt.cell))
   let changed = false
-  let settledAny = false
+  for (let row = r0; row <= r1; row += 1) {
+    for (let col = c0; col <= c1; col += 1) {
+      const i = idx(vt, col, row)
+      if (vt.mat[i] !== GRASS) continue
+      const dx = centerX(vt.cell, col) - x
+      const dy = centerY(vt.cell, row) - y
+      if (dx * dx + dy * dy > r2) continue
+      vt.mat[i] = EARTH
+      vt.regrow.delete(i)
+      changed = true
+    }
+  }
+  if (changed) vt.staticBlocks = meshGrid(vt.mat, vt.cols, vt.rows, vt.cell, 0, 0)
+  return changed
+}
+
+// Wet the exposed bare-EARTH surface inside a circle (water cannon): each qualifying top cell is
+// queued to regrow grass after SURFACE_REGROW_TIME. No immediate grid change (grass appears later
+// in stepVoxel), so this never re-meshes here. Returns whether any cell was newly wetted.
+export const wetSurface = (vt: VoxelTerrain, x: number, y: number, radius: number): boolean => {
+  const r2 = radius * radius
+  const c0 = Math.max(0, Math.floor((x - radius) / vt.cell))
+  const c1 = Math.min(vt.cols - 1, Math.floor((x + radius) / vt.cell))
+  const r0 = Math.max(0, Math.floor((y - radius) / vt.cell))
+  const r1 = Math.min(vt.rows - 1, Math.floor((y + radius) / vt.cell))
+  let wetted = false
+  for (let row = r0; row <= r1; row += 1) {
+    for (let col = c0; col <= c1; col += 1) {
+      const i = idx(vt, col, row)
+      if (vt.mat[i] !== EARTH) continue
+      if (row > 0 && vt.mat[i - vt.cols] !== EMPTY) continue // only the exposed top can regrow grass
+      const dx = centerX(vt.cell, col) - x
+      const dy = centerY(vt.cell, row) - y
+      if (dx * dx + dy * dy > r2) continue
+      vt.regrow.set(i, SURFACE_REGROW_TIME)
+      wetted = true
+    }
+  }
+  return wetted
+}
+
+// Find the cupped basin a water-cannon hit at (x, y) would pool into, as a WaterBody, or undefined
+// if the impact isn't contained (open ground, a slope, or a basin wider/deeper than the search
+// window). Deterministic and bounded to a POOL_HALF_WIDTH × (POOL_MAX_RISE + POOL_MAX_DEPTH) window:
+// it reads the terrain surface row per column (metal anchors count as walls), takes the lower of
+// the highest lip on each side as the spill level, and fills from there down to the basin floor.
+// Each column is treated as a heightfield (its topmost solid), so overhangs/ceilings aren't modeled.
+export const findPool = (vt: VoxelTerrain, x: number, y: number): WaterBody | undefined => {
+  const hc = Math.floor(x / vt.cell)
+  const hr = Math.floor(y / vt.cell)
+  if (hc < 0 || hc >= vt.cols || hr < 0 || hr >= vt.rows) return undefined
+  const c0 = Math.max(0, hc - POOL_HALF_WIDTH)
+  const c1 = Math.min(vt.cols - 1, hc + POOL_HALF_WIDTH)
+  const r0 = Math.max(0, hr - POOL_MAX_RISE)
+  const r1 = Math.min(vt.rows - 1, hr + POOL_MAX_DEPTH)
+  const span = c1 - c0 + 1
+
+  // Terrain surface row per window column: the topmost solid cell (earth or metal) in [r0, r1],
+  // or r1 + 1 when the column is empty all the way down (an open column — water would drain).
+  const surf = new Int32Array(span)
+  for (let c = c0; c <= c1; c += 1) {
+    let s = r1 + 1
+    for (let r = r0; r <= r1; r += 1) {
+      if (solidAt(vt, c, r)) {
+        s = r
+        break
+      }
+    }
+    surf[c - c0] = s
+  }
+
+  const hi = hc - c0
+  const floorRow = surf[hi]
+  if (floorRow > r1) return undefined // no floor under the hit within the window → drains
+
+  // Highest lip (smallest row) reachable to each side (prefix / suffix minima of surf).
+  const leftMin = new Int32Array(span)
+  const rightMin = new Int32Array(span)
+  leftMin[0] = surf[0]
+  for (let i = 1; i < span; i += 1) leftMin[i] = Math.min(leftMin[i - 1], surf[i])
+  rightMin[span - 1] = surf[span - 1]
+  for (let i = span - 2; i >= 0; i -= 1) rightMin[i] = Math.min(rightMin[i + 1], surf[i])
+
+  // Water rises to the lower of the two bounding lips; below that it would spill over.
+  const surfaceRow = Math.max(leftMin[hi], rightMin[hi])
+  if (surfaceRow >= floorRow) return undefined // hit sits at/above the rim line → not contained
+  if (surfaceRow <= r0) return undefined // the spill rim rides the window top → basin too tall, treat as open
+
+  // Pooled columns: the contiguous run around the hit whose floor lies below the spill surface.
+  let left = hi
+  while (left - 1 >= 0 && surf[left - 1] > surfaceRow) left -= 1
+  let right = hi
+  while (right + 1 < span && surf[right + 1] > surfaceRow) right += 1
+  if (left === 0 || right === span - 1) return undefined // reaches the window edge → not contained
+  if (right - left + 1 < POOL_MIN_WIDTH) return undefined
+
+  let bottomRow = floorRow
+  for (let i = left; i <= right; i += 1) if (surf[i] > bottomRow) bottomRow = surf[i]
+  const px = (c0 + left) * vt.cell
+  const pw = (right - left + 1) * vt.cell
+  const py = surfaceRow * vt.cell
+  const ph = (bottomRow - surfaceRow) * vt.cell
+  return ph > 0 ? { x: px, y: py, w: pw, h: ph } : undefined
+}
+
+// Advance falling debris one frame and tick wetted cells toward regrowing grass; lands chunks
+// back into the grid where they come to rest. Returns whether anything changed (so the caller
+// refreshes derived blocks). Both regrowth and debris settling mutate the static grid; mesh once.
+export const stepVoxel = (vt: VoxelTerrain, dt: number): boolean => {
+  let changed = false
+  let needsMesh = false
+
+  // Wetted bare-earth cells regrow grass once their timer elapses (still bare + still exposed).
+  if (vt.regrow.size > 0) {
+    for (const [i, time] of vt.regrow) {
+      const next = time - dt
+      if (next > 0) {
+        vt.regrow.set(i, next)
+        continue
+      }
+      vt.regrow.delete(i)
+      if (vt.mat[i] === EARTH && (i < vt.cols || vt.mat[i - vt.cols] === EMPTY)) {
+        vt.mat[i] = GRASS
+        needsMesh = true
+        changed = true
+      }
+    }
+  }
+
   const remaining: DebrisBody[] = []
   for (const body of vt.bodies) {
     body.vy = Math.min(DEBRIS_TERMINAL, body.vy + GRAVITY * dt)
@@ -439,14 +589,15 @@ export const stepVoxel = (vt: VoxelTerrain, dt: number): boolean => {
     }
     if (settled) {
       stampBody(vt, body)
-      settledAny = true
+      needsMesh = true
       changed = true
     } else {
       remaining.push(body)
     }
   }
   vt.bodies = remaining
-  if (settledAny) vt.staticBlocks = meshGrid(vt.mat, vt.cols, vt.rows, vt.cell, 0, 0)
+
+  if (needsMesh) vt.staticBlocks = meshGrid(vt.mat, vt.cols, vt.rows, vt.cell, 0, 0)
   return changed
 }
 

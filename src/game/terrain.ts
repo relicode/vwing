@@ -11,7 +11,7 @@ const worse = (a: TerrainResult, b: TerrainResult): TerrainResult => (SEVERITY[a
 // Resolve a ship against every overlapping block: push it out of penetration and reshape
 // its velocity by the impact speed (closing speed along the contact normal). Below
 // LAND_SPEED the ship rests on the surface and sheds tangential speed by the block's
-// material friction (ICE keeps it; GRASS/ROCK/BEDROCK grip); up to CRASH_SPEED it bounces;
+// surface friction (ICE keeps it; grass/earth/metal grip); up to CRASH_SPEED it bounces;
 // at/above it the ship is flagged 'crash' (and hard-stopped so an invulnerable ship the
 // engine spares can't tunnel). Returns the most severe outcome across all contacts.
 export const resolveShipTerrain = (ship: Ship, blocks: Block[], dt: number): TerrainResult => {
@@ -45,7 +45,7 @@ export const resolveShipTerrain = (ship: Ship, blocks: Block[], dt: number): Ter
     } else {
       ship.vx -= vn * c.nx
       ship.vy -= vn * c.ny
-      const damp = Math.exp(-SURFACE_FRICTION[block.material] * dt)
+      const damp = Math.exp(-SURFACE_FRICTION[block.surface] * dt)
       ship.vx *= damp
       ship.vy *= damp
       result = worse(result, 'land')

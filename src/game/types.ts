@@ -1,4 +1,12 @@
-import type { DeviceKind, GamePhase, InfantryWeapon, ShipKind, SurfaceMaterial, WeaponKind } from '$/game/constants'
+import type {
+  DeviceKind,
+  GamePhase,
+  InfantryWeapon,
+  ShipKind,
+  StructureType,
+  Surface,
+  WeaponKind,
+} from '$/game/constants'
 
 export type Vec2 = { x: number; y: number }
 
@@ -37,6 +45,8 @@ export type Bullet = {
   owner: number // firing ship's id; cannot damage that ship
   damage: number // hp removed on a ship hit (primary = BULLET_DAMAGE)
   push?: number // knockback impulse applied to a hit ship (water cannon)
+  burn?: boolean // incendiary: scorches grass→earth on terrain hit (no carve)
+  wet?: boolean // water cannon: wets earth→grass + pools on terrain hit (no carve)
   color?: number // render tint override (undefined = owner-based default)
 }
 
@@ -146,14 +156,16 @@ export type Beam = {
   color: number
 }
 
-// A static, landable terrain structure: an axis-aligned rectangle (top-left + size)
-// tagged with a surface material that drives destructibility and landing friction.
+// A static, landable terrain rectangle (top-left + size) carrying its two independent layers:
+// `structure` (EARTH destructible / METAL indestructible) drives destructibility, and `surface`
+// (grass/earth/ice) drives landing friction + look. Greedily meshed from the voxel grid + anchors.
 export type Block = {
   x: number
   y: number
   w: number
   h: number
-  material: SurfaceMaterial
+  structure: StructureType
+  surface: Surface
 }
 
 // A body of water: `y` is the surface (top), `h` the depth down to its bottom.

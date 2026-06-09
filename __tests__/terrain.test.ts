@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { circleRectContact, closestPointOnRect, segmentIntersectsRect } from '$/game/collision'
-import { CRASH_SPEED, GRAVITY, LAND_SPEED, ShipKind, SurfaceMaterial, WeaponKind } from '$/game/constants'
+import { CRASH_SPEED, GRAVITY, LAND_SPEED, ShipKind, StructureType, Surface, WeaponKind } from '$/game/constants'
 import { resolveShipTerrain } from '$/game/terrain'
 import type { Block, Ship } from '$/game/types'
 
@@ -26,8 +26,16 @@ const makeShip = (over: Partial<Ship>): Ship => ({
   ...over,
 })
 
-// A 200×100 platform; its top edge is y = 100.
-const platform = (material: SurfaceMaterial): Block => ({ x: 0, y: 100, w: 200, h: 100, material })
+// A 200×100 platform; its top edge is y = 100. Friction is driven by the surface; structure
+// defaults to destructible EARTH (pass METAL for the indestructible equivalent of old bedrock).
+const platform = (surface: Surface, structure: StructureType = StructureType.EARTH): Block => ({
+  x: 0,
+  y: 100,
+  w: 200,
+  h: 100,
+  structure,
+  surface,
+})
 
 describe('closestPointOnRect', () => {
   test('returns the point itself when inside, and clamps when outside', () => {
@@ -79,7 +87,7 @@ describe('segmentIntersectsRect', () => {
 describe('resolveShipTerrain', () => {
   test('a gentle descent lands: ship rests on the surface with no normal velocity', () => {
     const ship = makeShip({ x: 100, y: 92, vy: 50 }) // impact 50 < LAND_SPEED
-    const result = resolveShipTerrain(ship, [platform(SurfaceMaterial.GRASS)], 0.1)
+    const result = resolveShipTerrain(ship, [platform(Surface.GRASS)], 0.1)
     expect(result).toBe('land')
     expect(ship.y).toBeCloseTo(88) // pushed out: center = top - radius
     expect(ship.vy).toBeCloseTo(0)
@@ -87,27 +95,27 @@ describe('resolveShipTerrain', () => {
 
   test('a middling impact bounces back off the surface', () => {
     const ship = makeShip({ x: 100, y: 92, vy: 200 }) // LAND_SPEED < 200 < CRASH_SPEED
-    const result = resolveShipTerrain(ship, [platform(SurfaceMaterial.ROCK)], 0.1)
+    const result = resolveShipTerrain(ship, [platform(Surface.EARTH)], 0.1)
     expect(result).toBe('bounce')
     expect(ship.vy).toBeLessThan(0) // reversed
   })
 
   test('a hard impact crashes', () => {
     const ship = makeShip({ x: 100, y: 92, vy: CRASH_SPEED + 10 })
-    expect(resolveShipTerrain(ship, [platform(SurfaceMaterial.BEDROCK)], 0.1)).toBe('crash')
+    expect(resolveShipTerrain(ship, [platform(Surface.EARTH, StructureType.METAL)], 0.1)).toBe('crash')
   })
 
   test('ice keeps far more sliding speed than grass', () => {
     const onIce = makeShip({ x: 100, y: 92, vx: 100, vy: 10 })
     const onGrass = makeShip({ x: 100, y: 92, vx: 100, vy: 10 })
-    resolveShipTerrain(onIce, [platform(SurfaceMaterial.ICE)], 0.1)
-    resolveShipTerrain(onGrass, [platform(SurfaceMaterial.GRASS)], 0.1)
+    resolveShipTerrain(onIce, [platform(Surface.ICE)], 0.1)
+    resolveShipTerrain(onGrass, [platform(Surface.GRASS)], 0.1)
     expect(onIce.vx).toBeGreaterThan(onGrass.vx)
     expect(onGrass.vx).toBeLessThan(100) // grass actually grips
   })
 
   test('a ship under gravity settles on a block and stays put', () => {
-    const block = platform(SurfaceMaterial.ROCK)
+    const block = platform(Surface.EARTH)
     const ship = makeShip({ x: 100, y: 88 }) // already resting on the top
     const dt = 1 / 60
     for (let i = 0; i < 180; i += 1) {
@@ -122,7 +130,7 @@ describe('resolveShipTerrain', () => {
 
   test('no contact returns "none" and leaves the ship untouched', () => {
     const ship = makeShip({ x: 100, y: 0, vy: 5 })
-    expect(resolveShipTerrain(ship, [platform(SurfaceMaterial.ROCK)], 0.1)).toBe('none')
+    expect(resolveShipTerrain(ship, [platform(Surface.EARTH)], 0.1)).toBe('none')
     expect(ship.y).toBe(0)
   })
 })

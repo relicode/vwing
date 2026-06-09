@@ -9,6 +9,8 @@ import {
   Color,
   DEATHMATCH_FRAG_SCORE,
   DeviceKind,
+  INCENDIARY_BURN_RADIUS,
+  MAX_WATER_BODIES,
   SHAKE_DECAY,
   SHIP_DEATH_SHAKE,
   SHIP_FIRE_INTERVAL,
@@ -20,9 +22,10 @@ import {
   SMOKE_LIFE,
   SPLASH_MIN_SPEED,
   SPLASH_PARTICLES,
-  SurfaceMaterial,
+  StructureType,
   THRUST_PARTICLE_LIFE,
   THRUST_PARTICLE_SPEED,
+  WATER_CANNON_WET_RADIUS,
   type WeaponKind,
   WORLD_HEIGHT,
   WORLD_WIDTH,
@@ -31,12 +34,20 @@ import { resolveInfantryContacts, updateDevices } from '$/game/devices'
 import type { Input } from '$/game/input'
 import { spawnExplosion, spawnPuff, updateParticles } from '$/game/particles'
 import { createRng } from '$/game/rng'
-import { respawnShipAt, updateShip } from '$/game/ship'
+import { respawnShipAt, type ShipEnv, updateShip } from '$/game/ship'
 import { resolveShipTerrain } from '$/game/terrain'
 import { createTerrain } from '$/game/terrain-map'
 import type { Bullet, Ship, Vec2, World } from '$/game/types'
-import { carveVoxel, createVoxelTerrain, stepVoxel, voxelToBlocks } from '$/game/voxel'
-import { submersion, waterSurfaceAt } from '$/game/water'
+import {
+  burnSurface,
+  carveVoxel,
+  createVoxelTerrain,
+  findPool,
+  stepVoxel,
+  voxelToBlocks,
+  wetSurface,
+} from '$/game/voxel'
+import { addPool, submersion, waterSurfaceAt } from '$/game/water'
 import { fireSecondary } from '$/game/weapons'
 
 // Pairs a ship with whatever drives it plus its match bookkeeping. The sim owns these;
@@ -127,7 +138,13 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
   world.ships = combatants.map((combatant) => combatant.ship)
   const submergedShips = new Set<number>() // ids currently underwater, for splash-on-crossing
   const eliminated = new Set<number>() // ids removed from play this run (CAMPAIGN, out of lives)
-  const env = { water: world.water }
+  // Read `water` live: pooling can replace world.water with a new array mid-run, so a one-time
+  // snapshot would go stale and ship buoyancy would miss freshly pooled water.
+  const env: ShipEnv = {
+    get water() {
+      return world.water
+    },
+  }
 
   // The destructible terrain is authoritative; `world.blocks` is the rectangle view derived
   // from it (for collision, rendering, and the network snapshot).
@@ -234,19 +251,32 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
         circleRectContact(bullet.x, bullet.y, bullet.radius, b.x, b.y, b.w, b.h)
       )
       if (hit >= 0) {
-        const destructible = world.blocks[hit].material !== SurfaceMaterial.BEDROCK
-        if (destructible) {
+        const block = world.blocks[hit]
+        if (bullet.burn) {
+          // Incendiary: scorch grass → bare earth (surface only, no carve), with a lick of flame.
+          if (burnSurface(voxel, bullet.x, bullet.y, INCENDIARY_BURN_RADIUS)) terrainDirty = true
+          spawnExplosion(world.particles, bullet.x, bullet.y, Color.THRUST, world.rng, 7)
+        } else if (bullet.wet) {
+          // Water cannon: wet bare earth → grass (regrows over time, no carve), and if the impact
+          // sits in a cupped basin, pour a pool there (merging into any adjacent body).
+          wetSurface(voxel, bullet.x, bullet.y, WATER_CANNON_WET_RADIUS)
+          const pool = findPool(voxel, bullet.x, bullet.y)
+          if (pool) {
+            const pooled = addPool(world.water, pool, MAX_WATER_BODIES)
+            if (pooled !== world.water) {
+              world.water = pooled
+              terrainDirty = true // water is drawn in the terrainVersion-cached layer
+            }
+          }
+          spawnExplosion(world.particles, bullet.x, bullet.y, Color.WATER_EDGE, world.rng, 6)
+        } else if (block.structure === StructureType.EARTH) {
           const radius = bullet.radius * CARVE_RADIUS_SCALE + CARVE_RADIUS_BASE
           if (carveVoxel(voxel, bullet.x, bullet.y, radius)) terrainDirty = true
+          spawnExplosion(world.particles, bullet.x, bullet.y, Color.ROCK_EDGE, world.rng, 8)
+        } else {
+          // Indestructible metal: just sparks.
+          spawnExplosion(world.particles, bullet.x, bullet.y, Color.SPARK, world.rng, 4)
         }
-        spawnExplosion(
-          world.particles,
-          bullet.x,
-          bullet.y,
-          destructible ? Color.ROCK_EDGE : Color.SPARK,
-          world.rng,
-          destructible ? 8 : 4
-        )
         continue
       }
       surviving.push(bullet)
@@ -286,7 +316,7 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
       if (ship.health < SHIP_SMOKE_HEALTH && ship.invuln <= 0) {
         spawnPuff(world.particles, ship.x, ship.y, 0, -30, Color.SMOKE, world.rng, SMOKE_LIFE)
       }
-      const surface = waterSurfaceAt(world.water, ship.x)
+      const surface = waterSurfaceAt(world.water, ship.x, ship.y)
       if (surface !== undefined) {
         const wet = submersion(ship, world.water) > 0
         if (wet !== submergedShips.has(ship.id) && Math.abs(ship.vy) > SPLASH_MIN_SPEED) {
