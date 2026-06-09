@@ -1,18 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 
-import {
-  ShipKind,
-  WALL_THICKNESS,
-  WATER_POOL_CAPACITY,
-  WATER_POOL_COUNT,
-  WATER_POOL_START_LEVEL,
-  WeaponKind,
-  WORLD_HEIGHT,
-  WORLD_WIDTH,
-} from '$/game/constants'
-import { createRng } from '$/game/rng'
-import type { Ship, WaterPool } from '$/game/types'
-import { createInitialPools, submersion, surfaceY, transferWater } from '$/game/water'
+import { ShipKind, WeaponKind } from '$/game/constants'
+import type { Ship, WaterBody } from '$/game/types'
+import { addPool, submersion, waterSurfaceAt } from '$/game/water'
 
 const makeShip = (over: Partial<Ship>): Ship => ({
   id: 0,
@@ -29,62 +19,62 @@ const makeShip = (over: Partial<Ship>): Ship => ({
   health: 100,
   shields: 50,
   weapon: WeaponKind.SCATTERGUN,
-  ammo: 0,
+  charge: 100,
   altCooldown: 0,
   disabled: 0,
   ...over,
 })
 
-describe('createInitialPools', () => {
-  test('lays out the configured number of non-overlapping, in-bounds pools', () => {
-    const pools = createInitialPools(createRng(7))
-    expect(pools).toHaveLength(WATER_POOL_COUNT)
-    const sorted = [...pools].sort((a, b) => a.x - b.x)
-    for (let i = 0; i < sorted.length; i += 1) {
-      const p = sorted[i]
-      expect(p.level).toBe(WATER_POOL_START_LEVEL)
-      expect(p.capacity).toBe(WATER_POOL_CAPACITY)
-      expect(p.x).toBeGreaterThanOrEqual(0)
-      expect(p.x + p.width).toBeLessThanOrEqual(WORLD_WIDTH)
-      if (i > 0) expect(p.x).toBeGreaterThanOrEqual(sorted[i - 1].x + sorted[i - 1].width)
-    }
-  })
-})
-
 describe('submersion', () => {
-  const pool: WaterPool = { x: 100, width: 400, level: 100, capacity: 240 }
+  const body: WaterBody = { x: 100, y: 800, w: 400, h: 200 } // surface at y = 800
 
-  test('is 0 above the surface and outside the pool span', () => {
-    expect(submersion(makeShip({ x: 300, y: surfaceY(pool) - 50 }), [pool])).toBe(0)
-    expect(submersion(makeShip({ x: 900, y: WORLD_HEIGHT - WALL_THICKNESS }), [pool])).toBe(0)
+  test('is 0 above the surface and outside the body span', () => {
+    expect(submersion(makeShip({ x: 300, y: 700 }), [body])).toBe(0) // above the surface
+    expect(submersion(makeShip({ x: 900, y: 850 }), [body])).toBe(0) // outside the x-span
   })
 
   test('rises from a partial dip to fully under', () => {
-    const partial = submersion(makeShip({ x: 300, y: surfaceY(pool) - 6 }), [pool])
+    const partial = submersion(makeShip({ x: 300, y: 794 }), [body]) // bottom 6px under the surface
     expect(partial).toBeGreaterThan(0)
     expect(partial).toBeLessThan(1)
-    expect(submersion(makeShip({ x: 300, y: WORLD_HEIGHT - WALL_THICKNESS }), [pool])).toBe(1)
+    expect(submersion(makeShip({ x: 300, y: 900 }), [body])).toBe(1) // well under
   })
 })
 
-describe('transferWater', () => {
-  test('moves level from the source pool to the destination, clamped to capacity', () => {
-    const a: WaterPool = { x: 0, width: 100, level: 100, capacity: 240 }
-    const b: WaterPool = { x: 200, width: 100, level: 50, capacity: 240 }
-    transferWater([a, b], 50, 250, 30)
-    expect(a.level).toBe(70)
-    expect(b.level).toBe(80)
+describe('addPool', () => {
+  const lake: WaterBody = { x: 0, y: 1000, w: 2000, h: 400 } // full-width lake
+
+  test('a basin overlapping an existing body fuses into one (union bounds)', () => {
+    const a: WaterBody = { x: 100, y: 500, w: 100, h: 40 } // 100..200
+    const b: WaterBody = { x: 150, y: 500, w: 100, h: 40 } // 150..250, overlaps a
+    const next = addPool([a], b, 24)
+    expect(next).toHaveLength(1)
+    expect(next[0].x).toBe(100)
+    expect(next[0].w).toBe(150) // union spans 100..250
   })
 
-  test('spraying onto dry land just drains the source; an over-drain bottoms out at 0', () => {
-    const a: WaterPool = { x: 0, width: 100, level: 20, capacity: 240 }
-    transferWater([a], 50, 9999, 30) // toX hits no pool
-    expect(a.level).toBe(0)
+  test('a pool stacked above another at the same x stays separate (no vertical overlap)', () => {
+    const perched: WaterBody = { x: 500, y: 590, w: 80, h: 20 } // x overlaps the lake, far above it
+    expect(addPool([lake], perched, 24)).toHaveLength(2)
   })
 
-  test('no source pool under the muzzle is a no-op', () => {
-    const a: WaterPool = { x: 0, width: 100, level: 100, capacity: 240 }
-    transferWater([a], 9999, 50, 30)
-    expect(a.level).toBe(100)
+  test('at the body cap, a non-merging pool is dropped', () => {
+    const bodies = Array.from({ length: 24 }, (_, i) => ({ x: i * 100, y: 0, w: 10, h: 10 }))
+    const lonely: WaterBody = { x: 5000, y: 0, w: 10, h: 10 }
+    expect(addPool(bodies, lonely, 24)).toHaveLength(24) // skipped (no room, nothing to fuse)
+  })
+})
+
+describe('waterSurfaceAt (y-aware for stacked pools)', () => {
+  const lake: WaterBody = { x: 0, y: 1000, w: 2000, h: 400 }
+  const perched: WaterBody = { x: 480, y: 590, w: 80, h: 20 }
+
+  test('returns the surface of the body nearest the query point', () => {
+    expect(waterSurfaceAt([lake, perched], 500, 595)).toBe(590) // inside the perched pool
+    expect(waterSurfaceAt([lake, perched], 500, 1100)).toBe(1000) // down in the lake
+  })
+
+  test('is undefined where there is no water column', () => {
+    expect(waterSurfaceAt([lake, perched], 2500, 500)).toBeUndefined()
   })
 })

@@ -1,6 +1,9 @@
 import {
+  BOT_SPAWN_OFFSET_PX,
   GRAVITY,
   PLAYER_ID,
+  SECONDARY_MAX_CHARGE,
+  SECONDARY_REGEN,
   SHIP_DRAG,
   SHIP_MAX_HEALTH,
   SHIP_MAX_SHIELDS,
@@ -10,30 +13,29 @@ import {
   SHIP_THRUST,
   SHIP_TURN_RATE,
   ShipKind,
-  WALL_THICKNESS,
   WATER_BUOYANCY,
   WATER_DRAG,
-  WEAPON_CONFIG,
   WeaponKind,
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from '$/game/constants'
 import type { Input } from '$/game/input'
-import type { Rng, Ship, WaterPool } from '$/game/types'
+import type { Rng, Ship, WaterBody } from '$/game/types'
 import { submersion } from '$/game/water'
 import { assignWeapon } from '$/game/weapons'
 
 // Optional surroundings passed to updateShip; absent = open air (the default everywhere
 // except the live engine), which keeps the pure physics tests calling updateShip(s,i,dt).
-export type ShipEnv = { pools: WaterPool[] }
+export type ShipEnv = { water: WaterBody[] }
 
 // Default secondary when no rng is supplied (the deterministic path the unit tests use).
+// `forced` (a debug override) pins the weapon when set, bypassing the random roll.
 const DEFAULT_WEAPON = WeaponKind.SCATTERGUN
-const rollWeapon = (rng?: Rng): WeaponKind => (rng ? assignWeapon(rng) : DEFAULT_WEAPON)
+const rollWeapon = (rng?: Rng, forced?: WeaponKind): WeaponKind => forced ?? (rng ? assignWeapon(rng) : DEFAULT_WEAPON)
 
 export const PLAYER_SPAWN_X = WORLD_WIDTH / 2
 export const PLAYER_SPAWN_Y = WORLD_HEIGHT * 0.4
-export const BOT_SPAWN_X = WORLD_WIDTH * 0.62 // off to the player's right, just in view
+export const BOT_SPAWN_X = PLAYER_SPAWN_X + BOT_SPAWN_OFFSET_PX // a fixed px offset stays on-screen at any world size
 export const BOT_SPAWN_Y = WORLD_HEIGHT * 0.4
 const FACING_UP = -Math.PI / 2
 
@@ -42,9 +44,10 @@ export const createShip = (
   x: number = PLAYER_SPAWN_X,
   y: number = PLAYER_SPAWN_Y,
   id: number = PLAYER_ID,
-  rng?: Rng
+  rng?: Rng,
+  forced?: WeaponKind
 ): Ship => {
-  const weapon = rollWeapon(rng)
+  const weapon = rollWeapon(rng, forced)
   return {
     id,
     kind,
@@ -60,16 +63,17 @@ export const createShip = (
     health: SHIP_MAX_HEALTH,
     shields: SHIP_MAX_SHIELDS,
     weapon,
-    ammo: WEAPON_CONFIG[weapon].ammo,
+    charge: SECONDARY_MAX_CHARGE,
     altCooldown: 0,
     disabled: 0,
   }
 }
 
 // Reset a ship in place at a spawn point: full hull/shields, stopped, facing up,
-// invulnerable, and rolling a fresh random secondary (when an rng is supplied).
-export const respawnShipAt = (ship: Ship, x: number, y: number, rng?: Rng): void => {
-  const weapon = rollWeapon(rng)
+// invulnerable, and rolling a fresh random secondary (when an rng is supplied,
+// unless `forced` pins it).
+export const respawnShipAt = (ship: Ship, x: number, y: number, rng?: Rng, forced?: WeaponKind): void => {
+  const weapon = rollWeapon(rng, forced)
   ship.x = x
   ship.y = y
   ship.vx = 0
@@ -81,12 +85,13 @@ export const respawnShipAt = (ship: Ship, x: number, y: number, rng?: Rng): void
   ship.health = SHIP_MAX_HEALTH
   ship.shields = SHIP_MAX_SHIELDS
   ship.weapon = weapon
-  ship.ammo = WEAPON_CONFIG[weapon].ammo
+  ship.charge = SECONDARY_MAX_CHARGE
   ship.altCooldown = 0
   ship.disabled = 0
 }
 
-export const respawnShip = (ship: Ship, rng?: Rng): void => respawnShipAt(ship, PLAYER_SPAWN_X, PLAYER_SPAWN_Y, rng)
+export const respawnShip = (ship: Ship, rng?: Rng, forced?: WeaponKind): void =>
+  respawnShipAt(ship, PLAYER_SPAWN_X, PLAYER_SPAWN_Y, rng, forced)
 
 // Newtonian integration: turn, optional thrust along the nose, global gravity,
 // gentle drag, then advance. Position is unbounded here — wall death is the engine's call.
@@ -104,7 +109,7 @@ export const updateShip = (ship: Ship, input: Input, dt: number, env?: ShipEnv):
   ship.vx *= drag
   ship.vy *= drag
   // Water: buoyancy fights gravity and a heavier drag bogs the ship down when submerged.
-  const submerged = env ? submersion(ship, env.pools) : 0
+  const submerged = env ? submersion(ship, env.water) : 0
   if (submerged > 0) {
     ship.vy -= WATER_BUOYANCY * submerged * dt
     const waterDrag = Math.exp(-WATER_DRAG * submerged * dt)
@@ -118,9 +123,6 @@ export const updateShip = (ship: Ship, input: Input, dt: number, env?: ShipEnv):
   if (ship.invuln > 0) ship.invuln -= dt
   if (ship.disabled > 0) ship.disabled -= dt
   if (ship.shields < SHIP_MAX_SHIELDS) ship.shields = Math.min(SHIP_MAX_SHIELDS, ship.shields + SHIP_SHIELD_REGEN * dt)
-}
-
-export const shipHitWall = (ship: Ship): boolean => {
-  const min = WALL_THICKNESS + ship.radius
-  return ship.x < min || ship.x > WORLD_WIDTH - min || ship.y < min || ship.y > WORLD_HEIGHT - min
+  if (ship.charge < SECONDARY_MAX_CHARGE)
+    ship.charge = Math.min(SECONDARY_MAX_CHARGE, ship.charge + SECONDARY_REGEN * dt)
 }

@@ -1,3 +1,4 @@
+import { closestPointOnRect } from '$/game/collision'
 import {
   BOT_AIM_DEADBAND,
   BOT_DODGE_DIST,
@@ -11,12 +12,13 @@ import {
   BOT_WALL_MARGIN,
   BULLET_SPEED,
   WALL_THICKNESS,
+  WEAPON_CONFIG,
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from '$/game/constants'
 import type { Input } from '$/game/input'
 import { wrapAngle } from '$/game/math'
-import type { Asteroid, Ship, World } from '$/game/types'
+import type { Block, Ship, World } from '$/game/types'
 
 const FACING_UP = -Math.PI / 2
 
@@ -39,24 +41,27 @@ const wallEscapeHeading = (self: Ship): number | undefined => {
   return Math.atan2(CENTER.y - self.y, CENTER.x - self.x)
 }
 
-// Heading directly away from the nearest dangerously close asteroid, if any.
-const asteroidEscapeHeading = (self: Ship, asteroids: Asteroid[]): number | undefined => {
-  let worst: Asteroid | undefined
+// Heading directly away from the nearest dangerously close terrain block, if any.
+const terrainEscapeHeading = (self: Ship, blocks: Block[]): number | undefined => {
+  let worstX = 0
+  let worstY = 0
   let worstGap = Number.POSITIVE_INFINITY
-  for (const a of asteroids) {
-    const gap = Math.hypot(a.x - self.x, a.y - self.y) - a.radius - self.radius
+  for (const b of blocks) {
+    const q = closestPointOnRect(self.x, self.y, b.x, b.y, b.w, b.h)
+    const gap = Math.hypot(q.x - self.x, q.y - self.y) - self.radius
     if (gap < BOT_DODGE_DIST && gap < worstGap) {
       worstGap = gap
-      worst = a
+      worstX = q.x
+      worstY = q.y
     }
   }
-  if (!worst) return undefined
-  return Math.atan2(self.y - worst.y, self.x - worst.x)
+  if (worstGap === Number.POSITIVE_INFINITY) return undefined
+  return Math.atan2(self.y - worstY, self.x - worstX)
 }
 
 // Pure AI: aim (with lead) at the target and fire when lined up, but let survival
-// reflexes — wall/floor recovery, then asteroid dodging — override the heading.
-export const decideBot = (self: Ship, target: Ship, asteroids: Asteroid[]): BotDecision => {
+// reflexes — wall/floor recovery, then terrain dodging — override the heading.
+export const decideBot = (self: Ship, target: Ship, blocks: Block[]): BotDecision => {
   const dx = target.x - self.x
   const dy = target.y - self.y
   const dist = Math.hypot(dx, dy) || 1
@@ -72,9 +77,9 @@ export const decideBot = (self: Ship, target: Ship, asteroids: Asteroid[]): BotD
   // Thrust only helps when the nose is within 90° of the goal heading; otherwise the
   // engine would shove the bot the wrong way, so it turns to face the goal first.
   const thrustToward = (heading: number): boolean => Math.abs(wrapAngle(heading - self.angle)) < Math.PI / 2
-  const charged = self.ammo > 0 && self.altCooldown <= 0 && self.disabled <= 0
+  const charged = self.charge >= WEAPON_CONFIG[self.weapon].cost && self.altCooldown <= 0 && self.disabled <= 0
 
-  const escapeHeading = wallEscapeHeading(self) ?? asteroidEscapeHeading(self, asteroids)
+  const escapeHeading = wallEscapeHeading(self) ?? terrainEscapeHeading(self, blocks)
   if (escapeHeading !== undefined) {
     desired = escapeHeading
     thrusting = thrustToward(desired)
@@ -124,7 +129,7 @@ export const createBotInput = (self: Ship, getWorld: () => World): Input => {
     if (world.time === cachedTime) return
     cachedTime = world.time
     const target = nearestEnemy(self, world.ships)
-    decision = target ? decideBot(self, target, world.asteroids) : IDLE
+    decision = target ? decideBot(self, target, world.blocks) : IDLE
   }
 
   return {

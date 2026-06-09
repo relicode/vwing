@@ -25,18 +25,31 @@ are modeled as data in a list so AI bots / additional players slot in later.
 Commands: `bun run dev`, `bun run build`, `bun run preview`, `bun test`, `bun run lint`,
 `bun run format`. Always finish a change with `bun run lint` and `bun test` green.
 
+**Dev ports** are pinned to the `31xx` block so this repo's runner never collides with a
+sibling dev server (e.g. `mapifest-builder-astro` on `43xx`) and the browser keeps their
+PWA/localStorage origins separate: `dev` (web client) → **3110** (`$VWING_WEB_PORT`), `preview`
+→ **3111** (`$PORT`), game `server` → **8787** (`$PORT`). `dev:all` labels the two processes
+`vwing:web` / `vwing:srv`.
+
+**Browser inspect** — `bun run chrome` opens the dev URL in **headless** Chrome by default, exposing
+a CDP endpoint on `localhost:9222` (`$CHROME_PORT`) for DevTools, the chrome-devtools MCP
+(`--browser-url http://localhost:9222`), or scripted CDP. `bun run chrome:visual` opens a real
+window (CDP on `9223`, `$CHROME_VISUAL_PORT`) for manual inspection. Each uses an isolated
+`--user-data-dir`; override the binary with `$CHROME_BIN`. Start the dev server first.
+
 ## Layout
 
 ```
 src/
   index.html          # entry — loads main.tsx
   main.tsx            # React root (no StrictMode: avoids double WebGL context in dev)
-  app/                # React + MUI shell
-    app.tsx           # stage frame + phase routing
+  app/                # React + MUI shell — component files are PascalCase.tsx;
+                      # hooks (use-engine, use-net) and theme.ts stay lowercase
+    App.tsx           # stage frame + phase routing
     theme.ts          # MUI dark-neon theme (pure factory)
     use-engine.ts     # boot engine + subscribe to status (useSyncExternalStore)
-    game-canvas.tsx   # mounts engine.canvas
-    hud.tsx, title-screen.tsx, game-over-screen.tsx, overlay.tsx
+    GameCanvas.tsx    # mounts engine.canvas
+    Hud.tsx, TitleScreen.tsx, GameOverScreen.tsx, Overlay.tsx, LobbyScreen.tsx, OnlineGame.tsx
   game/               # framework-free simulation + PixiJS engine
     constants.ts      # enums + all tunables (single balancing surface)
     types.ts          # shared types (World, Ship, Bullet, Asteroid, EngineStatus)

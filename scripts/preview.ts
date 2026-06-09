@@ -4,7 +4,7 @@ import { join, normalize } from 'node:path'
 import { file } from 'bun'
 
 const DIST = join(import.meta.dir, '..', 'dist')
-const PORT = Number(Bun.env.PORT ?? 4173)
+const PORT = Number(Bun.env.PORT ?? 3111)
 
 const server = Bun.serve({
   port: PORT,

@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import {
   DeviceKind,
-  INFANTRY_COUNT,
+  INCENDIARY_PELLETS,
   MINE_COUNT,
   SCATTERGUN_PELLETS,
   SEEKER_COUNT,
@@ -32,7 +32,7 @@ const makeShip = (over: Partial<Ship>): Ship => ({
   health: 100,
   shields: 50,
   weapon: WeaponKind.SCATTERGUN,
-  ammo: 5,
+  charge: 100,
   altCooldown: 0,
   disabled: 0,
   ...over,
@@ -40,14 +40,15 @@ const makeShip = (over: Partial<Ship>): Ship => ({
 
 const makeWorld = (over?: Partial<World>): World => ({
   time: 0,
-  wave: 1,
   ships: [],
   bullets: [],
-  asteroids: [],
   particles: [],
   devices: [],
   beams: [],
-  pools: [],
+  blocks: [],
+  terrainVersion: 0,
+  water: [],
+  shake: 0,
   rng: createRng(1),
   ...over,
 })
@@ -57,28 +58,34 @@ describe('assignWeapon', () => {
     const rng = createRng(42)
     for (let i = 0; i < 30; i += 1) expect(WEAPON_POOL).toContain(assignWeapon(rng))
   })
+
+  test('offers all eleven weapons, including the incendiary', () => {
+    expect(WEAPON_POOL).toHaveLength(11)
+    expect(WEAPON_POOL).toContain(WeaponKind.INCENDIARY)
+    expect(new Set(WEAPON_POOL).size).toBe(WEAPON_POOL.length) // no duplicates
+  })
 })
 
 describe('fireSecondary — gating', () => {
-  test('spends a charge and arms the cooldown', () => {
-    const ship = makeShip({ weapon: WeaponKind.SCATTERGUN, ammo: 5 })
+  test('spends the energy cost and arms the cooldown', () => {
+    const ship = makeShip({ weapon: WeaponKind.SCATTERGUN, charge: 100 })
     const world = makeWorld({ ships: [ship] })
     fireSecondary(world, ship)
-    expect(ship.ammo).toBe(4)
+    expect(ship.charge).toBe(100 - WEAPON_CONFIG[WeaponKind.SCATTERGUN].cost)
     expect(ship.altCooldown).toBe(WEAPON_CONFIG[WeaponKind.SCATTERGUN].cooldown)
   })
 
-  test('is a no-op with no charges, while cooling down, or while disabled', () => {
-    const dry = makeShip({ ammo: 0 })
-    const cooling = makeShip({ ammo: 5, altCooldown: 0.4 })
-    const emp = makeShip({ ammo: 5, disabled: 1 })
+  test('is a no-op without enough energy, while cooling down, or while disabled', () => {
+    const dry = makeShip({ charge: 0 })
+    const cooling = makeShip({ charge: 100, altCooldown: 0.4 })
+    const emp = makeShip({ charge: 100, disabled: 1 })
     const world = makeWorld()
     expect(fireSecondary(world, dry)).toEqual([])
     expect(fireSecondary(world, cooling)).toEqual([])
     expect(fireSecondary(world, emp)).toEqual([])
     expect(world.bullets).toHaveLength(0)
     expect(world.devices).toHaveLength(0)
-    expect(cooling.ammo).toBe(5) // untouched
+    expect(cooling.charge).toBe(100) // untouched
   })
 })
 
@@ -90,12 +97,21 @@ describe('fireSecondary — bullet/beam weapons', () => {
     expect(world.bullets).toHaveLength(SCATTERGUN_PELLETS)
   })
 
-  test('Water Cannon emits a knockback droplet', () => {
+  test('Water Cannon emits a knockback droplet tagged to wet terrain', () => {
     const ship = makeShip({ weapon: WeaponKind.WATER_CANNON })
     const world = makeWorld({ ships: [ship] })
     fireSecondary(world, ship)
     expect(world.bullets).toHaveLength(1)
     expect(world.bullets[0].push ?? 0).toBeGreaterThan(0)
+    expect(world.bullets[0].wet).toBe(true)
+  })
+
+  test('Incendiary emits a cone of burning pellets', () => {
+    const ship = makeShip({ weapon: WeaponKind.INCENDIARY })
+    const world = makeWorld({ ships: [ship] })
+    fireSecondary(world, ship)
+    expect(world.bullets).toHaveLength(INCENDIARY_PELLETS)
+    expect(world.bullets.every((b) => b.burn === true)).toBe(true)
   })
 
   test('Rail Lance beams and damages a target in line', () => {
@@ -143,9 +159,10 @@ describe('fireSecondary — device weapons', () => {
     }
   })
 
-  test('Mines / Infantry drop the configured counts; Grenade/Flak/Singularity drop one each', () => {
+  test('Mines drop the configured count; Infantry/Grenade/Flak/Singularity drop one each', () => {
     expect(fireWith(WeaponKind.MINES)).toHaveLength(MINE_COUNT)
-    expect(fireWith(WeaponKind.INFANTRY)).toHaveLength(INFANTRY_COUNT)
+    expect(fireWith(WeaponKind.INFANTRY)).toHaveLength(1) // held-fire streams one trooper per cadence
+    expect(fireWith(WeaponKind.INFANTRY)[0].kind).toBe(DeviceKind.INFANTRY)
     expect(fireWith(WeaponKind.GRENADE)[0].kind).toBe(DeviceKind.GRENADE)
     expect(fireWith(WeaponKind.FLAK)[0].kind).toBe(DeviceKind.FLAK)
     expect(fireWith(WeaponKind.SINGULARITY)[0].kind).toBe(DeviceKind.WELL)

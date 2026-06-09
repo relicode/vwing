@@ -14,10 +14,16 @@ import {
   GRENADE_FUSE,
   GRENADE_RADIUS,
   GRENADE_SPEED,
-  INFANTRY_COUNT,
+  INCENDIARY_DAMAGE,
+  INCENDIARY_LIFE,
+  INCENDIARY_PELLETS,
+  INCENDIARY_SPEED,
+  INCENDIARY_SPREAD,
   INFANTRY_FIRE_INTERVAL,
-  INFANTRY_LIFE,
+  INFANTRY_GRENADE_CHANCE,
+  INFANTRY_PICKUP_DELAY,
   INFANTRY_RADIUS,
+  InfantryWeapon,
   MINE_ARM_TIME,
   MINE_BLAST_RADIUS,
   MINE_COUNT,
@@ -43,8 +49,6 @@ import {
   WATER_CANNON_PUSH,
   WATER_CANNON_SPEED,
   WATER_CANNON_SPREAD,
-  WATER_SPRAY_REACH,
-  WATER_TRANSFER,
   WEAPON_CONFIG,
   WEAPON_POOL,
   WELL_DEPLOY_DIST,
@@ -56,7 +60,6 @@ import {
 } from '$/game/constants'
 import { pick, randRange } from '$/game/rng'
 import type { Rng, Ship, World } from '$/game/types'
-import { transferWater } from '$/game/water'
 
 // Roll a fresh random secondary for a (re)spawning ship.
 export const assignWeapon = (rng: Rng): WeaponKind => pick(rng, WEAPON_POOL)
@@ -162,21 +165,34 @@ const spawnMines = (world: World, ship: Ship): void => {
   }
 }
 
+// Deploy a single trooper just below the ship (held-fire streams them out one per cadence).
+// One in five carries a grenade launcher; the rest carry rifles.
 const spawnInfantry = (world: World, ship: Ship): void => {
-  for (let i = 0; i < INFANTRY_COUNT; i += 1) {
-    world.devices.push({
-      kind: DeviceKind.INFANTRY,
-      x: ship.x + randRange(world.rng, -15, 15),
-      y: ship.y,
-      vx: ship.vx * 0.3 + randRange(world.rng, -30, 30),
-      vy: 0,
-      owner: ship.id,
-      radius: INFANTRY_RADIUS,
-      life: INFANTRY_LIFE,
-      attached: false,
-      fireCooldown: randRange(world.rng, 0, INFANTRY_FIRE_INTERVAL),
-    })
-  }
+  const weapon = world.rng() < INFANTRY_GRENADE_CHANCE ? InfantryWeapon.GRENADE : InfantryWeapon.RIFLE
+  const walkDir = world.rng() < 0.5 ? -1 : 1
+  world.devices.push({
+    kind: DeviceKind.INFANTRY,
+    x: ship.x + randRange(world.rng, -8, 8),
+    y: ship.y + ship.radius + INFANTRY_RADIUS, // clear the whole (now taller) body below the hull
+    vx: ship.vx * 0.4,
+    vy: Math.max(0, ship.vy * 0.4),
+    owner: ship.id,
+    radius: INFANTRY_RADIUS,
+    weapon,
+    attached: false,
+    swim: 0,
+    sinking: 0,
+    chute: -1,
+    pickupLock: INFANTRY_PICKUP_DELAY,
+    walkDir,
+    facing: walkDir,
+    groundLeft: 0,
+    groundRight: 0,
+    fireCooldown: randRange(world.rng, 0, INFANTRY_FIRE_INTERVAL),
+    kneel: 0,
+    running: false,
+    slide: 0,
+  })
 }
 
 const spawnWell = (world: World, ship: Ship): void => {
@@ -192,13 +208,14 @@ const spawnWell = (world: World, ship: Ship): void => {
   })
 }
 
-// Fire the ship's current secondary. Self-guards ammo/cooldown/disabled, spends a
-// charge, and arms the cooldown. Returns ships hit *instantly* (Rail only) so the
-// engine can reap them — spawn-based weapons resolve later in their own passes.
+// Fire the ship's current secondary. Self-guards energy/cooldown/disabled, spends the
+// weapon's energy cost, and arms the cooldown. Returns ships hit *instantly* (Rail only)
+// so the engine can reap them — spawn-based weapons resolve later in their own passes.
 export const fireSecondary = (world: World, ship: Ship): Ship[] => {
-  if (ship.ammo <= 0 || ship.altCooldown > 0 || ship.disabled > 0) return []
-  ship.ammo -= 1
-  ship.altCooldown = WEAPON_CONFIG[ship.weapon].cooldown
+  const config = WEAPON_CONFIG[ship.weapon]
+  if (ship.charge < config.cost || ship.altCooldown > 0 || ship.disabled > 0) return []
+  ship.charge -= config.cost
+  ship.altCooldown = config.cooldown
 
   switch (ship.weapon) {
     case WeaponKind.SCATTERGUN:
@@ -219,10 +236,20 @@ export const fireSecondary = (world: World, ship: Ship): Ship[] => {
         life: WATER_CANNON_LIFE,
         damage: WATER_CANNON_DAMAGE,
         push: WATER_CANNON_PUSH,
+        wet: true, // wets bare earth → grass and pools in basins on a terrain hit
         color: Color.WATER_EDGE,
       })
-      // Siphon from the pool under the ship and spray it where the stream is aimed.
-      transferWater(world.pools, ship.x, ship.x + Math.cos(ship.angle) * WATER_SPRAY_REACH, WATER_TRANSFER)
+      return []
+    case WeaponKind.INCENDIARY:
+      spawnBurst(world.bullets, ship, world.rng, {
+        count: INCENDIARY_PELLETS,
+        spread: INCENDIARY_SPREAD,
+        speed: INCENDIARY_SPEED,
+        life: INCENDIARY_LIFE,
+        damage: INCENDIARY_DAMAGE,
+        burn: true, // scorches grass → bare earth on a terrain hit
+        color: Color.THRUST,
+      })
       return []
     case WeaponKind.RAIL: {
       const hit = fireRail(world, ship)

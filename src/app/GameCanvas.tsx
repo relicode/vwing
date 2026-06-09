@@ -1,22 +1,22 @@
 import Box from '@mui/material/Box'
 import { useEffect, useRef } from 'react'
 
-import type { Engine } from '$/game/engine'
-
 type GameCanvasProps = {
-  engine: Engine
+  canvas: HTMLCanvasElement
 }
 
-const GameCanvas = ({ engine }: GameCanvasProps) => {
+// Mounts a PixiJS-owned <canvas> (from the offline engine or the online net client) into the
+// React tree, detaching it on unmount so the engine/client can be torn down cleanly.
+const GameCanvas = ({ canvas }: GameCanvasProps) => {
   const hostRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
-    host.appendChild(engine.canvas)
+    host.appendChild(canvas)
     return () => {
-      engine.canvas.remove()
+      canvas.remove()
     }
-  }, [engine])
+  }, [canvas])
   return <Box ref={hostRef} sx={{ position: 'absolute', inset: 0 }} />
 }
 

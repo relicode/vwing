@@ -9,33 +9,38 @@ const INITIAL_STATUS: EngineStatus = {
   score: 0,
   best: 0,
   lives: SHIP_START_LIVES,
-  wave: 1,
   weapon: WeaponKind.SCATTERGUN,
-  ammo: 0,
+  charge: 0,
 }
 
-// Boots the PixiJS engine once, tearing it down on unmount. Returns undefined until ready.
-export const useEngine = (): Engine | undefined => {
+export type EngineBoot = { engine: Engine | undefined; error: string | undefined }
+
+// Boots the PixiJS engine once, tearing it down on unmount. `engine` is undefined until ready;
+// `error` is set if the WebGL/Pixi boot fails (so the UI can offer an escape hatch).
+export const useEngine = (): EngineBoot => {
   const [engine, setEngine] = useState<Engine>()
+  const [error, setError] = useState<string>()
   useEffect(() => {
     let disposed = false
     let created: Engine | undefined
-    const boot = async () => {
-      const instance = await createEngine()
-      if (disposed) {
-        instance.destroy()
-        return
-      }
-      created = instance
-      setEngine(instance)
-    }
-    void boot()
+    createEngine()
+      .then((instance) => {
+        if (disposed) {
+          instance.destroy()
+          return
+        }
+        created = instance
+        setEngine(instance)
+      })
+      .catch((boot: unknown) => {
+        if (!disposed) setError(boot instanceof Error ? boot.message : 'Failed to start the game engine')
+      })
     return () => {
       disposed = true
       created?.destroy()
     }
   }, [])
-  return engine
+  return { engine, error }
 }
 
 // Subscribes the React tree to HUD-relevant engine state (score, lives, phase, best).

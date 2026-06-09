@@ -1,50 +1,24 @@
-import { Application } from 'pixi.js'
-
-import { createWave, splitAsteroid, updateAsteroids } from '$/game/asteroids'
 import { updateBeams } from '$/game/beams'
 import { createBotInput } from '$/game/bot'
-import { spawnBullet, updateBullets } from '$/game/bullets'
-import { circlesOverlap } from '$/game/collision'
-import { applyDamage, applyKnockback, isDead } from '$/game/combat'
 import {
-  ASTEROID_BASE_COUNT,
-  ASTEROID_CONFIG,
-  ASTEROID_PER_WAVE,
-  AsteroidSize,
   BOT_ID,
-  BOT_KILL_SCORE,
-  Color,
   GamePhase,
   PLAYER_ID,
-  SHIP_FIRE_INTERVAL,
-  SHIP_SPAWN_CLEAR_RADIUS,
+  SECONDARY_MAX_CHARGE,
+  SHAKE_DECAY,
   SHIP_START_LIVES,
   ShipKind,
-  VIEW_HEIGHT,
-  VIEW_WIDTH,
+  SimMode,
+  type WeaponKind,
 } from '$/game/constants'
-import { updateDevices } from '$/game/devices'
-import { createInput, type Input } from '$/game/input'
-import { spawnExplosion, updateParticles } from '$/game/particles'
+import { createInput } from '$/game/input'
+import { updateParticles } from '$/game/particles'
 import { createRenderer } from '$/game/renderer'
 import { createRng } from '$/game/rng'
-import {
-  BOT_SPAWN_X,
-  BOT_SPAWN_Y,
-  createShip,
-  PLAYER_SPAWN_X,
-  PLAYER_SPAWN_Y,
-  respawnShip,
-  respawnShipAt,
-  shipHitWall,
-  updateShip,
-} from '$/game/ship'
-import type { Asteroid, Bullet, EngineStatus, Ship, World } from '$/game/types'
-import { createInitialPools } from '$/game/water'
-import { fireSecondary } from '$/game/weapons'
-
-// Pairs a ship with whatever drives it — keyboard for the player, AI for the bot.
-type Combatant = { ship: Ship; input: Input }
+import { BOT_SPAWN_X, BOT_SPAWN_Y, createShip, PLAYER_SPAWN_X, PLAYER_SPAWN_Y } from '$/game/ship'
+import { type Combatant, createSim, createWorld, type Sim } from '$/game/sim'
+import type { EngineStatus, Ship } from '$/game/types'
+import { createCanvasApp } from '$/game/view'
 
 const BEST_KEY = 'vwing.best'
 const MAX_FRAME_DT = 1 / 30 // clamp long frames (tab switch) so the sim never leaps
@@ -53,7 +27,7 @@ export type Engine = {
   canvas: HTMLCanvasElement
   getStatus: () => EngineStatus
   subscribe: (listener: () => void) => () => void
-  start: () => void
+  start: (weapon?: WeaponKind) => void // weapon = debug override; undefined = random per life
   destroy: () => void
 }
 
@@ -69,241 +43,95 @@ const writeBest = (value: number): void => {
   globalThis.localStorage?.setItem(BEST_KEY, String(value))
 }
 
-const explosionCount = (size: AsteroidSize): number =>
-  size === AsteroidSize.LARGE ? 26 : size === AsteroidSize.MEDIUM ? 18 : 12
-
-const createWorld = (seed: number): World => {
-  const rng = createRng(seed)
-  const player = createShip(ShipKind.PLAYER, PLAYER_SPAWN_X, PLAYER_SPAWN_Y, PLAYER_ID, rng)
-  const bot = createShip(ShipKind.BOT, BOT_SPAWN_X, BOT_SPAWN_Y, BOT_ID, rng)
-  return {
-    time: 0,
-    wave: 1,
-    ships: [player, bot],
-    bullets: [],
-    asteroids: createWave(rng, ASTEROID_BASE_COUNT, player, SHIP_SPAWN_CLEAR_RADIUS),
-    particles: [],
-    devices: [],
-    beams: [],
-    pools: createInitialPools(rng),
-    rng,
-  }
-}
-
 export const createEngine = async (): Promise<Engine> => {
-  const app = new Application()
-  await app.init({
-    width: VIEW_WIDTH,
-    height: VIEW_HEIGHT,
-    background: Color.BACKGROUND,
-    antialias: true,
-    resolution: Math.min(2, globalThis.devicePixelRatio || 1),
-    autoDensity: false,
-  })
-  app.canvas.style.width = '100%'
-  app.canvas.style.height = '100%'
-  app.canvas.style.display = 'block'
-
+  const app = await createCanvasApp()
   const renderer = createRenderer(createRng(0xc0ffee))
   app.stage.addChild(renderer.view)
   const input = createInput(window)
 
   let phase = GamePhase.TITLE
-  let score = 0
-  let lives = SHIP_START_LIVES
   let best = readBest()
-  let world = createWorld(makeSeed())
+  let forcedWeapon: WeaponKind | undefined // debug: pins every ship's secondary when set
 
-  // The player drives ships[0] with the keyboard; bots get an AI Input bound to the
-  // world they were built for (rebuilt on every restart, so it's always the live sim).
-  const buildCombatants = (w: World): Combatant[] =>
-    w.ships.map((ship) =>
-      ship.kind === ShipKind.PLAYER ? { ship, input } : { ship, input: createBotInput(ship, () => w) }
-    )
+  // The offline campaign: the keyboard-driven player (finite lives, point score) versus an
+  // endlessly respawning AI bot, both running through the shared authoritative sim.
+  const buildSim = (): Sim => {
+    const world = createWorld(makeSeed())
+    const player = createShip(ShipKind.PLAYER, PLAYER_SPAWN_X, PLAYER_SPAWN_Y, PLAYER_ID, world.rng, forcedWeapon)
+    const bot = createShip(ShipKind.BOT, BOT_SPAWN_X, BOT_SPAWN_Y, BOT_ID, world.rng, forcedWeapon)
+    const combatants: Combatant[] = [
+      {
+        ship: player,
+        input,
+        name: 'You',
+        score: 0,
+        lives: SHIP_START_LIVES,
+        spawn: { x: PLAYER_SPAWN_X, y: PLAYER_SPAWN_Y },
+      },
+      {
+        ship: bot,
+        input: createBotInput(bot, () => world),
+        name: 'Bot',
+        score: 0,
+        lives: Number.POSITIVE_INFINITY,
+        spawn: { x: BOT_SPAWN_X, y: BOT_SPAWN_Y },
+      },
+    ]
+    return createSim(world, combatants, { mode: SimMode.CAMPAIGN, forcedWeapon })
+  }
 
-  let combatants = buildCombatants(world)
+  let sim = buildSim()
+  const player = (): Combatant => sim.combatants[0]
+  const playerShip = (): Ship => player().ship
 
   const listeners = new Set<() => void>()
-  // The HUD reflects the local player (ships[0] by construction).
-  const playerShip = (): Ship => world.ships[0]
+  const chargePct = (ship: Ship): number => Math.round((ship.charge / SECONDARY_MAX_CHARGE) * 100)
   let status: EngineStatus = {
     phase,
-    score,
-    lives,
+    score: 0,
+    lives: SHIP_START_LIVES,
     best,
-    wave: world.wave,
     weapon: playerShip().weapon,
-    ammo: playerShip().ammo,
+    charge: chargePct(playerShip()),
   }
 
   const publish = (): void => {
-    const flooredScore = Math.floor(score)
-    const player = playerShip()
+    const p = player()
+    const score = Math.floor(p.score)
+    const charge = chargePct(p.ship)
     if (
       status.phase === phase &&
-      status.score === flooredScore &&
-      status.lives === lives &&
+      status.score === score &&
+      status.lives === p.lives &&
       status.best === best &&
-      status.wave === world.wave &&
-      status.weapon === player.weapon &&
-      status.ammo === player.ammo
+      status.weapon === p.ship.weapon &&
+      status.charge === charge
     ) {
       return
     }
-    status = { phase, score: flooredScore, lives, best, wave: world.wave, weapon: player.weapon, ammo: player.ammo }
+    status = { phase, score, lives: p.lives, best, weapon: p.ship.weapon, charge }
     for (const listener of listeners) listener()
   }
 
   const endGame = (): void => {
     phase = GamePhase.GAME_OVER
-    const finalScore = Math.floor(score)
+    const finalScore = Math.floor(player().score)
     if (finalScore > best) {
       best = finalScore
       writeBest(best)
     }
   }
 
-  // Read through a helper so phase comparisons survive control-flow narrowing
-  // (endGame flips `phase` from inside nested helpers TS can't see into).
-  const gameOver = (): boolean => phase === GamePhase.GAME_OVER
-
-  // Clear rocks AND deployed devices (mines, wells, …) around a fresh spawn so a
-  // respawn isn't an instant re-death.
-  const clearSpawnArea = (x: number, y: number): void => {
-    world.asteroids = world.asteroids.filter(
-      (asteroid) => Math.hypot(asteroid.x - x, asteroid.y - y) > SHIP_SPAWN_CLEAR_RADIUS
-    )
-    world.devices = world.devices.filter((device) => Math.hypot(device.x - x, device.y - y) > SHIP_SPAWN_CLEAR_RADIUS)
-  }
-
-  // Blow up a destroyed ship. The player costs a life (and ends the run when out);
-  // a downed bot scores for the player, then both respawn at their home with invuln.
-  const destroyShip = (ship: Ship): void => {
-    const isPlayer = ship.kind === ShipKind.PLAYER
-    spawnExplosion(world.particles, ship.x, ship.y, isPlayer ? Color.SHIP : Color.ENEMY, world.rng, 34)
-    if (isPlayer) {
-      lives -= 1
-      if (lives <= 0) {
-        endGame()
-        return
-      }
-      respawnShip(ship, world.rng)
-    } else {
-      score += BOT_KILL_SCORE
-      respawnShipAt(ship, BOT_SPAWN_X, BOT_SPAWN_Y, world.rng)
-    }
-    clearSpawnArea(ship.x, ship.y)
-  }
-
-  // Devices/rail report ships they dealt lethal damage to; reap them (guarded so an
-  // already-respawned ship isn't destroyed twice in one frame).
-  const reap = (ship: Ship): void => {
-    if (isDead(ship)) destroyShip(ship)
-  }
-
-  // A shot striking an enemy ship: spark, deal damage, and destroy on hull depletion.
-  // Returns true when the bullet is spent. Invulnerable ships and the firer are skipped.
-  const bulletHitShip = (bullet: Bullet): boolean => {
-    for (const { ship } of combatants) {
-      if (ship.id === bullet.owner || ship.invuln > 0) continue
-      if (!circlesOverlap(bullet.x, bullet.y, bullet.radius, ship.x, ship.y, ship.radius)) continue
-      applyDamage(ship, bullet.damage)
-      if (bullet.push) applyKnockback(ship, bullet.vx, bullet.vy, bullet.push)
-      spawnExplosion(world.particles, bullet.x, bullet.y, bullet.color ?? Color.SPARK, world.rng, 5)
-      if (isDead(ship)) destroyShip(ship)
-      return true
-    }
-    return false
-  }
-
-  const resolveBulletHits = (): void => {
-    const removed = new Set<number>()
-    const spawned: Asteroid[] = []
-    const survivingBullets: Bullet[] = []
-    for (const bullet of world.bullets) {
-      if (bulletHitShip(bullet)) continue
-      let consumed = false
-      for (let i = 0; i < world.asteroids.length; i += 1) {
-        if (removed.has(i)) continue
-        const asteroid = world.asteroids[i]
-        if (circlesOverlap(bullet.x, bullet.y, bullet.radius, asteroid.x, asteroid.y, asteroid.radius)) {
-          removed.add(i)
-          if (bullet.owner === PLAYER_ID) score += ASTEROID_CONFIG[asteroid.size].score
-          spawnExplosion(
-            world.particles,
-            asteroid.x,
-            asteroid.y,
-            Color.ASTEROID_EDGE,
-            world.rng,
-            explosionCount(asteroid.size)
-          )
-          spawned.push(...splitAsteroid(asteroid, world.rng))
-          consumed = true
-          break
-        }
-      }
-      if (!consumed) survivingBullets.push(bullet)
-    }
-    world.bullets = survivingBullets
-    if (removed.size > 0) {
-      world.asteroids = world.asteroids.filter((_, i) => !removed.has(i)).concat(spawned)
-    }
-  }
-
-  // Walls are lethal to everyone (even mid-invuln); asteroids only bite once invuln lapses.
-  const resolveCrashes = (): void => {
-    for (const { ship } of combatants) {
-      const crashed =
-        shipHitWall(ship) ||
-        (ship.invuln <= 0 &&
-          world.asteroids.some((asteroid) =>
-            circlesOverlap(ship.x, ship.y, ship.radius * 0.8, asteroid.x, asteroid.y, asteroid.radius)
-          ))
-      if (crashed) destroyShip(ship)
-      if (gameOver()) return
-    }
-  }
-
-  const advanceWaveIfClear = (): void => {
-    if (world.asteroids.length > 0) return
-    world.wave += 1
-    const count = ASTEROID_BASE_COUNT + ASTEROID_PER_WAVE * (world.wave - 1)
-    world.asteroids = createWave(world.rng, count, world.ships[0], SHIP_SPAWN_CLEAR_RADIUS)
-  }
-
-  const stepPlaying = (dt: number): void => {
-    world.time += dt
-    const env = { pools: world.pools }
-    for (const { ship, input: control } of combatants) {
-      updateShip(ship, control, dt, env)
-      if (control.firing() && ship.fireCooldown <= 0 && ship.disabled <= 0) {
-        spawnBullet(world.bullets, ship)
-        ship.fireCooldown = SHIP_FIRE_INTERVAL
-      }
-      if (control.altFiring()) for (const killed of fireSecondary(world, ship)) reap(killed)
-      if (gameOver()) return
-    }
-    world.bullets = updateBullets(world.bullets, dt)
-    for (const killed of updateDevices(world, dt)) reap(killed)
-    if (gameOver()) return
-    updateBeams(world, dt)
-    updateAsteroids(world.asteroids, dt)
-    world.particles = updateParticles(world.particles, dt)
-
-    resolveBulletHits()
-    if (gameOver()) return
-    resolveCrashes()
-    if (gameOver()) return
-    advanceWaveIfClear()
-  }
-
   const step = (dt: number): void => {
     if (phase === GamePhase.PLAYING) {
-      stepPlaying(dt)
+      const events = sim.step(dt)
+      // The run ends the moment the human is out of lives.
+      if (events.some((e) => e.eliminated && e.victimKind === ShipKind.PLAYER)) endGame()
     } else {
-      // Title + game-over: keep the rocks drifting (and debris/beams fading) as ambiance.
+      // Title + game-over: just let debris and beams fade as ambiance (terrain is static).
+      const world = sim.world
+      if (world.shake > 0) world.shake = Math.max(0, world.shake - SHAKE_DECAY * dt)
       world.time += dt
-      updateAsteroids(world.asteroids, dt)
       world.particles = updateParticles(world.particles, dt)
       updateBeams(world, dt)
     }
@@ -313,14 +141,12 @@ export const createEngine = async (): Promise<Engine> => {
     const dt = Math.min(ticker.deltaMS / 1000, MAX_FRAME_DT)
     step(dt)
     publish()
-    renderer.draw(world, phase)
+    renderer.draw(sim.world, phase, PLAYER_ID)
   })
 
-  const start = (): void => {
-    score = 0
-    lives = SHIP_START_LIVES
-    world = createWorld(makeSeed())
-    combatants = buildCombatants(world)
+  const start = (weapon?: WeaponKind): void => {
+    forcedWeapon = weapon
+    sim = buildSim()
     phase = GamePhase.PLAYING
     publish()
   }

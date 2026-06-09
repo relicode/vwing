@@ -1,15 +1,17 @@
 import Button from '@mui/material/Button'
+import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
 
-import Overlay from '$/app/overlay'
+import Overlay from '$/app/Overlay'
 import type { EngineStatus } from '$/game/types'
 
 type GameOverScreenProps = {
   status: EngineStatus
   onRestart: () => void
+  onExit: () => void
 }
 
-const GameOverScreen = ({ status, onRestart }: GameOverScreenProps) => {
+const GameOverScreen = ({ status, onRestart, onExit }: GameOverScreenProps) => {
   const isNewBest = status.score > 0 && status.score >= status.best
   return (
     <Overlay>
@@ -26,10 +28,14 @@ const GameOverScreen = ({ status, onRestart }: GameOverScreenProps) => {
       <Typography sx={{ color: isNewBest ? 'primary.main' : 'text.secondary', fontWeight: isNewBest ? 700 : 400 }}>
         {isNewBest ? 'NEW BEST!' : `Best ${status.best.toLocaleString()}`}
       </Typography>
-      <Typography sx={{ color: 'text.secondary', fontSize: 13 }}>Reached wave {status.wave}</Typography>
-      <Button variant="contained" size="large" onClick={onRestart} autoFocus sx={{ px: 5, mt: 1 }}>
-        Fly again
-      </Button>
+      <Stack direction="row" spacing={1.5} sx={{ mt: 1 }}>
+        <Button variant="contained" size="large" onClick={onRestart} autoFocus sx={{ px: 4 }}>
+          Fly again
+        </Button>
+        <Button variant="text" size="large" onClick={onExit} sx={{ color: 'text.secondary' }}>
+          Menu
+        </Button>
+      </Stack>
     </Overlay>
   )
 }
