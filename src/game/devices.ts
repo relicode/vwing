@@ -17,11 +17,14 @@ import {
   GRENADE_SHARD_SPEED,
   GRENADE_SHARDS,
   GRENADE_SPEED,
+  INFANTRY_DROWN_RESCUE_WINDOW,
   INFANTRY_FALL_LETHAL,
   INFANTRY_FIRE_INTERVAL,
   INFANTRY_GRENADE_FIRE_INTERVAL,
+  INFANTRY_ICE_SLIP_CHANCE,
   INFANTRY_KNEEL_FIRE_AT,
   INFANTRY_KNEEL_TIME,
+  INFANTRY_PANIC_DIST,
   INFANTRY_PARACHUTE_FIRE_INTERVAL,
   INFANTRY_PICKUP_RADIUS,
   INFANTRY_PICKUP_REFUND,
@@ -29,15 +32,25 @@ import {
   INFANTRY_RAM_SPEED,
   INFANTRY_RANGE,
   INFANTRY_RESCUE_RANGE,
+  INFANTRY_RUN_SPEED,
   INFANTRY_SHOT_DAMAGE,
   INFANTRY_SHOT_SPEED,
   INFANTRY_SINK_SPEED,
   INFANTRY_SINK_TIME,
+  INFANTRY_SLIP_FRICTION,
+  INFANTRY_SLIP_SPEED,
+  INFANTRY_SLIP_STOP_SPEED,
+  INFANTRY_SPREAD_PARACHUTE,
+  INFANTRY_SPREAD_STANDING,
+  INFANTRY_SPREAD_SWIM,
+  INFANTRY_SPREAD_WALKING,
   INFANTRY_SWIM_DRAG,
+  INFANTRY_SWIM_FIRE_INTERVAL,
   INFANTRY_SWIM_SPEED,
   INFANTRY_SWIM_TIME,
   INFANTRY_WALK_SPEED,
   INFANTRY_WALK_TURN_CHANCE,
+  InfantryState,
   InfantryWeapon,
   PARACHUTE_DEPLOY_SPEED,
   PARACHUTE_DRIFT,
@@ -45,6 +58,7 @@ import {
   PARACHUTE_SWAY,
   PARACHUTE_TERMINAL,
   SECONDARY_MAX_CHARGE,
+  Surface,
   WALL_THICKNESS,
   WELL_MAX_ACCEL,
   WELL_MIN_DIST,
@@ -55,7 +69,7 @@ import {
 import { clamp, TWO_PI, wrapAngle } from '$/game/math'
 import { spawnExplosion } from '$/game/particles'
 import { randRange } from '$/game/rng'
-import type { Block, Device, Ship, World } from '$/game/types'
+import type { Block, Device, Ship, Vec2, World } from '$/game/types'
 import { waterSurfaceAt } from '$/game/water'
 
 type InfantryDevice = Extract<Device, { kind: DeviceKind.INFANTRY }>
@@ -69,12 +83,26 @@ const hasLineOfSight = (x1: number, y1: number, x2: number, y2: number, blocks: 
 const insideAnyBlock = (x: number, y: number, blocks: Block[]): boolean =>
   blocks.some((b) => x > b.x && x < b.x + b.w && y > b.y && y < b.y + b.h)
 
-// True while solid ground is still directly under a landed trooper's feet. Probes just
-// below the soles: if the supporting block was shot away, this goes false and the unit falls.
+// The block directly under a landed trooper's feet (probed just below the soles), or undefined if
+// the ground was shot away. Its surface tells us whether the footing is icy (see the ice slip).
 const FOOTING_PROBE = 3 // px below the feet to sample for solid ground
-const hasFooting = (device: InfantryDevice, blocks: Block[]): boolean => {
+const supportingBlock = (device: InfantryDevice, blocks: Block[]): Block | undefined => {
   const footY = device.y + device.radius + FOOTING_PROBE
-  return blocks.some((b) => device.x > b.x && device.x < b.x + b.w && footY > b.y && footY < b.y + b.h)
+  return blocks.find((b) => device.x > b.x && device.x < b.x + b.w && footY > b.y && footY < b.y + b.h)
+}
+
+// The trooper's behavioural state, derived from its fields — drives the firing rules and most
+// rendered poses. Precedence runs sinking → swimming → airborne → landed. An in-progress ice
+// slide (device.slide) is a transient handled inline (it holds fire and the renderer keys its
+// skid pose off device.slide), so it has no dedicated state here.
+export const stateOf = (device: InfantryDevice): InfantryState => {
+  if (device.sinking > 0) return InfantryState.DROWNING
+  if (device.swim > 0) return InfantryState.SWIMMING
+  if (!device.attached) return device.chute >= 0 ? InfantryState.FALLING_PARACHUTE : InfantryState.FALLING
+  if (device.kneel > 0) return InfantryState.KNEELING
+  if (device.running) return InfantryState.RUNNING
+  // Landed: walking when there's room to patrol, otherwise standing (and dead-on).
+  return device.groundRight - device.groundLeft > device.radius * 2 ? InfantryState.WALKING : InfantryState.STANDING
 }
 
 const inBounds = (x: number, y: number): boolean =>
@@ -161,12 +189,33 @@ const lobGrenade = (spawned: Device[], device: InfantryDevice, angle: number): v
   })
 }
 
-// The nearest enemy ship within range and with a clear line of sight, or undefined.
-const infantryTarget = (world: World, device: InfantryDevice): Ship | undefined => {
-  const target = nearestEnemyOf(device.owner, device.x, device.y, world.ships)
-  if (!target || Math.hypot(target.x - device.x, target.y - device.y) > INFANTRY_RANGE) return undefined
-  if (!hasLineOfSight(device.x, device.y, target.x, target.y, world.blocks)) return undefined
-  return target
+// The nearest enemy trooper (not a drowned corpse), or undefined. Infantry hate other infantry
+// and shoot them first, so this is consulted ahead of enemy ships.
+const nearestEnemyInfantry = (ownerId: number, x: number, y: number, devices: Device[]): InfantryDevice | undefined => {
+  let best: InfantryDevice | undefined
+  let bestDist = Number.POSITIVE_INFINITY
+  for (const d of devices) {
+    if (d.kind !== DeviceKind.INFANTRY || d.owner === ownerId || d.sinking > 0) continue
+    const dist = Math.hypot(d.x - x, d.y - y)
+    if (dist < bestDist) {
+      bestDist = dist
+      best = d
+    }
+  }
+  return best
+}
+
+const inSightInRange = (world: World, device: InfantryDevice, tx: number, ty: number): boolean =>
+  Math.hypot(tx - device.x, ty - device.y) <= INFANTRY_RANGE && hasLineOfSight(device.x, device.y, tx, ty, world.blocks)
+
+// A trooper's aim point: the nearest enemy *infantry* in range + line of sight if there is one
+// (infantry hate infantry), otherwise the nearest enemy ship. undefined when nothing is engageable.
+const infantryTarget = (world: World, device: InfantryDevice): Vec2 | undefined => {
+  const foe = nearestEnemyInfantry(device.owner, device.x, device.y, world.devices)
+  if (foe && inSightInRange(world, device, foe.x, foe.y)) return { x: foe.x, y: foe.y }
+  const ship = nearestEnemyOf(device.owner, device.x, device.y, world.ships)
+  if (ship && inSightInRange(world, device, ship.x, ship.y)) return { x: ship.x, y: ship.y }
+  return undefined
 }
 
 // A small spark at the barrel tip when a unit fires, pointed along `angle`.
@@ -176,14 +225,21 @@ const muzzleFlash = (world: World, device: InfantryDevice, angle: number, color:
   spawnExplosion(world.particles, mx, my, color, world.rng, 3)
 }
 
-// Fire at the nearest enemy in range with clear line of sight, at the given cadence. Used by
-// rifles (landed) and any unit shooting while it descends. Ticks the cooldown every frame.
-const infantryFire = (world: World, device: InfantryDevice, spawned: Device[], interval: number, dt: number): void => {
+// Fire at the current target at the given cadence, with `spread` rad of aim jitter (drawn from
+// world.rng so it stays deterministic). Used by rifles (landed), descending, and drifting swimmers.
+const infantryFire = (
+  world: World,
+  device: InfantryDevice,
+  spawned: Device[],
+  interval: number,
+  spread: number,
+  dt: number
+): void => {
   device.fireCooldown -= dt
   if (device.fireCooldown > 0) return
   const target = infantryTarget(world, device)
   if (!target) return
-  const angle = Math.atan2(target.y - device.y, target.x - device.x)
+  const angle = Math.atan2(target.y - device.y, target.x - device.x) + randRange(world.rng, -spread, spread)
   if (device.weapon === InfantryWeapon.GRENADE) {
     lobGrenade(spawned, device, angle)
     muzzleFlash(world, device, angle, Color.GRENADE)
@@ -208,10 +264,10 @@ const infantryFire = (world: World, device: InfantryDevice, spawned: Device[], i
 
 // A crouched grenadier lets one round fly at the current target (if still in sight). Driven by
 // the landed kneel-fire cycle — no cooldown of its own; the crouch timing sets the cadence.
-const grenadierLob = (world: World, device: InfantryDevice, spawned: Device[]): void => {
+const grenadierLob = (world: World, device: InfantryDevice, spawned: Device[], spread: number): void => {
   const target = infantryTarget(world, device)
   if (!target) return // target slipped out of sight during the wind-up — dry click
-  const angle = Math.atan2(target.y - device.y, target.x - device.x)
+  const angle = Math.atan2(target.y - device.y, target.x - device.x) + randRange(world.rng, -spread, spread)
   lobGrenade(spawned, device, angle)
   muzzleFlash(world, device, angle, Color.GRENADE)
 }
@@ -352,9 +408,11 @@ const stepDevice = (
         device.y += INFANTRY_SINK_SPEED * dt
         return device.sinking > 0
       }
-      // Swimming: bob at the surface, hold fire, and either paddle toward a nearby rescuing
-      // owner or drift to a stop — begin sinking on drown.
+      // Swimming: bob at the surface and either paddle toward a nearby rescuing owner (directed —
+      // both hands busy, holds fire) or drift to a stop (standby — looses the odd poor shot).
       if (device.swim > 0) {
+        device.running = false
+        device.slide = 0
         device.swim -= dt
         const surface = waterSurfaceAt(world.water, device.x, device.y)
         if (surface !== undefined) device.y = surface + device.radius * 0.2
@@ -365,6 +423,7 @@ const stepDevice = (
           device.vx = device.facing * INFANTRY_SWIM_SPEED
         } else {
           device.vx *= Math.exp(-INFANTRY_SWIM_DRAG * dt)
+          infantryFire(world, device, spawned, INFANTRY_SWIM_FIRE_INTERVAL, INFANTRY_SPREAD_SWIM, dt)
         }
         device.x += device.vx * dt
         if (device.swim <= 0) {
@@ -375,6 +434,8 @@ const stepDevice = (
       }
       // Airborne: fall (with optional parachute braking), then land / splat / start swimming.
       if (!device.attached) {
+        device.running = false
+        device.slide = 0
         device.vy += GRAVITY * dt
         // Parachute: deploy past a fast descent, then open over time. The brake is all-or-
         // nothing — while opening it does nothing (the unit keeps accelerating), then snaps
@@ -391,7 +452,8 @@ const stepDevice = (
             PARACHUTE_DRIFT
           )
           if (device.chute >= 1 && device.vy > PARACHUTE_TERMINAL) device.vy = PARACHUTE_TERMINAL
-          infantryFire(world, device, spawned, INFANTRY_PARACHUTE_FIRE_INTERVAL, dt) // fire slowly while descending
+          // Fire slowly and inaccurately while swinging under the canopy.
+          infantryFire(world, device, spawned, INFANTRY_PARACHUTE_FIRE_INTERVAL, INFANTRY_SPREAD_PARACHUTE, dt)
         }
         device.x += device.vx * dt
         device.y += device.vy * dt
@@ -445,11 +507,47 @@ const stepDevice = (
         return false
       }
       // Block beneath shot away → lose footing and fall (re-enters the airborne path next frame).
-      if (!hasFooting(device, world.blocks)) {
+      const ground = supportingBlock(device, world.blocks)
+      if (!ground) {
         device.attached = false
         device.chute = -1
+        device.running = false
+        device.slide = 0
         return true
       }
+      // Ice slip: footing on an icy surface occasionally gives way into a decaying slide. Once
+      // sliding, the trooper glides (clamped to its block) and can't shoot until it stops.
+      if (device.slide !== 0 || (ground.surface === Surface.ICE && world.rng() < INFANTRY_ICE_SLIP_CHANCE)) {
+        if (device.slide === 0) device.slide = device.walkDir * INFANTRY_SLIP_SPEED // a fresh slip
+        device.x = clamp(
+          device.x + device.slide * dt,
+          device.groundLeft + device.radius,
+          device.groundRight - device.radius
+        )
+        device.slide *= Math.exp(-INFANTRY_SLIP_FRICTION * dt)
+        if (Math.abs(device.slide) < INFANTRY_SLIP_STOP_SPEED) device.slide = 0
+        device.facing = device.walkDir
+        device.running = false
+        device.kneel = 0 // a slip breaks any brace
+        return true // sliding: no shooting
+      }
+      // Bolt from a point-blank enemy trooper: infantry shoot each other at range but back off when
+      // crowded, sprinting along the block (no fire). Enemy ships are stood up to, not fled.
+      const foe = nearestEnemyInfantry(device.owner, device.x, device.y, world.devices)
+      if (foe && Math.hypot(foe.x - device.x, foe.y - device.y) < INFANTRY_PANIC_DIST) {
+        const away = device.x >= foe.x ? 1 : -1
+        device.running = true
+        device.walkDir = away
+        device.facing = away
+        device.kneel = 0
+        device.x = clamp(
+          device.x + away * INFANTRY_RUN_SPEED * dt,
+          device.groundLeft + device.radius,
+          device.groundRight - device.radius
+        )
+        return true
+      }
+      device.running = false
       // A heavy weapon (grenadier) plants itself to shoot: it repositions freely until the cadence
       // is up and a target is in sight, then drops to a knee and holds DEAD STILL — winds up, lets
       // the round fly mid-crouch, holds through the recovery, then stands back up free to move.
@@ -458,7 +556,7 @@ const stepDevice = (
           const before = device.kneel
           device.kneel -= dt
           if (before > INFANTRY_KNEEL_FIRE_AT && device.kneel <= INFANTRY_KNEEL_FIRE_AT) {
-            grenadierLob(world, device, spawned) // the round flies at the wind-up's end
+            grenadierLob(world, device, spawned, INFANTRY_SPREAD_STANDING) // the round flies at the wind-up's end
           }
           return true // crouched: stay perfectly still (no patrol/walk)
         }
@@ -474,9 +572,11 @@ const stepDevice = (
         }
         return true
       }
-      // Rifle: reposition (walk-to-rescue or patrol) and fire on the move, standing.
+      // Rifle: reposition (walk-to-rescue or patrol), then fire — dead-on from a halt (STANDING),
+      // looser on the move (WALKING).
       repositionLanded(world, device, dt)
-      infantryFire(world, device, spawned, INFANTRY_FIRE_INTERVAL, dt)
+      const spread = stateOf(device) === InfantryState.STANDING ? INFANTRY_SPREAD_STANDING : INFANTRY_SPREAD_WALKING
+      infantryFire(world, device, spawned, INFANTRY_FIRE_INTERVAL, spread, dt)
       return true // landed unit persists until it's killed or picked up
     }
 
@@ -560,7 +660,9 @@ export const updateDevices = (world: World, dt: number): Ship[] => {
 // scoops it up — refunding secondary energy and re-arming the Infantry slot — while any ship
 // fast enough to ram (own or enemy) splatters the trooper it ploughs through, save for an
 // owner still inside its trooper's deploy lockout (so a fast drop can't instantly mince it).
-// Iterates from the tail so removals don't disturb pending indices.
+// Drowning is saveable: a sinking trooper can still be scooped for INFANTRY_DROWN_RESCUE_WINDOW
+// after it goes under; past that it's an unreachable corpse. Iterates from the tail so removals
+// don't disturb pending indices.
 export const resolveInfantryContacts = (world: World): void => {
   for (const ship of world.ships) {
     const speed = Math.hypot(ship.vx, ship.vy)
@@ -569,12 +671,14 @@ export const resolveInfantryContacts = (world: World): void => {
     if (!slow && !ramming) continue // a moderate fly-by neither rescues nor rams
     for (let i = world.devices.length - 1; i >= 0; i -= 1) {
       const d = world.devices[i]
-      if (d.kind !== DeviceKind.INFANTRY || d.sinking > 0) continue
+      if (d.kind !== DeviceKind.INFANTRY) continue
+      const rescuableDrowning = d.sinking > INFANTRY_SINK_TIME - INFANTRY_DROWN_RESCUE_WINDOW
+      if (d.sinking > 0 && !rescuableDrowning) continue // a corpse past the rescue window: untouchable
       if (
         slow &&
         d.owner === ship.id &&
         d.pickupLock <= 0 &&
-        (d.attached || d.swim > 0) &&
+        (d.attached || d.swim > 0 || rescuableDrowning) &&
         circlesOverlap(ship.x, ship.y, INFANTRY_PICKUP_RADIUS, d.x, d.y, d.radius)
       ) {
         world.devices.splice(i, 1)
@@ -583,7 +687,7 @@ export const resolveInfantryContacts = (world: World): void => {
         ship.altCooldown = 0
         continue
       }
-      if (ramming && circlesOverlap(ship.x, ship.y, ship.radius, d.x, d.y, d.radius)) {
+      if (ramming && d.sinking <= 0 && circlesOverlap(ship.x, ship.y, ship.radius, d.x, d.y, d.radius)) {
         // A ship still in its own trooper's deploy lockout can't mince it — otherwise a fast
         // drop would splatter the unit the instant it left the hull. Enemies ram freely.
         if (d.owner === ship.id && d.pickupLock > 0) continue
