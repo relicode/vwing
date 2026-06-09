@@ -113,6 +113,8 @@ export type Device =
       groundRight: number // patrol bound: right edge of the supporting block (world x)
       fireCooldown: number
       kneel: number // s of post-launch crouch remaining (grenadier braces to fire its bazooka)
+      running: boolean // sprinting clear of a point-blank threat (holds fire); drives the run pose
+      slide: number // px/s lateral slide from an ice slip (0 = firm footing); decays + holds fire
     }
   | {
       kind: DeviceKind.GRENADE // gravity arc → shrapnel ring on fuse

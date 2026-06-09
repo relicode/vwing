@@ -76,6 +76,19 @@ export enum InfantryWeapon {
   GRENADE = 'GRENADE',
 }
 
+// The behavioural state of a deployed trooper, derived from its fields each tick (see stateOf in
+// devices.ts). Drives firing accuracy/cadence and the rendered pose.
+export enum InfantryState {
+  STANDING = 'STANDING', // landed, nowhere to patrol — fires dead-on
+  WALKING = 'WALKING', // landed, patrolling / repositioning — fires with reduced accuracy
+  RUNNING = 'RUNNING', // sprinting clear of a point-blank threat — holds fire
+  KNEELING = 'KNEELING', // braced to launch a heavy weapon (grenadier)
+  FALLING = 'FALLING', // airborne with no canopy — holds fire
+  FALLING_PARACHUTE = 'FALLING_PARACHUTE', // descending under a canopy — fires inaccurately
+  SWIMMING = 'SWIMMING', // afloat — only the drifting "standby" swimmer fires (poorly)
+  DROWNING = 'DROWNING', // sinking under water; saveable for a brief window
+}
+
 // ── Online multiplayer ──────────────────────────────────────────────────────
 // The authoritative server steps each game room at NET_TICK_RATE and broadcasts a full
 // world snapshot; clients stream their input and render the snapshots they receive.
@@ -288,6 +301,24 @@ export const INFANTRY_RAM_SPEED = 150 // px/s: a ship faster than this splatters
 export const INFANTRY_RESCUE_RANGE = 260 // px: a unit only walks/swims toward an owner this near
 export const INFANTRY_SINK_TIME = 1.5 // s a drowned unit sinks and fades before vanishing
 export const INFANTRY_SINK_SPEED = 36 // px/s it descends while sinking
+
+// Firing accuracy (half-spread, rad) by state: a halt is dead-on; walking wobbles; a canopy or an
+// idle swim is wild. Spread is drawn from world.rng so it stays deterministic across the network.
+export const INFANTRY_SPREAD_STANDING = 0 // aimed from a dead halt
+export const INFANTRY_SPREAD_WALKING = 0.06 // fires on the move, less accurate
+export const INFANTRY_SPREAD_PARACHUTE = 0.22 // swinging under the canopy
+export const INFANTRY_SPREAD_SWIM = 0.34 // treading water, barely aimed
+export const INFANTRY_SWIM_FIRE_INTERVAL = 2.4 // s between shots while drifting (standby — slow)
+// Running: a landed trooper sprints clear of a point-blank threat, and never fires while running.
+export const INFANTRY_RUN_SPEED = 60 // px/s flee speed (faster than the walk patrol)
+export const INFANTRY_PANIC_DIST = 80 // px: an enemy this close makes a landed trooper bolt
+// Ice: a trooper on an icy surface occasionally loses its footing and slides a little.
+export const INFANTRY_ICE_SLIP_CHANCE = 0.015 // per-frame chance to slip while standing on ice
+export const INFANTRY_SLIP_SPEED = 70 // px/s the slide starts at when a slip triggers
+export const INFANTRY_SLIP_FRICTION = 1.2 // s^-1 decay of the slide (low → it glides for a moment)
+export const INFANTRY_SLIP_STOP_SPEED = 4 // px/s below which a slide ends (snaps back to firm footing)
+// Drowning is saveable: the owner can still scoop a sinking trooper this soon after it goes under.
+export const INFANTRY_DROWN_RESCUE_WINDOW = 0.8 // s of the sink during which a rescue still works
 
 // Parachute: deploys on a fast fall and opens over PARACHUTE_OPEN_TIME. The brake is
 // all-or-nothing — until the canopy is *fully* open it does nothing (the unit keeps

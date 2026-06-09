@@ -1,8 +1,16 @@
 import { describe, expect, test } from 'bun:test'
 
 import { updateBeams } from '$/game/beams'
-import { DeviceKind, InfantryWeapon, ShipKind, StructureType, Surface, WeaponKind } from '$/game/constants'
-import { resolveInfantryContacts, updateDevices } from '$/game/devices'
+import {
+  DeviceKind,
+  InfantryState,
+  InfantryWeapon,
+  ShipKind,
+  StructureType,
+  Surface,
+  WeaponKind,
+} from '$/game/constants'
+import { resolveInfantryContacts, stateOf, updateDevices } from '$/game/devices'
 import { createRng } from '$/game/rng'
 import type { Device, Ship, World } from '$/game/types'
 
@@ -156,6 +164,8 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     groundRight: 0,
     fireCooldown: 0,
     kneel: 0,
+    running: false,
+    slide: 0,
     ...over,
   })
 
@@ -165,7 +175,10 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     updateDevices(world, 0.2)
     const live = world.devices[0]
     expect(live?.kind).toBe(DeviceKind.INFANTRY)
-    if (live?.kind === DeviceKind.INFANTRY) expect(live.attached).toBe(true)
+    if (live?.kind === DeviceKind.INFANTRY) {
+      expect(live.attached).toBe(true)
+      expect(stateOf(live)).toBe(InfantryState.WALKING) // landed on a patrollable block
+    }
   })
 
   test('splats when it lands too fast (dropped from too high)', () => {
@@ -221,6 +234,7 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     if (u?.kind === DeviceKind.INFANTRY) {
       expect(u.chute).toBeGreaterThanOrEqual(0) // chute deployed
       expect(u.vy).toBeLessThan(260) // and braked the fall
+      expect(stateOf(u)).toBe(InfantryState.FALLING_PARACHUTE)
     }
   })
 
@@ -242,7 +256,10 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     world.blocks = [{ x: 40, y: 108, w: 120, h: 40, structure: StructureType.EARTH, surface: Surface.EARTH }] // ground beneath
     updateDevices(world, 0.016) // cadence ready + target in sight → drops to a knee (no lob yet)
     const crouched = world.devices.find((d) => d.kind === DeviceKind.INFANTRY)
-    if (crouched?.kind === DeviceKind.INFANTRY) expect(crouched.kneel).toBeGreaterThan(0) // kneeling first
+    if (crouched?.kind === DeviceKind.INFANTRY) {
+      expect(crouched.kneel).toBeGreaterThan(0) // kneeling first
+      expect(stateOf(crouched)).toBe(InfantryState.KNEELING)
+    }
     expect(world.devices.some((d) => d.kind === DeviceKind.GRENADE)).toBe(false) // hasn't fired during wind-up
     for (let i = 0; i < 60; i += 1) updateDevices(world, 1 / 60) // ~1s: the wind-up elapses and the round flies
     expect(world.devices.some((d) => d.kind === DeviceKind.GRENADE)).toBe(true)
@@ -300,6 +317,7 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     if (u?.kind === DeviceKind.INFANTRY) {
       expect(u.attached).toBe(false)
       expect(u.vy).toBeGreaterThan(0)
+      expect(stateOf(u)).toBe(InfantryState.FALLING)
     }
   })
 
@@ -354,9 +372,8 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     expect(world.devices.length).toBe(0) // the lockout only shields against the OWN ship
   })
 
-  test('lands in water and swims instead of attaching, holding fire', () => {
-    const enemy = makeShip({ id: 1, kind: ShipKind.BOT, x: 100, y: 60 }) // in range, but it must not shoot
-    const world = makeWorld([enemy], [infantry({ y: 194 })])
+  test('lands in water and swims instead of attaching', () => {
+    const world = makeWorld([], [infantry({ y: 194 })])
     world.water = [{ x: 0, y: 200, w: 400, h: 200 }]
     updateDevices(world, 0.2)
     const live = world.devices[0]
@@ -364,8 +381,24 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     if (live?.kind === DeviceKind.INFANTRY) {
       expect(live.swim).toBeGreaterThan(0)
       expect(live.attached).toBe(false)
+      expect(stateOf(live)).toBe(InfantryState.SWIMMING)
     }
-    expect(world.bullets.length).toBe(0)
+  })
+
+  test('a directed swimmer (paddling to a rescuer) holds fire; a drifting one looses poor shots', () => {
+    const target = makeShip({ id: 1, kind: ShipKind.BOT, x: 100, y: 60 }) // in range + LOS
+    // Directed: the unit's own slow ship is alongside as a rescuer → it paddles over, hands busy.
+    const owner = makeShip({ id: 0, x: 130, y: 205, vx: 0, vy: 0 })
+    const directed = makeWorld([owner, target], [infantry({ owner: 0, x: 100, y: 205, swim: 5, pickupLock: 0 })])
+    directed.water = [{ x: 0, y: 200, w: 400, h: 200 }]
+    updateDevices(directed, 0.2)
+    expect(directed.bullets.length).toBe(0) // paddling: no shooting
+
+    // Drifting (no rescuer): it can loose the odd poorly-aimed shot at a target.
+    const drifting = makeWorld([target], [infantry({ owner: 0, x: 100, y: 205, swim: 5, fireCooldown: 0 })])
+    drifting.water = [{ x: 0, y: 200, w: 400, h: 200 }]
+    updateDevices(drifting, 0.2)
+    expect(drifting.bullets.length).toBeGreaterThan(0) // standby: fires (poorly)
   })
 
   test('a swimming unit drowns, then sinks away before vanishing', () => {
@@ -374,7 +407,10 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     updateDevices(world, 0.1) // swim elapses → starts sinking (still present)
     const sinking = world.devices[0]
     expect(sinking?.kind).toBe(DeviceKind.INFANTRY)
-    if (sinking?.kind === DeviceKind.INFANTRY) expect(sinking.sinking).toBeGreaterThan(0)
+    if (sinking?.kind === DeviceKind.INFANTRY) {
+      expect(sinking.sinking).toBeGreaterThan(0)
+      expect(stateOf(sinking)).toBe(InfantryState.DROWNING)
+    }
     updateDevices(world, 10) // sink time elapses → gone
     expect(world.devices.length).toBe(0)
   })
@@ -436,6 +472,56 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     updateDevices(world2, 0.1)
     expect(Number.isFinite(atCenter.vx)).toBe(true)
     expect(Number.isFinite(atCenter.vy)).toBe(true)
+  })
+
+  test('targets enemy infantry over a ship at the same range (infantry hate infantry)', () => {
+    // STANDING (groundLeft/Right unset → unpatrollable) so the shot is dead-on, no spread.
+    const rifle = infantry({ owner: 0, x: 200, y: 120, attached: true })
+    const enemyInf = infantry({ owner: 1, x: 300, y: 120, attached: true }) // 100px right (> panic dist)
+    const ship = makeShip({ id: 2, kind: ShipKind.BOT, x: 200, y: 40 }) // 80px straight up, also in range
+    const world = makeWorld([ship], [rifle, enemyInf])
+    world.blocks = [{ x: 140, y: 128, w: 320, h: 40, structure: StructureType.EARTH, surface: Surface.EARTH }]
+    updateDevices(world, 0.016)
+    const shot = world.bullets.find((b) => b.owner === 0)
+    expect(shot).toBeDefined()
+    if (shot) expect(shot.vx).toBeGreaterThan(Math.abs(shot.vy)) // sideways at the trooper, not up at the ship
+  })
+
+  test('a sliding unit glides along and cannot shoot mid-slide', () => {
+    const enemy = makeShip({ id: 1, kind: ShipKind.BOT, x: 200, y: 40 }) // in range + LOS
+    const u = infantry({ owner: 0, x: 200, y: 120, attached: true, slide: 70, groundLeft: 140, groundRight: 460 })
+    const world = makeWorld([enemy], [u])
+    world.blocks = [{ x: 140, y: 128, w: 320, h: 40, structure: StructureType.EARTH, surface: Surface.EARTH }]
+    updateDevices(world, 0.05)
+    const live = world.devices[0]
+    if (live?.kind === DeviceKind.INFANTRY) expect(live.x).toBeGreaterThan(200) // slid in the slide's direction
+    expect(world.bullets.length).toBe(0) // no firing while off-balance
+  })
+
+  test('a unit standing on ice eventually slips into a slide', () => {
+    const u = infantry({ owner: 0, x: 200, y: 120, attached: true, groundLeft: 140, groundRight: 460 })
+    const world = makeWorld([], [u])
+    world.blocks = [{ x: 140, y: 128, w: 320, h: 40, structure: StructureType.EARTH, surface: Surface.ICE }]
+    let slipped = false
+    for (let i = 0; i < 600 && !slipped; i += 1) {
+      updateDevices(world, 1 / 60)
+      const d = world.devices[0]
+      if (d?.kind === DeviceKind.INFANTRY && d.slide !== 0) slipped = true
+    }
+    expect(slipped).toBe(true)
+  })
+
+  test('a drowning trooper is rescuable within the window, but not after', () => {
+    const ownerEarly = makeShip({ id: 0, x: 100, y: 205, vx: 0, vy: 0, weapon: WeaponKind.RAIL, charge: 0 })
+    const early = makeWorld([ownerEarly], [infantry({ owner: 0, x: 100, y: 205, sinking: 1.4, pickupLock: 0 })])
+    resolveInfantryContacts(early)
+    expect(early.devices.length).toBe(0) // scooped mid-sink (within INFANTRY_DROWN_RESCUE_WINDOW)
+    expect(ownerEarly.weapon).toBe(WeaponKind.INFANTRY)
+
+    const ownerLate = makeShip({ id: 0, x: 100, y: 205, vx: 0, vy: 0 })
+    const late = makeWorld([ownerLate], [infantry({ owner: 0, x: 100, y: 205, sinking: 0.5, pickupLock: 0 })])
+    resolveInfantryContacts(late)
+    expect(late.devices.length).toBe(1) // too deep to save
   })
 })
 

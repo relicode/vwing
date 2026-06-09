@@ -214,6 +214,24 @@ const drawSwimmer = (g: Graphics, d: InfantrySprite, body: number, time: number)
     .stroke({ width: 1, color: Color.WATER_EDGE, alpha: 0.6 })
 }
 
+// A trooper on the move — a forward-leaning torso over a mid-stride gait (panic-run or ice slide).
+const drawRunner = (g: Graphics, d: InfantrySprite, body: number, alpha: number): void => {
+  const r = d.radius
+  const f = d.facing >= 0 ? 1 : -1
+  const hipX = d.x - f * r * 0.25
+  const hipY = d.y + r * 0.3
+  const shoulderX = d.x + f * r * 0.5
+  const shoulderY = d.y - r * 0.7
+  g.moveTo(hipX, hipY).lineTo(shoulderX, shoulderY).stroke({ width: r, color: body, alpha }) // leaning torso
+  g.circle(shoulderX + f * r * 0.2, shoulderY - r * 0.35, r * 0.5).fill({ color: body, alpha }) // head leads
+  g.moveTo(hipX, hipY)
+    .lineTo(d.x + f * r * 0.95, d.y + r)
+    .stroke({ width: 1.8, color: body, alpha }) // trailing leg
+  g.moveTo(hipX, hipY)
+    .lineTo(d.x - f * r * 0.55, d.y + r)
+    .stroke({ width: 1.8, color: body, alpha }) // planted leg
+}
+
 const drawDevice = (g: Graphics, d: Device, time: number, selfId: number): void => {
   switch (d.kind) {
     case DeviceKind.MISSILE: {
@@ -260,6 +278,11 @@ const drawDevice = (g: Graphics, d: Device, time: number, selfId: number): void 
       // A landed grenadier braces on one knee while/just after launching its bazooka.
       if (d.attached && d.weapon === InfantryWeapon.GRENADE && d.kneel > 0) {
         drawKneelingGrenadier(g, d, body, alpha)
+        break
+      }
+      // Landed and on the move: a forward-leaning sprint (bolting) or an off-balance ice slide.
+      if (d.attached && (d.running || d.slide !== 0)) {
+        drawRunner(g, d, body, alpha)
         break
       }
       g.rect(d.x - r * 0.5, d.y - r, r, r * 1.6).fill({ color: body, alpha }) // torso
