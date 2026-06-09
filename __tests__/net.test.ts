@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { decodeClient, livesFromWire, livesToWire, MsgType, sanitizeGameName } from '$/net/protocol'
+import { decodeClient, gameNameKey, livesFromWire, livesToWire, MsgType, sanitizeGameName } from '$/net/protocol'
 import { createStore } from '$/server/store'
 
 describe('protocol helpers', () => {
@@ -16,6 +16,43 @@ describe('protocol helpers', () => {
     expect(livesToWire(3)).toBe(3)
     expect(livesFromWire(null)).toBe(Number.POSITIVE_INFINITY)
     expect(livesFromWire(3)).toBe(3)
+  })
+})
+
+describe('gameNameKey (internationally-normalized, case-insensitive game identity)', () => {
+  test('folds letter case', () => {
+    expect(gameNameKey('Arena')).toBe(gameNameKey('arena'))
+    expect(gameNameKey('MY GAME')).toBe(gameNameKey('my game'))
+  })
+
+  test('collapses Unicode normalization forms (precomposed vs combining)', () => {
+    const nfc = 'Café'.normalize('NFC') // "Café" — é as one code point (U+00E9)
+    const nfd = 'Café'.normalize('NFD') // "Cafe" + U+0301 combining acute accent
+    expect(nfc).not.toBe(nfd) // genuinely different code-point sequences…
+    expect(gameNameKey(nfc)).toBe(gameNameKey(nfd)) // …but the same game
+  })
+
+  test('collapses compatibility forms via NFKC (fullwidth, ligatures)', () => {
+    expect(gameNameKey('ＡＲＥＮＡ')).toBe(gameNameKey('arena')) // fullwidth → ASCII
+    expect(gameNameKey('ﬁght')).toBe(gameNameKey('fight')) // ﬁ ligature → "fi"
+  })
+
+  test('keeps genuinely different names distinct (diacritics are not stripped)', () => {
+    expect(gameNameKey('alpha')).not.toBe(gameNameKey('beta'))
+    expect(gameNameKey('café')).not.toBe(gameNameKey('cafe'))
+  })
+})
+
+describe('sanitizeGameName (international names)', () => {
+  test('keeps Unicode letters and normalizes to NFC', () => {
+    expect(sanitizeGameName('Café Münch', 24)).toBe('Café Münch'.normalize('NFC'))
+    expect(sanitizeGameName('アリーナ', 24)).toBe('アリーナ')
+    expect(sanitizeGameName('Café', 24)).toBe('Café'.normalize('NFC')) // NFD input → NFC
+  })
+
+  test('still strips punctuation, symbols and control characters', () => {
+    expect(sanitizeGameName('drop/these*chars!', 24)).toBe('dropthesechars')
+    expect(sanitizeGameName('emoji 🎮 game', 24)).toBe('emoji game') // emoji dropped, spaces collapse
   })
 })
 

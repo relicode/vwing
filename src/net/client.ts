@@ -16,7 +16,7 @@ import { createRenderer } from '$/game/renderer'
 import { createRng } from '$/game/rng'
 import type { Particle } from '$/game/types'
 import { createCanvasApp } from '$/game/view'
-import { decodeServer, encode, MsgType, type PlayerInfo, type WorldSnapshot } from '$/net/protocol'
+import { decodeServer, encode, type JoinIntent, MsgType, type PlayerInfo, type WorldSnapshot } from '$/net/protocol'
 
 // Where the game server lives. Overridable for split deploys via `?server=` or a stored value;
 // otherwise the current host on the game-server port (covers both single-origin production and
@@ -58,7 +58,7 @@ export type NetClient = {
 
 const HEARTBEAT_MS = 400 // resend the current input at least this often (covers dropped packets)
 
-export const connectGame = async (game: string, name: string): Promise<NetClient> => {
+export const connectGame = async (game: string, name: string, intent: JoinIntent): Promise<NetClient> => {
   const app = await createCanvasApp()
   const renderer = createRenderer(createRng(0xc0ffee))
   app.stage.addChild(renderer.view)
@@ -119,7 +119,7 @@ export const connectGame = async (game: string, name: string): Promise<NetClient
     notify()
   }
 
-  const url = `${wsBase()}/ws?game=${encodeURIComponent(game)}&name=${encodeURIComponent(name)}`
+  const url = `${wsBase()}/ws?game=${encodeURIComponent(game)}&name=${encodeURIComponent(name)}&intent=${intent}`
   const ws = new WebSocket(url)
 
   ws.onmessage = (event) => {
