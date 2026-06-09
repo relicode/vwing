@@ -1,4 +1,5 @@
 import {
+  BOT_SPAWN_OFFSET_PX,
   GRAVITY,
   PLAYER_ID,
   SECONDARY_MAX_CHARGE,
@@ -34,7 +35,7 @@ const rollWeapon = (rng?: Rng, forced?: WeaponKind): WeaponKind => forced ?? (rn
 
 export const PLAYER_SPAWN_X = WORLD_WIDTH / 2
 export const PLAYER_SPAWN_Y = WORLD_HEIGHT * 0.4
-export const BOT_SPAWN_X = WORLD_WIDTH * 0.62 // off to the player's right, just in view
+export const BOT_SPAWN_X = PLAYER_SPAWN_X + BOT_SPAWN_OFFSET_PX // a fixed px offset stays on-screen at any world size
 export const BOT_SPAWN_Y = WORLD_HEIGHT * 0.4
 const FACING_UP = -Math.PI / 2
 

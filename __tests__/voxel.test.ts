@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { StructureType, SURFACE_REGROW_TIME, Surface, VOXEL_CELL, WORLD_HEIGHT, WORLD_WIDTH } from '$/game/constants'
+import type { Block, WaterBody } from '$/game/types'
 import {
   burnSurface,
   carveVoxel,
@@ -12,6 +13,49 @@ import {
   wetSurface,
 } from '$/game/voxel'
 
+// A small controlled arena (independent of the procedural production terrain, which is random per
+// seed and so unsuitable as a fixture). All coordinates are in whole cells so assertions are exact.
+const C = VOXEL_CELL
+const FLOOR_ROW = 100 // a bedrock floor strip — grounds anything resting on it
+const PILLAR_C0 = 300
+const PILLAR_COLS = 16
+const PILLAR_TOP_ROW = 80 // grounded pillar: rows 80–99, cols 300–315
+const A_C0 = 100
+const A_COLS = 14
+const A_TOP_ROW = 30 // floating island A: body rows 30–36 (+ a grass cap on row 29), cols 100–113
+const A_ROWS = 7
+const B_C0 = 200
+const B_COLS = 10
+const B_TOP_ROW = 40 // floating island B: rows 40–45, cols 200–209
+const B_ROWS = 6
+
+const blk = (c0: number, r0: number, cw: number, rh: number, structure: StructureType, surface: Surface): Block => ({
+  x: c0 * C,
+  y: r0 * C,
+  w: cw * C,
+  h: rh * C,
+  structure,
+  surface,
+})
+
+const fixture = (): { blocks: Block[]; water: WaterBody[] } => ({
+  blocks: [
+    blk(0, FLOOR_ROW, Math.ceil(WORLD_WIDTH / C), 1, StructureType.METAL, Surface.EARTH), // bedrock floor
+    blk(PILLAR_C0, PILLAR_TOP_ROW, PILLAR_COLS, FLOOR_ROW - PILLAR_TOP_ROW, StructureType.EARTH, Surface.EARTH),
+    blk(A_C0, A_TOP_ROW, A_COLS, A_ROWS, StructureType.EARTH, Surface.EARTH), // island A body
+    blk(A_C0, A_TOP_ROW - 1, A_COLS, 1, StructureType.EARTH, Surface.GRASS), // island A grass cap (row 29)
+    blk(B_C0, B_TOP_ROW, B_COLS, B_ROWS, StructureType.EARTH, Surface.EARTH), // island B
+  ],
+  water: [],
+})
+
+const mkVt = (): ReturnType<typeof createVoxelTerrain> => {
+  const f = fixture()
+  return createVoxelTerrain(f.blocks, f.water)
+}
+
+const cellCenter = (col: number, row: number): [number, number] => [col * C + C / 2, row * C + C / 2]
+
 // Count filled destructible cells in the static grid (excludes bedrock + falling debris).
 const filledCells = (mat: Uint8Array): number => {
   let n = 0
@@ -19,14 +63,13 @@ const filledCells = (mat: Uint8Array): number => {
   return n
 }
 
-// Empty one full-height column of island C (block(1900,760,160,70) → cols 190–205, rows 76–82) at
-// x≈1925 (col 192), severing the cols 190–191 sliver from the cols 193–205 main mass. The crater
-// itself removes 7 cells (col 192 × 7 rows); the 14-cell sliver is lifted into a falling chunk.
+// Sever island A's 2-col left sliver (cols 100–101) by emptying col 102 down its whole height (the
+// grass cap row 29 + the 7 body rows 30–36 = 8 cells). The 8-cell crater leaves a 16-cell sliver
+// disconnected from the 88-cell main mass, which is lifted into a falling chunk.
 const severIslandSliver = (vt: ReturnType<typeof createVoxelTerrain>): void => {
-  for (let row = 76; row <= 82; row += 1) carveVoxel(vt, 1925, row * VOXEL_CELL + 5, 4)
+  for (let row = A_TOP_ROW - 1; row <= A_TOP_ROW + A_ROWS - 1; row += 1) carveVoxel(vt, ...cellCenter(102, row), 4)
 }
 
-// Count filled static-grid cells inside an inclusive [c0,c1]×[r0,r1] cell rectangle.
 const filledInRect = (
   vt: ReturnType<typeof createVoxelTerrain>,
   c0: number,
@@ -40,27 +83,26 @@ const filledInRect = (
   return n
 }
 
-// Size of the pinned island that currently contains a given cell index (0 if no pin holds it).
 const pinSizeContaining = (vt: ReturnType<typeof createVoxelTerrain>, cell: number): number =>
   vt.pinned.find((pin) => pin.has(cell))?.size ?? 0
 
 describe('createVoxelTerrain', () => {
-  test('sizes the grid to the world and rasterizes the hand-authored arena', () => {
-    const vt = createVoxelTerrain()
+  test('sizes the grid to the world and rasterizes the provided arena', () => {
+    const vt = mkVt()
     expect(vt.cols).toBe(Math.ceil(WORLD_WIDTH / VOXEL_CELL))
     expect(vt.rows).toBe(Math.ceil(WORLD_HEIGHT / VOXEL_CELL))
-    expect(vt.bedrock.length).toBeGreaterThan(0) // the border frame + cave are bedrock anchors
-    expect(filledCells(vt.mat)).toBeGreaterThan(0) // rock/grass/ice voxelized into the grid
+    expect(vt.bedrock.length).toBeGreaterThan(0) // the bedrock floor
+    expect(filledCells(vt.mat)).toBeGreaterThan(0) // earth voxelized into the grid
   })
 
   test('floating islands start pinned (aloft), so nothing falls before a shot lands', () => {
-    const vt = createVoxelTerrain()
-    expect(vt.pinned.length).toBeGreaterThan(0) // islands A/B/C are pinned components
+    const vt = mkVt()
+    expect(vt.pinned.length).toBe(2) // islands A + B are the two pinned components
     expect(hasDebris(vt)).toBe(false)
   })
 
   test('derives a compact block set (fewer rectangles than filled cells)', () => {
-    const vt = createVoxelTerrain()
+    const vt = mkVt()
     const blocks = voxelToBlocks(vt)
     expect(blocks.length).toBeGreaterThan(0)
     expect(blocks.length).toBeLessThan(filledCells(vt.mat)) // greedy meshing actually merges
@@ -70,71 +112,65 @@ describe('createVoxelTerrain', () => {
 
 describe('carveVoxel', () => {
   test('open air / bedrock carves nothing', () => {
-    const vt = createVoxelTerrain()
-    expect(carveVoxel(vt, 5, 5, 12)).toBe(false) // top-left bedrock corner: no destructible cells
-    expect(carveVoxel(vt, WORLD_WIDTH / 2, 40, 12)).toBe(false) // open sky just under the top border
+    const vt = mkVt()
+    expect(carveVoxel(vt, ...cellCenter(50, 10), 12)).toBe(false) // open sky
+    expect(carveVoxel(vt, ...cellCenter(50, FLOOR_ROW), 12)).toBe(false) // bedrock floor
   })
 
   test('a crater removes cells sized to its radius, and a repeat carve is a no-op', () => {
-    const vt = createVoxelTerrain()
+    const vt = mkVt()
     const before = filledCells(vt.mat)
-    // Center of the submerged rock pillar at block(420,1300,240,…).
-    expect(carveVoxel(vt, 540, 1380, 18)).toBe(true)
+    expect(carveVoxel(vt, ...cellCenter(PILLAR_C0 + 8, 90), 18)).toBe(true) // mid-pillar
     const after = filledCells(vt.mat)
     expect(after).toBeLessThan(before)
-    expect(carveVoxel(vt, 540, 1380, 18)).toBe(false) // already hollowed: nothing left to remove
+    expect(carveVoxel(vt, ...cellCenter(PILLAR_C0 + 8, 90), 18)).toBe(false) // already hollowed
   })
 
   test('boring a hole through a floating island leaves the connected remainder aloft', () => {
-    const vt = createVoxelTerrain()
+    const vt = mkVt()
     const pinsBefore = vt.pinned.length
     const before = filledCells(vt.mat)
-    // Island C — the standalone rock platform at block(1900,760,160,70). A hole in its middle
-    // never disconnects it, so it must keep floating with nothing breaking off.
-    expect(carveVoxel(vt, 1980, 795, 12)).toBe(true)
-    expect(filledCells(vt.mat)).toBeLessThan(before) // material was removed
+    expect(carveVoxel(vt, ...cellCenter(A_C0 + 6, A_TOP_ROW + 3), 12)).toBe(true) // a hole in A's middle
+    expect(filledCells(vt.mat)).toBeLessThan(before) // material removed
     expect(hasDebris(vt)).toBe(false) // still one connected piece → nothing falls
     expect(vt.pinned.length).toBe(pinsBefore) // and the island stays pinned/aloft
   })
 
   test('severing a fragment off a floating island drops only the fragment, not the whole island', () => {
-    const vt = createVoxelTerrain()
+    const vt = mkVt()
     const pinsBefore = vt.pinned.length
     severIslandSliver(vt)
     expect(hasDebris(vt)).toBe(true) // the severed left sliver lost its footing and falls
-    expect(vt.pinned.length).toBe(pinsBefore) // island C is still pinned — its main mass stays aloft
-    // The LARGER piece must be the one that stays: assert the main mass is intact in the grid and the
-    // sliver was lifted out — so a 'keep the smallest piece' regression (the original bug) is caught.
-    expect(filledInRect(vt, 193, 205, 76, 82)).toBe(91) // 13×7 main mass still anchored in place
-    expect(filledInRect(vt, 190, 191, 76, 82)).toBe(0) // the 2-col sliver is gone from the static grid
+    expect(vt.pinned.length).toBe(pinsBefore) // island A is still pinned — its main mass stays aloft
+    // The LARGER piece must be the one that stays (a 'keep the smallest piece' regression is caught).
+    expect(filledInRect(vt, A_C0 + 3, A_C0 + A_COLS - 1, A_TOP_ROW - 1, A_TOP_ROW + A_ROWS - 1)).toBe(11 * 8) // main mass
+    expect(filledInRect(vt, A_C0, A_C0 + 1, A_TOP_ROW - 1, A_TOP_ROW + A_ROWS - 1)).toBe(0) // sliver gone
   })
 
   test('carving one island leaves the other islands’ pins untouched', () => {
-    const vt = createVoxelTerrain()
-    const islandACell = 65 * vt.cols + 70 // inside floating island A (block(600,620,260,90))
-    const islandBCell = 45 * vt.cols + 145 // inside floating island B (block(1380,430,220,80))
-    const aBefore = pinSizeContaining(vt, islandACell)
-    const bBefore = pinSizeContaining(vt, islandBCell)
+    const vt = mkVt()
+    const aCell = (A_TOP_ROW + 2) * vt.cols + (A_C0 + 8) // inside island A's main mass
+    const bCell = (B_TOP_ROW + 2) * vt.cols + (B_C0 + 5) // inside island B
+    const aBefore = pinSizeContaining(vt, aCell)
+    const bBefore = pinSizeContaining(vt, bCell)
     expect(aBefore).toBeGreaterThan(0)
     expect(bBefore).toBeGreaterThan(0)
-    severIslandSliver(vt) // bites island C only
-    expect(pinSizeContaining(vt, islandACell)).toBe(aBefore) // A's pin is byte-for-byte unchanged
-    expect(pinSizeContaining(vt, islandBCell)).toBe(bBefore) // and so is B's
+    severIslandSliver(vt) // bites island A only
+    expect(pinSizeContaining(vt, bCell)).toBe(bBefore) // B's pin is byte-for-byte unchanged
   })
 })
 
 describe('connectivity + debris', () => {
-  // Slice clean through a grounded pillar near its top, leaving a thin cap unsupported.
+  // Slice clean through the grounded pillar near its top, leaving a thin cap unsupported.
   const severPillarTop = (vt: ReturnType<typeof createVoxelTerrain>): void => {
-    for (let x = 422; x < 658; x += VOXEL_CELL) carveVoxel(vt, x, 1322, VOXEL_CELL)
+    for (let col = PILLAR_C0; col < PILLAR_C0 + PILLAR_COLS; col += 1) carveVoxel(vt, ...cellCenter(col, 82), 4)
   }
 
   test('a piece cut off from the main static surface becomes debris and then settles', () => {
-    const vt = createVoxelTerrain()
+    const vt = mkVt()
     severPillarTop(vt)
     expect(hasDebris(vt)).toBe(true) // the cap above the slice lost its footing
 
-    // Let the chunk fall; it must come to rest (back into the static grid) in finite time.
     let settled = false
     for (let i = 0; i < 600 && !settled; i += 1) {
       stepVoxel(vt, 1 / 30)
@@ -144,85 +180,82 @@ describe('connectivity + debris', () => {
   })
 
   test('stepVoxel reports no change when there is no debris in flight', () => {
-    const vt = createVoxelTerrain()
+    const vt = mkVt()
     expect(stepVoxel(vt, 1 / 30)).toBe(false)
   })
 
   test('a falling chunk conserves material: every lifted cell lands back into the grid', () => {
-    const vt = createVoxelTerrain()
+    const vt = mkVt()
     const before = filledCells(vt.mat)
-    severIslandSliver(vt) // 7 crater cells removed + a 14-cell sliver lifted into a falling chunk
-    expect(before - filledCells(vt.mat)).toBe(7 + 14) // both the crater and the airborne sliver left the grid
+    severIslandSliver(vt) // 8 crater cells removed + a 16-cell sliver lifted into a falling chunk
+    expect(before - filledCells(vt.mat)).toBe(8 + 16)
     expect(hasDebris(vt)).toBe(true)
     for (let i = 0; i < 600 && hasDebris(vt); i += 1) stepVoxel(vt, 1 / 30)
     expect(hasDebris(vt)).toBe(false)
-    // Only the 7 crater cells are truly gone; all 14 sliver cells re-stamp where the chunk settles.
-    expect(filledCells(vt.mat)).toBe(before - 7)
+    expect(filledCells(vt.mat)).toBe(before - 8) // only the 8 crater cells are truly gone
   })
 })
 
-// Total pixel area of a given surface across the derived blocks (greedily meshed → coarse but stable).
+// Total pixel area of a given surface across the derived blocks.
 const surfaceArea = (vt: ReturnType<typeof createVoxelTerrain>, surface: Surface): number =>
   voxelToBlocks(vt).reduce((sum, b) => (b.surface === surface ? sum + b.w * b.h : sum), 0)
 
 describe('surface transitions (burn / wet / regrow)', () => {
-  // Island A's grass cap sits at block(600, 590, 260, 30) — a strip of GRASS over earth.
-  const GRASS_X = 730
-  const GRASS_Y = 600
+  // Island A's grass cap sits on row 29, cols 100–113.
+  const [GRASS_X, GRASS_Y] = cellCenter(A_C0 + 6, A_TOP_ROW - 1)
 
   test('burnSurface scorches grass to bare earth (structure intact, no carve) and is idempotent', () => {
-    const vt = createVoxelTerrain()
-    const filledBefore = filledCells(vt.mat) // structure (cell count) must be untouched by a burn
+    const vt = mkVt()
+    const filledBefore = filledCells(vt.mat)
     const grassBefore = surfaceArea(vt, Surface.GRASS)
     expect(grassBefore).toBeGreaterThan(0)
 
     expect(burnSurface(vt, GRASS_X, GRASS_Y, 30)).toBe(true)
-    expect(surfaceArea(vt, Surface.GRASS)).toBeLessThan(grassBefore) // grass turned to earth
+    expect(surfaceArea(vt, Surface.GRASS)).toBeLessThan(grassBefore)
     expect(filledCells(vt.mat)).toBe(filledBefore) // burning removes no cells (structure intact)
     expect(burnSurface(vt, GRASS_X, GRASS_Y, 30)).toBe(false) // nothing left to scorch there
   })
 
   test('wetSurface regrows grass on the burned top after SURFACE_REGROW_TIME', () => {
-    const vt = createVoxelTerrain()
-    burnSurface(vt, GRASS_X, GRASS_Y, 30) // bare the top first
+    const vt = mkVt()
+    burnSurface(vt, GRASS_X, GRASS_Y, 30)
     const grassBurned = surfaceArea(vt, Surface.GRASS)
 
-    expect(wetSurface(vt, GRASS_X, GRASS_Y, 30)).toBe(true) // the exposed top is now wet
-    // Below the regrow time nothing has changed yet…
+    expect(wetSurface(vt, GRASS_X, GRASS_Y, 30)).toBe(true)
     stepVoxel(vt, SURFACE_REGROW_TIME * 0.5)
     expect(surfaceArea(vt, Surface.GRASS)).toBe(grassBurned)
-    // …past it the wetted top cells flip back to grass.
     stepVoxel(vt, SURFACE_REGROW_TIME * 0.6)
     expect(surfaceArea(vt, Surface.GRASS)).toBeGreaterThan(grassBurned)
   })
 
   test('a dry surface does not regrow without wetting', () => {
-    const vt = createVoxelTerrain()
+    const vt = mkVt()
     burnSurface(vt, GRASS_X, GRASS_Y, 30)
     const grassBurned = surfaceArea(vt, Surface.GRASS)
-    for (let i = 0; i < 600; i += 1) stepVoxel(vt, 1 / 30) // 20s of idle time
-    expect(surfaceArea(vt, Surface.GRASS)).toBe(grassBurned) // no water → no regrowth
+    for (let i = 0; i < 600; i += 1) stepVoxel(vt, 1 / 30)
+    expect(surfaceArea(vt, Surface.GRASS)).toBe(grassBurned)
   })
 })
 
 describe('findPool (basin detection)', () => {
+  const PILLAR_CX = (PILLAR_C0 + PILLAR_COLS / 2) * C
+  const PILLAR_TOP_Y = PILLAR_TOP_ROW * C
+
   test('a flat surface does not pool', () => {
-    const vt = createVoxelTerrain()
-    // Just above the flat top of the submerged earth pillar at block(420, 1300, 240, …).
-    expect(findPool(vt, 540, 1295)).toBeUndefined()
+    const vt = mkVt()
+    expect(findPool(vt, PILLAR_CX, PILLAR_TOP_Y - 5)).toBeUndefined() // just above the flat pillar top
   })
 
   test('a carved dip pools to its rim; an open ledge does not', () => {
-    const vt = createVoxelTerrain()
-    carveVoxel(vt, 540, 1305, 18) // notch the pillar top, leaving earth lips on both sides
-    const pool = findPool(vt, 540, 1320)
+    const vt = mkVt()
+    carveVoxel(vt, PILLAR_CX, PILLAR_TOP_Y + 5, 18) // notch the top, leaving earth lips on both sides
+    const pool = findPool(vt, PILLAR_CX, PILLAR_TOP_Y + 20)
     expect(pool).toBeDefined()
     if (pool) {
       expect(pool.w).toBeGreaterThan(0)
       expect(pool.h).toBeGreaterThan(0)
-      expect(pool.y).toBeCloseTo(1300, -1) // surface sits at the surviving rim row (~y 1300)
+      expect(pool.y).toBeCloseTo(PILLAR_TOP_Y, -1) // surface sits at the surviving rim row
     }
-    // The far open corner of the arena (no rims) must still refuse to pool.
-    expect(findPool(vt, 1200, 200)).toBeUndefined()
+    expect(findPool(vt, ...cellCenter(50, 10))).toBeUndefined() // far open air still refuses to pool
   })
 })
