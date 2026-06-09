@@ -13,7 +13,10 @@ const GAMES_SET = 'vwing:games'
 const SUMMARY_TTL = 30 // s; refreshed by each room's heartbeat, so a crashed server expires out of the lobby
 const STATE_TTL = 3600 // s; persisted state lingers an hour for recovery/inspection
 
-export type StoredSummary = { players: number; maxPlayers: number }
+// Keyed by a game's canonical (case-insensitive, normalized) key — same index the server's
+// `rooms` map uses — so the lobby never lists two casings of one game. `name` carries the
+// host's original display spelling for presentation.
+export type StoredSummary = { name: string; players: number; maxPlayers: number }
 
 export type Store = {
   kind: 'redis' | 'memory'
@@ -39,7 +42,7 @@ const createMemoryStore = (): Store => {
     registerGame: async (game, summary) => void summaries.set(game, summary),
     unregisterGame: async (game) => void summaries.delete(game),
     listGames: async () =>
-      [...summaries.entries()].map(([name, s]) => ({ name, players: s.players, maxPlayers: s.maxPlayers })),
+      [...summaries.values()].map((s) => ({ name: s.name, players: s.players, maxPlayers: s.maxPlayers })),
     close: async () => {},
   }
 }
@@ -88,7 +91,7 @@ const createRedisStore = (client: RedisClient): Store => ({
         }
         try {
           const summary = JSON.parse(raw) as StoredSummary
-          games.push({ name, players: summary.players, maxPlayers: summary.maxPlayers })
+          games.push({ name: summary.name, players: summary.players, maxPlayers: summary.maxPlayers })
         } catch {
           // ignore a corrupt entry
         }

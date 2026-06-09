@@ -47,15 +47,15 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
       emptySince: undefined,
     }
     rooms.set(key, created)
-    void store.registerGame(displayName, { players: 0, maxPlayers: NET_MAX_PLAYERS })
+    void store.registerGame(key, { name: displayName, players: 0, maxPlayers: NET_MAX_PLAYERS })
     console.log(`[server] room created: "${displayName}"`)
     return created
   }
 
   const disposeRoom = (key: string, rs: RoomState): void => {
     rooms.delete(key)
-    void store.unregisterGame(rs.room.name)
-    void store.deleteState(rs.room.name)
+    void store.unregisterGame(key)
+    void store.deleteState(key)
     console.log(`[server] room disposed: "${rs.room.name}"`)
   }
 
@@ -121,7 +121,11 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
         rs.emptySince = undefined
         ws.subscribe(rs.topic)
         ws.send(encode({ t: MsgType.WELCOME, selfId: shipId, game: rs.room.name, tickRate: NET_TICK_RATE }))
-        void store.registerGame(rs.room.name, { players: rs.room.playerCount(), maxPlayers: NET_MAX_PLAYERS })
+        void store.registerGame(key, {
+          name: rs.room.name,
+          players: rs.room.playerCount(),
+          maxPlayers: NET_MAX_PLAYERS,
+        })
         const verb = intent === JoinIntent.HOST ? 'hosted' : 'joined'
         console.log(
           `[server] "${ws.data.name}" ${verb} "${rs.room.name}" as #${shipId} (${rs.room.playerCount()} in room)`
@@ -141,7 +145,11 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
         if (!rs || ws.data.shipId < 0) return
         ws.unsubscribe(rs.topic)
         rs.room.leave(ws.data.shipId)
-        void store.registerGame(rs.room.name, { players: rs.room.playerCount(), maxPlayers: NET_MAX_PLAYERS })
+        void store.registerGame(ws.data.key, {
+          name: rs.room.name,
+          players: rs.room.playerCount(),
+          maxPlayers: NET_MAX_PLAYERS,
+        })
         if (rs.room.isEmpty()) rs.emptySince = tickCount
         console.log(`[server] "${ws.data.name}" left "${rs.room.name}" (${rs.room.playerCount()} remain)`)
       },
@@ -163,8 +171,13 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
       rs.persistTick += 1
       if (rs.persistTick >= NET_PERSIST_EVERY) {
         rs.persistTick = 0
-        void store.saveState(rs.room.name, JSON.stringify(rs.room.snapshot([]))) // entire game state → Redis
-        void store.registerGame(rs.room.name, { players: rs.room.playerCount(), maxPlayers: NET_MAX_PLAYERS }) // refresh lobby TTL
+        void store.saveState(key, JSON.stringify(rs.room.snapshot([]))) // entire game state → Redis
+        // refresh lobby TTL
+        void store.registerGame(key, {
+          name: rs.room.name,
+          players: rs.room.playerCount(),
+          maxPlayers: NET_MAX_PLAYERS,
+        })
       }
     }
   }, tickMs)

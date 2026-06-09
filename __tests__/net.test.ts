@@ -64,8 +64,9 @@ describe('store (in-memory fallback)', () => {
     await store.saveState('arena', '{"t":"SNAPSHOT"}')
     expect(await store.loadState('arena')).toBe('{"t":"SNAPSHOT"}')
 
-    await store.registerGame('arena', { players: 2, maxPlayers: 8 })
-    expect(await store.listGames()).toEqual([{ name: 'arena', players: 2, maxPlayers: 8 }])
+    // keyed by the canonical 'arena'; the lobby shows the host's display spelling 'Arena'
+    await store.registerGame('arena', { name: 'Arena', players: 2, maxPlayers: 8 })
+    expect(await store.listGames()).toEqual([{ name: 'Arena', players: 2, maxPlayers: 8 }])
 
     await store.unregisterGame('arena')
     expect(await store.listGames()).toEqual([])
