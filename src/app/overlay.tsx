@@ -25,7 +25,7 @@ const Overlay = ({ children }: OverlayProps) => (
       sx={{
         alignItems: 'center',
         textAlign: 'center',
-        maxWidth: 360,
+        maxWidth: 'min(440px, 92vw)',
         px: 4,
         py: 4,
         borderRadius: 3,
