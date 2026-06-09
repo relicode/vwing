@@ -131,6 +131,7 @@ describe('decideBot', () => {
       devices: [],
       beams: [],
       blocks: [],
+      terrainVersion: 0,
       water: [],
       shake: 0,
       rng: () => 0,

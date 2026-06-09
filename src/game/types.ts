@@ -24,6 +24,7 @@ export type Ship = {
   charge: number // secondary energy (0..SECONDARY_MAX_CHARGE); spent per use, regenerates
   altCooldown: number // s until the secondary can fire again
   disabled: number // s of EMP lockout remaining (no thrust/turn/fire)
+  lastHitBy?: number // id of the ship whose fire last damaged this one (kill attribution); cleared on respawn
 }
 
 export type Bullet = {
@@ -173,11 +174,17 @@ export type World = {
   particles: Particle[]
   devices: Device[]
   beams: Beam[]
-  blocks: Block[] // static, landable terrain
+  blocks: Block[] // collision/render terrain — rectangles greedily meshed from the voxel grid + debris
+  terrainVersion: number // bumped whenever `blocks` changes (carve / falling debris); drives render caching
   water: WaterBody[] // bodies the ship can submerge into
   shake: number // screen-shake amplitude (px); bumped by explosions, decays each frame
   rng: Rng
 }
+
+// The world as it is rendered: everything except the rng closure. The live sim passes a
+// full `World` (assignable here); a networked client passes a deserialized snapshot, which
+// never carries the rng because the client only draws — it never advances the sim.
+export type RenderWorld = Omit<World, 'rng'>
 
 // HUD-facing snapshot the React shell subscribes to.
 export type EngineStatus = {

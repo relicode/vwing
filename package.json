@@ -10,6 +10,9 @@
   },
   "scripts": {
     "dev": "bun ./src/index.html",
+    "server": "bun run scripts/server.ts",
+    "server:dev": "bun --watch scripts/server.ts",
+    "dev:all": "concurrently -k --prefix-colors auto 'bun:dev' 'bun:server:dev'",
     "build": "bun build ./src/index.html --outdir dist --minify --sourcemap=linked --asset-naming=[name]-[hash].[ext]",
     "preview": "bun run scripts/preview.ts",
     "test": "bun test",
