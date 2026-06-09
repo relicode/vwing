@@ -5,7 +5,7 @@ import Select from '@mui/material/Select'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
 
-import Overlay from '$/app/overlay'
+import Overlay from '$/app/Overlay'
 import { WEAPON_CONFIG, WEAPON_POOL, type WeaponKind } from '$/game/constants'
 
 type ControlRowProps = {

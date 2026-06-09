@@ -1,6 +1,6 @@
 import { createRoot } from 'react-dom/client'
 
-import App from '$/app/app'
+import App from '$/app/App'
 
 // No StrictMode: its dev-only double-mount would spin up and tear down a second
 // WebGL context on every render, which PixiJS does not appreciate.

@@ -43,12 +43,13 @@ window (CDP on `9223`, `$CHROME_VISUAL_PORT`) for manual inspection. Each uses a
 src/
   index.html          # entry — loads main.tsx
   main.tsx            # React root (no StrictMode: avoids double WebGL context in dev)
-  app/                # React + MUI shell
-    app.tsx           # stage frame + phase routing
+  app/                # React + MUI shell — component files are PascalCase.tsx;
+                      # hooks (use-engine, use-net) and theme.ts stay lowercase
+    App.tsx           # stage frame + phase routing
     theme.ts          # MUI dark-neon theme (pure factory)
     use-engine.ts     # boot engine + subscribe to status (useSyncExternalStore)
-    game-canvas.tsx   # mounts engine.canvas
-    hud.tsx, title-screen.tsx, game-over-screen.tsx, overlay.tsx
+    GameCanvas.tsx    # mounts engine.canvas
+    Hud.tsx, TitleScreen.tsx, GameOverScreen.tsx, Overlay.tsx, LobbyScreen.tsx, OnlineGame.tsx
   game/               # framework-free simulation + PixiJS engine
     constants.ts      # enums + all tunables (single balancing surface)
     types.ts          # shared types (World, Ship, Bullet, Asteroid, EngineStatus)

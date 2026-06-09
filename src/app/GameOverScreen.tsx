@@ -2,7 +2,7 @@ import Button from '@mui/material/Button'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
 
-import Overlay from '$/app/overlay'
+import Overlay from '$/app/Overlay'
 import type { EngineStatus } from '$/game/types'
 
 type GameOverScreenProps = {
