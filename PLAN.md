@@ -13,8 +13,8 @@ shows what's done.
 - [x] Phase 0 — Docs sync (README.md is stale, CLAUDE.md layout) — branch `feature/pixi-p0-docs-sync` (merged `cc2c6e3`)
 - [x] Phase 1 — Boundary guard test — branch `feature/pixi-p1-boundary-guard` (merged `22de837`)
 - [x] Phase 2 — Application lifecycle & loop hygiene — branch `feature/pixi-p2-app-lifecycle` (merged `c3d03a5`)
-- [x] Phase 3 — Mechanical split of renderer.ts — branch `feature/pixi-p3-renderer-split`
-- [ ] Phase 4 — Particles → ParticleContainer
+- [x] Phase 3 — Mechanical split of renderer.ts — branch `feature/pixi-p3-renderer-split` (merged `a3257f3`)
+- [x] Phase 4 — Particles → ParticleContainer — branch `feature/pixi-p4-particle-container`
 - [ ] Phase 5 — Bullets & flame gouts → particle atlas
 - [ ] Phase 6 — Ships → retained Containers + GraphicsContext banks
 - [ ] Phase 7 — Starfield → TilingSprite parallax bands
@@ -58,9 +58,10 @@ app.stage
    │   ├─ terrainChunks: Graphics[≈8]             ← column bands, cullable, per-chunk redraw on carve
    │   ├─ waterGfx: Graphics                      ← redrawn with terrainVersion
    │   ├─ baseGfx + beamGfx + deviceGfx: Graphics ← immediate-mode (mutate every frame; infantry procedural)
-   │   ├─ shipLayer: Container                    ← per-ship retained Containers (shared GraphicsContext hulls)
    │   ├─ bulletFx: ParticleContainer             ← bullets + glows + flame gouts (2-frame generated atlas)
-   │   └─ particleFx: ParticleContainer           ← world.particles / fxParticles (white disc, tint+alpha)
+   │   ├─ particleFx: ParticleContainer           ← world.particles / fxParticles (white disc, tint+alpha)
+   │   └─ shipLayer: Container                    ← per-ship retained Containers — ships stay ABOVE
+   │                                                the fx passes (the sim always drew them last)
    └─ mapLayer: Container                         ← counter-shake (as today)
        ├─ mapTerrain: cacheAsTexture(true)        ← updateCacheTexture() on terrainVersion
        └─ mapDynGfx: Graphics                     ← per-frame markers

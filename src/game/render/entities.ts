@@ -3,15 +3,9 @@ import type { Graphics } from 'pixi.js'
 import { Color, DeviceKind, FLAMETHROWER_LIFE, SHIP_MAX_HEALTH, SHIP_MAX_SHIELDS } from '$/game/constants'
 import { clamp } from '$/game/math'
 import { drawInfantry } from '$/game/render/infantry'
-import type { Base, Beam, Bullet, Device, Particle, Ship } from '$/game/types'
+import type { Base, Beam, Bullet, Device, Ship } from '$/game/types'
 
 const WING_SPREAD = 2.4 // radians from nose to each tail corner
-
-export const drawParticles = (g: Graphics, particles: Particle[]): void => {
-  for (const p of particles) {
-    g.circle(p.x, p.y, p.size).fill({ color: p.color, alpha: Math.max(0, p.life / p.maxLife) })
-  }
-}
 
 export const drawDevice = (g: Graphics, d: Device, time: number, selfId: number): void => {
   switch (d.kind) {

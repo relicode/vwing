@@ -1,9 +1,10 @@
-import { Container, Graphics } from 'pixi.js'
+import { Container, Graphics, type Renderer as PixiRenderer } from 'pixi.js'
 
 import { GamePhase, MINIMAP_MARGIN, MINIMAP_WIDTH, VIEW_HEIGHT, VIEW_WIDTH } from '$/game/constants'
 import { createFollowCamera, shakeOffset } from '$/game/render/camera-view'
-import { drawBase, drawBeams, drawBullets, drawDevice, drawParticles, drawShip } from '$/game/render/entities'
+import { drawBase, drawBeams, drawBullets, drawDevice, drawShip } from '$/game/render/entities'
 import { drawMapMarkers, drawMapTerrain, MINIMAP_HEIGHT } from '$/game/render/minimap'
+import { createParticlesView } from '$/game/render/particles-view'
 import { createStars, drawStars } from '$/game/render/stars'
 import { drawBlocks, drawWaterBodies } from '$/game/render/terrain'
 import type { RenderWorld, Rng } from '$/game/types'
@@ -14,13 +15,17 @@ export type Renderer = {
   destroy: () => void
 }
 
-export const createRenderer = (rng: Rng): Renderer => {
+export const createRenderer = (rng: Rng, pixiRenderer: PixiRenderer): Renderer => {
   const view = new Container()
   const starLayer = new Graphics()
   const worldLayer = new Container()
   const terrainGfx = new Graphics()
   const dynGfx = new Graphics()
-  worldLayer.addChild(terrainGfx, dynGfx)
+  const particlesView = createParticlesView(pixiRenderer)
+  // shipGfx sits above the particle pass: the sim draws ships after particles, so hulls read
+  // over thrust puffs and explosion debris exactly as before the ParticleContainer move.
+  const shipGfx = new Graphics()
+  worldLayer.addChild(terrainGfx, dynGfx, particlesView.container, shipGfx)
   const mapLayer = new Container()
   const mapTerrainGfx = new Graphics()
   const mapDynGfx = new Graphics()
@@ -53,11 +58,12 @@ export const createRenderer = (rng: Rng): Renderer => {
     for (const device of world.devices) drawDevice(dynGfx, device, world.time, selfId)
     drawBullets(dynGfx, world.bullets, selfId)
     drawBeams(dynGfx, world.beams)
-    drawParticles(dynGfx, world.particles)
+    particlesView.draw(world.particles)
     // Ships are drawn only in-play: in TITLE/GAME_OVER updateShip never runs, so their
     // spawn invulnerability never ticks down and they'd blink forever over the backdrop.
+    shipGfx.clear()
     if (phase === GamePhase.PLAYING)
-      for (const ship of world.ships) drawShip(dynGfx, ship, world.time, ship.id === selfId)
+      for (const ship of world.ships) drawShip(shipGfx, ship, world.time, ship.id === selfId)
     // Minimap: in-play only (it's HUD furniture). Counter-shifted by the shake so the map
     // holds still while the battle view rattles.
     mapLayer.visible = phase === GamePhase.PLAYING
@@ -72,6 +78,7 @@ export const createRenderer = (rng: Rng): Renderer => {
   }
 
   const destroy = (): void => {
+    particlesView.destroy()
     view.destroy({ children: true })
   }
 
