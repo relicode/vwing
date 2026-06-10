@@ -461,12 +461,14 @@ const fireHeavy = (world: World, device: InfantryDevice, spawned: Device[], dead
   }
 }
 
-// The unit's own owner ship when it's a viable rescuer: present and drifting slowly enough
-// to scoop the unit up (so a fast fly-by isn't a rescue — it's a ram). undefined otherwise.
+// The unit's own owner ship when it's a viable rescuer: present, with room in the bay, and
+// drifting slowly enough to scoop the unit up (so a fast fly-by isn't a rescue — it's a ram).
+// undefined otherwise. The bay-room gate keeps troopers patrolling instead of bunching under
+// a parked ship that can't actually take them aboard.
 const rescuingOwner = (world: World, device: InfantryDevice): Ship | undefined => {
   if (device.pickupLock > 0) return undefined
   const owner = world.ships.find((s) => s.id === device.owner)
-  if (!owner) return undefined
+  if (!owner || owner.troops >= TROOP_BAY_CAPACITY) return undefined
   return Math.hypot(owner.vx, owner.vy) <= INFANTRY_PICKUP_SPEED ? owner : undefined
 }
 

@@ -3,9 +3,12 @@ import {
   BOT_AIM_DEADBAND,
   BOT_ARRIVAL_RADIUS,
   BOT_ASSAULT_MIN_TROOPS,
+  BOT_CRUISE_ALT_FRAC,
   BOT_CRUISE_SPEED,
+  BOT_DESCEND_DX,
   BOT_DODGE_DIST,
   BOT_DROP_ALTITUDE,
+  BOT_DROP_BAND,
   BOT_DROP_WINDOW_X,
   BOT_FALL_LIMIT,
   BOT_FIRE_CONE,
@@ -194,6 +197,33 @@ export const nextGoal = (prev: BotGoal, self: Ship, world: World, target: Ship |
   return self.troops >= 1 ? BotGoal.ASSAULT : BotGoal.DOGFIGHT
 }
 
+// Three-leg ferry routing: CLIMB straight out of the canyons first, CRUISE across the open SKY
+// band (above every mesa top — reactive dodging alone can't survive mesa country at cruise
+// speed; a near-horizontal heading just pinballs off the walls), then DESCEND the destination
+// column, which is clear by construction over the pads (the generator's clamped aprons).
+const ferryLeg = (self: Ship, destX: number, destY: number): { x: number; y: number; final: boolean } => {
+  const cruiseY = WORLD_HEIGHT * BOT_CRUISE_ALT_FRAC
+  if (Math.abs(self.x - destX) > BOT_DESCEND_DX) {
+    if (self.y > cruiseY + 200) return { x: self.x, y: cruiseY, final: false } // climb out vertically
+    return { x: destX, y: cruiseY, final: false } // cruise the sky band
+  }
+  return { x: destX, y: destY, final: true }
+}
+
+// Stream the bay over a pad: ferry to the release point, BRAKE into a hover there (a cruise-
+// speed flythrough crosses the drop window before a single chute can pop, overshoots, and
+// strands the bot at the far wall), and deploy while inside the window — above the pad but not
+// so high the chutes ride exposed forever.
+const dropDecision = (self: Ship, base: Base, blocks: Block[]): BotDecision => {
+  const leg = ferryLeg(self, base.x, base.y - BOT_DROP_ALTITUDE)
+  const decision = steerTo(self, leg.x, leg.y, blocks, leg.final)
+  const overPad =
+    Math.abs(self.x - base.x) < BOT_DROP_WINDOW_X &&
+    self.y < base.y - 100 &&
+    self.y > base.y - BOT_DROP_ALTITUDE - BOT_DROP_BAND
+  return { ...decision, deploying: overPad && self.troops >= 1 }
+}
+
 // Execute the chosen goal as a per-frame command.
 const actOnGoal = (
   goal: BotGoal,
@@ -206,21 +236,16 @@ const actOnGoal = (
   switch (goal) {
     case BotGoal.DOGFIGHT:
       return target ? decideBot(self, target, world.blocks) : IDLE
-    case BotGoal.REARM:
-      // Park by the pad; stepBases does the actual loading once the bot is slow and near.
-      return home ? steerTo(self, home.x, home.y - 100, world.blocks, true) : IDLE
-    case BotGoal.DEFEND: {
+    case BotGoal.REARM: {
       if (!home) return IDLE
-      const decision = steerTo(self, home.x, home.y - BOT_DROP_ALTITUDE, world.blocks, false)
-      const overPad = Math.abs(self.x - home.x) < BOT_DROP_WINDOW_X && self.y < home.y - 100
-      return { ...decision, deploying: overPad && self.troops >= 1 }
+      // Park by the pad; stepBases does the actual loading once the bot is slow and near.
+      const leg = ferryLeg(self, home.x, home.y - 100)
+      return steerTo(self, leg.x, leg.y, world.blocks, leg.final)
     }
-    case BotGoal.ASSAULT: {
-      if (!enemyBase) return IDLE
-      const decision = steerTo(self, enemyBase.x, enemyBase.y - BOT_DROP_ALTITUDE, world.blocks, false)
-      const overPad = Math.abs(self.x - enemyBase.x) < BOT_DROP_WINDOW_X && self.y < enemyBase.y - 100
-      return { ...decision, deploying: overPad && self.troops >= 1 }
-    }
+    case BotGoal.DEFEND:
+      return home ? dropDecision(self, home, world.blocks) : IDLE
+    case BotGoal.ASSAULT:
+      return enemyBase ? dropDecision(self, enemyBase, world.blocks) : IDLE
   }
 }
 

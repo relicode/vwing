@@ -247,6 +247,12 @@ export const BOT_DROP_WINDOW_X = 160 // |x - pad center| within which the bot st
 export const BOT_HOVER_SLOW = 60 // px/s target speed for the loading hover (under the rescue gate)
 export const BOT_ARRIVAL_RADIUS = 120 // px from a steer destination where the bot starts braking
 export const BOT_CRUISE_SPEED = 320 // px/s along-track cap while ferrying (stays controllable)
+// Ferry routing: long crossings fly a two-leg route — climb to the open SKY band (above every
+// mesa top), transit, then descend the destination column (the pad aprons keep it clear). Pure
+// reactive dodging can't survive the new mesa country at cruise speed.
+export const BOT_CRUISE_ALT_FRAC = 0.22 // fraction of WORLD_HEIGHT to cruise at (inside the sky band)
+export const BOT_DESCEND_DX = 600 // |x - destination| below which the bot leaves cruise and descends
+export const BOT_DROP_BAND = 240 // drop only within this band above the release altitude (short chute rides)
 
 // AI bot tuning (single balancing surface — the logic in bot.ts reads these).
 export const BOT_AIM_DEADBAND = 0.06 // rad of heading error tolerated before turning

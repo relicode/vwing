@@ -246,14 +246,18 @@ describe('nextGoal (the campaign goal ladder)', () => {
     expect(input.deploying()).toBe(true) // inside the drop window, above the pad → bombs away
   })
 
-  test('a REARM bot steers toward its own barracks', () => {
+  test('a far REARM bot climbs out toward the sky band first (ferry leg one)', () => {
     const home = homeBase({})
+    // Deep in the terrain band, far from the pad column → the route's first leg is straight up.
     const self = makeShip({ id: BOT_ID, troops: 0, x: home.x - 2000, y: home.y - 1500, angle: 0, vx: 0, vy: 0 })
     const world = baseWorld([home, enemyBase({})], [self])
-    const input = createBotInput(self, () => world)
-    input.turn() // force a refresh
-    // Steering target is down-right of the bot (the pad sits below and to the east): the desired
-    // heading has a positive x component, and facing 0 (due east) is within the thrust cone.
-    expect(input.thrusting()).toBe(true)
+    const eastFacing = createBotInput(self, () => world)
+    expect(eastFacing.turn()).toBe(-1) // rotating toward straight up
+    expect(eastFacing.thrusting()).toBe(false) // won't burn sideways into mesa country
+
+    const up = makeShip({ id: BOT_ID, troops: 0, x: home.x - 2000, y: home.y - 1500, angle: -Math.PI / 2 })
+    const climbing = createBotInput(up, () => baseWorld([homeBase({}), enemyBase({})], [up]))
+    climbing.turn()
+    expect(climbing.thrusting()).toBe(true) // nose up → climb burn
   })
 })
