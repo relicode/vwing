@@ -16,8 +16,8 @@ shows what's done.
 - [x] Phase 3 — Mechanical split of renderer.ts — branch `feature/pixi-p3-renderer-split` (merged `a3257f3`)
 - [x] Phase 4 — Particles → ParticleContainer — branch `feature/pixi-p4-particle-container` (merged `fd6fa36`)
 - [x] Phase 5 — Bullets & flame gouts → particle atlas — branch `feature/pixi-p5-bullet-atlas` (merged `2d385e7`)
-- [x] Phase 6 — Ships → retained Containers + GraphicsContext banks — branch `feature/pixi-p6-retained-ships`
-- [ ] Phase 7 — Starfield → TilingSprite parallax bands
+- [x] Phase 6 — Ships → retained Containers + GraphicsContext banks — branch `feature/pixi-p6-retained-ships` (merged `5f8ef68`)
+- [x] Phase 7 — Starfield → TilingSprite parallax bands — branch `feature/pixi-p7-tiling-stars`
 - [ ] Phase 8 — Terrain chunking + minimap cacheAsTexture + culling
 - [ ] Phase 9 — (optional, profile-gated) infantry draw batching
 
@@ -137,7 +137,8 @@ Verify: thrust/reverse/invuln/respawn offline; 2-player online; screenshot diff.
 
 ### Phase 7 — Starfield → TilingSprite parallax bands
 Bucket the 150 seeded stars into 3-4 depth bands (band depth = bucket mean; `createStars` + rng
-stream stay); bake each band into a `RenderTexture` (resolution 1); one `TilingSprite` per band,
+stream stay); bake each band into a `RenderTexture` at the renderer's resolution (a 1x bake
+loses the sub-pixel dots — learned the hard way); one `TilingSprite` per band,
 `tilePosition.set(-camera.x*depth, -camera.y*depth)` per frame. `render/stars.ts`.
 Verify: fast flight, no wrap seams, parallax feel unchanged.
 

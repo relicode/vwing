@@ -7,7 +7,7 @@ import { drawBars, drawBase, drawBeams, drawDevice } from '$/game/render/entitie
 import { drawMapMarkers, drawMapTerrain, MINIMAP_HEIGHT } from '$/game/render/minimap'
 import { createParticlesView } from '$/game/render/particles-view'
 import { createShipsView, shipBlinkHidden } from '$/game/render/ships-view'
-import { createStars, drawStars } from '$/game/render/stars'
+import { createStarsView } from '$/game/render/stars'
 import { drawBlocks, drawWaterBodies } from '$/game/render/terrain'
 import type { RenderWorld, Rng } from '$/game/types'
 
@@ -19,7 +19,7 @@ export type Renderer = {
 
 export const createRenderer = (rng: Rng, pixiRenderer: PixiRenderer): Renderer => {
   const view = new Container()
-  const starLayer = new Graphics()
+  const starsView = createStarsView(rng, pixiRenderer)
   const worldLayer = new Container()
   const terrainGfx = new Graphics()
   const dynGfx = new Graphics()
@@ -34,10 +34,9 @@ export const createRenderer = (rng: Rng, pixiRenderer: PixiRenderer): Renderer =
   const mapTerrainGfx = new Graphics()
   const mapDynGfx = new Graphics()
   mapLayer.addChild(mapTerrainGfx, mapDynGfx)
-  view.addChild(starLayer, worldLayer, mapLayer)
+  view.addChild(starsView.container, worldLayer, mapLayer)
   const mapBaseX = VIEW_WIDTH - MINIMAP_WIDTH - MINIMAP_MARGIN
   const mapBaseY = VIEW_HEIGHT - MINIMAP_HEIGHT - MINIMAP_MARGIN
-  const stars = createStars(rng)
   const camera = createFollowCamera()
   // Redraw the cached terrain layers only when they actually change — the sim bumps
   // world.terrainVersion on every carve and while debris is falling, and once per fresh run.
@@ -50,7 +49,7 @@ export const createRenderer = (rng: Rng, pixiRenderer: PixiRenderer): Renderer =
     const shake = shakeOffset(world)
     view.position.set(shake.x, shake.y)
     worldLayer.position.set(-cam.x, -cam.y)
-    drawStars(starLayer, stars, cam)
+    starsView.update(cam)
     if (world.terrainVersion !== terrainVersion) {
       terrainVersion = world.terrainVersion
       terrainGfx.clear()
@@ -90,6 +89,7 @@ export const createRenderer = (rng: Rng, pixiRenderer: PixiRenderer): Renderer =
     bulletsView.destroy()
     particlesView.destroy()
     shipsView.destroy()
+    starsView.destroy()
     view.destroy({ children: true })
   }
 
