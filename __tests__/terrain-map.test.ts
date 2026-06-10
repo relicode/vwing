@@ -16,7 +16,7 @@ import {
 } from '$/game/constants'
 import { createRng } from '$/game/rng'
 import { basePadCenters, createTerrain, spawnPoints } from '$/game/terrain-map'
-import { createVoxelTerrain } from '$/game/voxel'
+import { createVoxelTerrain, voxelToBlocks } from '$/game/voxel'
 import { waterSurfaceAt } from '$/game/water'
 
 const SEEDS = [1, 0xc0ffee, 0x1234, 42, 0xdeadbeef]
@@ -109,6 +109,26 @@ describe('createTerrain (procedural arena)', () => {
           )
           expect(obstructed).toBe(false)
           expect(waterSurfaceAt(water, x, padY - VOXEL_CELL)).toBeUndefined() // no water over the pad
+        }
+      }
+    }
+  })
+
+  test('the re-meshed voxel terrain stays grid-aligned: no bleed over the walls, no water overlap', () => {
+    // Guards the WALL_THICKNESS-is-a-cell-multiple invariant: an off-grid frame makes every
+    // wall-adjacent column round outward when voxelized, over the frame and the water lips.
+    for (const seed of SEEDS) {
+      const { blocks, water } = createTerrain(createRng(seed))
+      const vt = createVoxelTerrain(blocks, water)
+      for (const b of voxelToBlocks(vt)) {
+        if (b.structure !== StructureType.EARTH) continue
+        expect(b.x).toBeGreaterThanOrEqual(WALL_THICKNESS)
+        expect(b.x + b.w).toBeLessThanOrEqual(WORLD_WIDTH - WALL_THICKNESS)
+        expect(b.y + b.h).toBeLessThanOrEqual(WORLD_HEIGHT - WALL_THICKNESS)
+        for (const body of water) {
+          const ox = Math.min(b.x + b.w, body.x + body.w) - Math.max(b.x, body.x)
+          const oy = Math.min(b.y + b.h, body.y + body.h) - Math.max(b.y, body.y)
+          expect(ox > 0.5 && oy > 0.5).toBe(false) // solid earth never sits inside a water rect
         }
       }
     }

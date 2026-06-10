@@ -111,7 +111,12 @@ export const VIEW_WIDTH = 1280
 export const VIEW_HEIGHT = 800
 export const WORLD_WIDTH = 10800
 export const WORLD_HEIGHT = 6750
-export const WALL_THICKNESS = 26 // thickness of the bedrock border frame (emitted by terrain-map.ts)
+// Thickness of the bedrock border frame (emitted by terrain-map.ts). MUST stay a multiple of
+// VOXEL_CELL: the destructible grid is anchored at the world origin, so a frame that ends off-grid
+// shifts every wall-adjacent terrain column off the cell boundaries — the re-meshed voxels then
+// round outward and bleed over the walls, and authored water rects sit half a cell off their
+// basin lips. 36 = 2 cells keeps all authored terrain + water exactly grid-aligned.
+export const WALL_THICKNESS = 36
 
 // ── Procedural arena generation (terrain-map.ts createTerrain) ───────────────
 // The arena is generated once per run from a seeded sub-stream so it is deterministic per seed
