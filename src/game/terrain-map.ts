@@ -8,6 +8,10 @@ import {
   CAVE_MOUTH_CELLS,
   MAX_AUTHORED_WATER,
   PLATEAU_MIN_CELLS,
+  SEA_EAST_FRAC,
+  SEA_FLOOR_FRAC,
+  SEA_SPILL_FRAC,
+  SEA_WEST_FRAC,
   SPAWN_ALTITUDE,
   SPAWN_ANCHOR_FRACS_X,
   SPAWN_ANCHOR_FRACS_Y,
@@ -31,12 +35,14 @@ import type { Block, Rng, Vec2, WaterBody } from '$/game/types'
 //                                       (kept off the spawn discs).
 //   MID  band: high mesas brushing the sky line + grasslands (grass-capped earth) + rock (taller
 //              earth/ice + metal massifs) + caves + cliff-face shelves; the two flat home-base
-//              pads are carved in with clamped approach aprons (campaign ships spawn above them).
+//              pads are carved in with clamped approach aprons (campaign ships spawn above them);
+//              over the central sea, a floating stepping-stone archipelago fills the gulf the
+//              sea dig opens up.
 //   LOW  band: a central sea + a few pools, each sitting in a real basin.
 // Land is emitted as column runs that descend to the floor, so every permanent mass is 4-connected
-// to the bedrock floor → grounded (the voxel grid never has to pin it). Only the small islands are
-// intentionally ungrounded (auto-pinned aloft by createVoxelTerrain), and shelves butt against
-// solid cliff faces (side-adjacent → grounded through them).
+// to the bedrock floor → grounded (the voxel grid never has to pin it). Only the small islands and
+// the gulf archipelago are intentionally ungrounded (auto-pinned aloft by createVoxelTerrain), and
+// shelves butt against solid cliff faces (side-adjacent → grounded through them).
 
 const make = (x: number, y: number, w: number, h: number, structure: StructureType, surface: Surface): Block => ({
   x,
@@ -194,10 +200,10 @@ export const createTerrain = (rng: Rng): { blocks: Block[]; water: WaterBody[] }
 
   // ── A central sea in a real basin: drop the middle columns to a deep floor; the higher land on
   // either side forms the containing lips, and the water fills to a spill level below them. ──
-  const seaC0 = Math.floor(cols * 0.34)
-  const seaC1 = Math.floor(cols * 0.66)
-  const seaSpill = snap(H * 0.74)
-  const seaFloor = snap(H * 0.9)
+  const seaC0 = Math.floor(cols * SEA_WEST_FRAC)
+  const seaC1 = Math.floor(cols * SEA_EAST_FRAC)
+  const seaSpill = snap(H * SEA_SPILL_FRAC)
+  const seaFloor = snap(H * SEA_FLOOR_FRAC)
   for (let c = seaC0; c < seaC1; c += 1) {
     top[c] = seaFloor
     surf[c] = Surface.EARTH
@@ -346,6 +352,45 @@ export const createTerrain = (rng: Rng): { blocks: Block[]; water: WaterBody[] }
       if (nearSpawn(ix + iw / 2, iy + ih / 2, Math.max(iw, ih))) continue
       earth(ix, iy, iw, ih)
       cap(ix, iy, iw, rng() < 0.5 ? Surface.GRASS : Surface.ICE)
+      break
+    }
+  }
+
+  // ── The mid-gulf archipelago: digging the sea leaves the whole middle third — from the sky line
+  // down to the water — one giant open gulf. Fill it with floating stepping-stone isles (ungrounded
+  // like the sky islands → auto-pinned): contested drop/patrol ground on the crossing between the
+  // bases, hanging over water so a trooper knocked off swims (rescuable) instead of splatting.
+  // Placement rules, each load-bearing:
+  //   · narrow — the bot's reactive dodge slips around a ≤ ~470 px underside, but its ferry
+  //     climb-out steers straight up while the dodge pushes straight down, so a wide flat ceiling
+  //     is a vertical trap;
+  //   · inset from the gulf walls so no isle welds onto a mesa (cell-adjacency would ground it);
+  //   · tops below the sky line (the ferry flyway), bottoms clear of the water surface (a
+  //     low-flying lane survives, and earth must never sit inside the sea rect);
+  //   · an air channel between isles so ships thread the archipelago;
+  //   · off the spawn discs and off the world center, where the bot's wall-escape reflex beelines
+  //     with its terrain dodge suppressed. ──
+  const gulfX0 = colX(seaC0) + 2 * cell
+  const gulfX1 = colX(seaC1) - 2 * cell
+  const isles: { x: number; y: number; w: number; h: number }[] = []
+  const ISLE_GAP = 6 * cell // min air channel kept between isles, per axis
+  const isleBlocked = (x: number, y: number, w: number, h: number): boolean =>
+    isles.some(
+      (p) => x < p.x + p.w + ISLE_GAP && p.x < x + w + ISLE_GAP && y < p.y + p.h + ISLE_GAP && p.y < y + h + ISLE_GAP
+    )
+  const nIsles = randInt(rng, 7, 11) // hoisted: a loop-condition draw would re-roll every pass
+  for (let i = 0; i < nIsles; i += 1) {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const iw = randInt(rng, 10, 24) * cell
+      const ih = randInt(rng, 3, 7) * cell
+      const ix = snap(randRange(rng, gulfX0, gulfX1 - iw))
+      const iy = snap(randRange(rng, minTop, seaSpill - ih - 3 * cell))
+      if (isleBlocked(ix, iy, iw, ih)) continue
+      if (nearSpawn(ix + iw / 2, iy + ih / 2, Math.max(iw, ih))) continue
+      if (Math.hypot(ix + iw / 2 - W / 2, iy + ih / 2 - H / 2) < SPAWN_KEEPOUT_RADIUS + Math.max(iw, ih)) continue
+      isles.push({ x: ix, y: iy, w: iw, h: ih })
+      earth(ix, iy, iw, ih)
+      cap(ix, iy, iw, rng() < 0.7 ? Surface.GRASS : Surface.ICE)
       break
     }
   }

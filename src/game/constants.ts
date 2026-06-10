@@ -133,6 +133,12 @@ export const WALL_THICKNESS = 36
 export const TERRAIN_SALT = 0x9e3779b9 // xor'd into the seed for the terrain rng sub-stream
 export const SPAWN_KEEPOUT_RADIUS = 400 // px disc around every spawn kept free of structure + water
 export const BAND_SKY_BOTTOM = 0.3 // fraction of WORLD_HEIGHT: open airspace above this (DM anchors live here)
+// The central sea (LOW band): column span as fractions of the play width, surface + floor as
+// fractions of WORLD_HEIGHT. Shared with the tests so the gulf geometry can't drift apart.
+export const SEA_WEST_FRAC = 0.34
+export const SEA_EAST_FRAC = 0.66
+export const SEA_SPILL_FRAC = 0.74 // the water surface (spill level below the containing lips)
+export const SEA_FLOOR_FRAC = 0.9
 export const PLATEAU_MIN_CELLS = 8 // min flat-run width (cells) so plateau tops are wide patrol ledges
 export const CAVE_MOUTH_CELLS = 5 // min cave-mouth width (cells) so a ship flies in/out (>= ship diameter)
 export const MAX_AUTHORED_WATER = 6 // sea + a few pools (headroom under the runtime MAX_WATER_BODIES cap)

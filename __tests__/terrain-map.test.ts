@@ -2,9 +2,11 @@ import { describe, expect, test } from 'bun:test'
 
 import { circleRectContact } from '$/game/collision'
 import {
+  BAND_SKY_BOTTOM,
   BASE_PAD_CELLS,
   BASE_PAD_Y_FRAC,
   MAX_AUTHORED_WATER,
+  SEA_SPILL_FRAC,
   SHIP_RADIUS,
   SPAWN_ALTITUDE,
   StructureType,
@@ -129,6 +131,52 @@ describe('createTerrain (procedural arena)', () => {
           const ox = Math.min(b.x + b.w, body.x + body.w) - Math.max(b.x, body.x)
           const oy = Math.min(b.y + b.h, body.y + body.h) - Math.max(b.y, body.y)
           expect(ox > 0.5 && oy > 0.5).toBe(false) // solid earth never sits inside a water rect
+        }
+      }
+    }
+  })
+
+  test('a floating archipelago of narrow isles hangs in the gulf over the central sea', () => {
+    const snap = (v: number): number => Math.round(v / VOXEL_CELL) * VOXEL_CELL
+    const minTop = snap(WORLD_HEIGHT * BAND_SKY_BOTTOM) + 2 * VOXEL_CELL
+    const seaSpill = snap(WORLD_HEIGHT * SEA_SPILL_FRAC)
+    for (const seed of SEEDS) {
+      const { blocks, water } = createTerrain(createRng(seed))
+      const sea = water[0] // the sea is the first body pushed
+      // Isle bodies: earth blocks floating fully inside the gulf box (caps are exactly a cell tall).
+      const isles = blocks.filter(
+        (b) =>
+          b.structure === StructureType.EARTH &&
+          b.h > VOXEL_CELL &&
+          b.x >= sea.x &&
+          b.x + b.w <= sea.x + sea.w &&
+          b.y >= minTop &&
+          b.y + b.h <= seaSpill
+      )
+      expect(isles.length).toBeGreaterThanOrEqual(3) // the gulf is populated, not empty
+      const vt = createVoxelTerrain(blocks, water)
+      const cellIdx = (x: number, y: number): number =>
+        Math.floor(y / VOXEL_CELL) * vt.cols + Math.floor(x / VOXEL_CELL)
+      for (const isle of isles) {
+        expect(isle.w).toBeLessThanOrEqual(24 * VOXEL_CELL) // narrow: the bot's dodge slips around
+        expect(isle.y + isle.h).toBeLessThanOrEqual(seaSpill - 2 * VOXEL_CELL) // low-flying lane over the water
+        // Inset from the gulf walls: cell-adjacency to the grounded sea-lip mesas would weld the
+        // isle onto the mainland, and the voxelizer would never pin it.
+        expect(isle.x).toBeGreaterThanOrEqual(sea.x + 2 * VOXEL_CELL)
+        expect(isle.x + isle.w).toBeLessThanOrEqual(sea.x + sea.w - 2 * VOXEL_CELL)
+        // And it really floats: its core belongs to a pinned (ungrounded) component.
+        const core = cellIdx(isle.x + isle.w / 2, isle.y + isle.h / 2)
+        expect(vt.pinned.some((pin) => pin.has(core))).toBe(true)
+      }
+      // Every isle pair keeps an air channel on at least one axis so ships thread the archipelago.
+      const gap = 6 * VOXEL_CELL
+      for (let i = 0; i < isles.length; i += 1) {
+        for (let j = i + 1; j < isles.length; j += 1) {
+          const a = isles[i]
+          const b = isles[j]
+          const tooClose =
+            a.x < b.x + b.w + gap && b.x < a.x + a.w + gap && a.y < b.y + b.h + gap && b.y < a.y + a.h + gap
+          expect(tooClose).toBe(false)
         }
       }
     }
