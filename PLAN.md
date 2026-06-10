@@ -15,8 +15,8 @@ shows what's done.
 - [x] Phase 2 — Application lifecycle & loop hygiene — branch `feature/pixi-p2-app-lifecycle` (merged `c3d03a5`)
 - [x] Phase 3 — Mechanical split of renderer.ts — branch `feature/pixi-p3-renderer-split` (merged `a3257f3`)
 - [x] Phase 4 — Particles → ParticleContainer — branch `feature/pixi-p4-particle-container` (merged `fd6fa36`)
-- [x] Phase 5 — Bullets & flame gouts → particle atlas — branch `feature/pixi-p5-bullet-atlas`
-- [ ] Phase 6 — Ships → retained Containers + GraphicsContext banks
+- [x] Phase 5 — Bullets & flame gouts → particle atlas — branch `feature/pixi-p5-bullet-atlas` (merged `2d385e7`)
+- [x] Phase 6 — Ships → retained Containers + GraphicsContext banks — branch `feature/pixi-p6-retained-ships`
 - [ ] Phase 7 — Starfield → TilingSprite parallax bands
 - [ ] Phase 8 — Terrain chunking + minimap cacheAsTexture + culling
 - [ ] Phase 9 — (optional, profile-gated) infantry draw batching
