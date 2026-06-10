@@ -3,13 +3,22 @@ const RIGHT_KEYS = ['ArrowRight', 'KeyD']
 const THRUST_KEYS = ['ArrowUp', 'KeyW']
 const FIRE_KEYS = ['Space', 'KeyJ', 'KeyZ']
 const ALT_FIRE_KEYS = ['KeyK', 'ShiftLeft'] // secondary weapon
-const PREVENT_DEFAULT = new Set([...LEFT_KEYS, ...RIGHT_KEYS, ...THRUST_KEYS, ...FIRE_KEYS, ...ALT_FIRE_KEYS])
+const DEPLOY_KEYS = ['KeyX', 'KeyL'] // troop drop — X beside Z (fire), L beside K (alt-fire)
+const PREVENT_DEFAULT = new Set([
+  ...LEFT_KEYS,
+  ...RIGHT_KEYS,
+  ...THRUST_KEYS,
+  ...FIRE_KEYS,
+  ...ALT_FIRE_KEYS,
+  ...DEPLOY_KEYS,
+])
 
 export type Input = {
   turn: () => number // -1 = rotate left, +1 = rotate right, 0 = none
   thrusting: () => boolean
   firing: () => boolean
   altFiring: () => boolean // secondary weapon trigger
+  deploying: () => boolean // troop-bay drop trigger (streams troopers while held)
   destroy: () => void
 }
 
@@ -20,9 +29,16 @@ export type InputSnapshot = {
   thrusting: boolean
   firing: boolean
   altFiring: boolean
+  deploying: boolean
 }
 
-export const NEUTRAL_INPUT: InputSnapshot = { turn: 0, thrusting: false, firing: false, altFiring: false }
+export const NEUTRAL_INPUT: InputSnapshot = {
+  turn: 0,
+  thrusting: false,
+  firing: false,
+  altFiring: false,
+  deploying: false,
+}
 
 // Snapshot what an Input currently reads — used client-side to package the keyboard state
 // for the network each tick.
@@ -31,6 +47,7 @@ export const readSnapshot = (input: Input): InputSnapshot => ({
   thrusting: input.thrusting(),
   firing: input.firing(),
   altFiring: input.altFiring(),
+  deploying: input.deploying(),
 })
 
 // Wrap a live snapshot object as an Input: the holder mutates `state` from inbound
@@ -40,6 +57,7 @@ export const inputFromSnapshot = (state: InputSnapshot): Input => ({
   thrusting: () => state.thrusting,
   firing: () => state.firing,
   altFiring: () => state.altFiring,
+  deploying: () => state.deploying,
   destroy: () => {},
 })
 
@@ -67,6 +85,7 @@ export const createInput = (target: Window): Input => {
   const thrusting = (): boolean => anyDown(THRUST_KEYS)
   const firing = (): boolean => anyDown(FIRE_KEYS)
   const altFiring = (): boolean => anyDown(ALT_FIRE_KEYS)
+  const deploying = (): boolean => anyDown(DEPLOY_KEYS)
 
   const destroy = () => {
     target.removeEventListener('keydown', onKeyDown)
@@ -74,5 +93,5 @@ export const createInput = (target: Window): Input => {
     target.removeEventListener('blur', onBlur)
   }
 
-  return { turn, thrusting, firing, altFiring, destroy }
+  return { turn, thrusting, firing, altFiring, deploying, destroy }
 }

@@ -11,7 +11,6 @@ import {
   INFANTRY_KNEEL_FIRE_AT,
   INFANTRY_SINK_TIME,
   InfantryState,
-  InfantryWeapon,
   SHAKE_FREQ,
   SHIP_MAX_HEALTH,
   SHIP_MAX_SHIELDS,
@@ -19,13 +18,14 @@ import {
   Surface,
   VIEW_HEIGHT,
   VIEW_WIDTH,
+  WeaponKind,
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from '$/game/constants'
 import { stateOf } from '$/game/devices'
 import { clamp } from '$/game/math'
 import { randRange } from '$/game/rng'
-import type { Beam, Block, Device, Particle, RenderWorld, Rng, Ship, Vec2, WaterBody } from '$/game/types'
+import type { Base, Beam, Block, Device, Particle, RenderWorld, Rng, Ship, Vec2, WaterBody } from '$/game/types'
 
 type Star = { x: number; y: number; depth: number; size: number }
 
@@ -279,17 +279,42 @@ const head = (
   }
 }
 
-// The shoulder-fired bazooka (GRENADE weapon): green tube + flared muzzle + grey venturi, with a
+// The shoulder-fired heavy tube (any specialist kind): tinted tube + flared muzzle + grey venturi, with a
 // forward puff and the signature rear backblast while firing.
-const bazooka = (g: Graphics, sx: number, sy: number, f: number, r: number, alpha: number, flashT: number): void => {
+// Tube tint per specialist kind, so a kneeling rail sniper / EMP trooper / sapper reads at a
+// glance (each borrows its ship weapon's signature colour).
+const HEAVY_TUBE: Record<WeaponKind, number> = {
+  [WeaponKind.SCATTERGUN]: Color.SHRAPNEL,
+  [WeaponKind.WATER_CANNON]: Color.WATER_EDGE,
+  [WeaponKind.INCENDIARY]: Color.THRUST,
+  [WeaponKind.SEEKER]: Color.MISSILE,
+  [WeaponKind.RAIL]: Color.RAIL,
+  [WeaponKind.GRENADE]: Color.GRENADE,
+  [WeaponKind.MINES]: Color.MINE_ARMED,
+  [WeaponKind.FLAK]: Color.FLAK,
+  [WeaponKind.EMP]: Color.EMP,
+  [WeaponKind.SINGULARITY]: Color.WELL,
+}
+const tubeColor = (d: InfantrySprite): number => HEAVY_TUBE[d.heavy ?? WeaponKind.GRENADE]
+
+const bazooka = (
+  g: Graphics,
+  sx: number,
+  sy: number,
+  f: number,
+  r: number,
+  alpha: number,
+  flashT: number,
+  tube: number
+): void => {
   const rearX = sx - f * r * 1.0
   const rearY = sy + r * 0.12
   const muzX = sx + f * r * 2.3
   const muzY = sy - r * 0.7
   g.moveTo(rearX, rearY)
     .lineTo(muzX, muzY)
-    .stroke({ width: r * 0.4, color: Color.GRENADE, alpha }) // tube
-  g.circle(muzX, muzY, r * 0.5).fill({ color: Color.GRENADE, alpha }) // muzzle
+    .stroke({ width: r * 0.4, color: tube, alpha }) // tube
+  g.circle(muzX, muzY, r * 0.5).fill({ color: tube, alpha }) // muzzle
   g.circle(rearX, rearY, r * 0.32).fill({ color: Color.SMOKE, alpha }) // venturi
   if (flashT > 0) {
     g.circle(muzX + f * r * 0.5, muzY, r * 0.5 * flashT).fill({ color: Color.EXPLOSION, alpha: 0.85 * flashT })
@@ -357,12 +382,12 @@ const drawStanding = (g: Graphics, d: InfantrySprite, kit: Kit, time: number, f:
     boot(g, d.x + f * r * 0.28, footY, f, r, a)
   }
   torso(g, d.x, cy - r * 0.55, r, kit, a)
-  if (d.weapon === InfantryWeapon.GRENADE) {
+  if (d.heavy !== undefined) {
     head(g, d.x, cy - r * 0.95, r, f, kit, a, walking ? Mood.SMILE : Mood.SMIRK)
     g.moveTo(d.x + f * r * 0.2, cy - r * 0.3)
       .lineTo(d.x + f * r * 0.35, cy - r * 0.45)
       .stroke({ width: r * 0.3, color: kit.body, alpha: a }) // grip arm
-    bazooka(g, d.x + f * r * 0.1, cy - r * 0.5, f, r, a, 0) // a standing grenadier kneels before firing — no flash
+    bazooka(g, d.x + f * r * 0.1, cy - r * 0.5, f, r, a, 0, tubeColor(d)) // a standing specialist kneels before firing — no flash
   } else {
     const flashT = clamp((d.fireCooldown - (INFANTRY_FIRE_INTERVAL - FLASH_WINDOW)) / FLASH_WINDOW, 0, 1)
     head(g, d.x, cy - r * 0.95, r, f, kit, a, flashT > 0 ? Mood.GRIT : walking ? Mood.SMILE : Mood.SMIRK)
@@ -449,7 +474,7 @@ const drawKneeling = (g: Graphics, d: InfantrySprite, kit: Kit, f: number): void
   g.ellipse(d.x - f * r * 0.7, footY, r * 0.3, r * 0.22).fill({ color: BOOT_COLOR, alpha: a })
   torso(g, d.x + f * r * 0.1 + shove, d.y - r * 0.25, r, kit, a)
   head(g, d.x + shove, d.y - r * 0.55, r, f, kit, a, Mood.GRIT, 0.85)
-  bazooka(g, d.x + f * r * 0.3 + shove, d.y - r * 0.05, f, r, a, flashT)
+  bazooka(g, d.x + f * r * 0.3 + shove, d.y - r * 0.05, f, r, a, flashT, tubeColor(d))
   if (d.kneel > INFANTRY_KNEEL_FIRE_AT)
     g.circle(d.x - f * r * 0.3, d.y - r * 0.7, r * 0.1).fill({ color: Color.WATER_EDGE, alpha: 0.85 }) // sweat
 }
@@ -706,6 +731,39 @@ const drawShip = (g: Graphics, ship: Ship, time: number, isSelf: boolean): void 
   drawBars(g, ship)
 }
 
+// A home barracks: a bunker squatting on its pad, tinted by whoever holds it (the tint flips to
+// the capturer's color the moment it falls), with garrison helmet pips over the door and a
+// flashing takeover bar while the capture is in progress. Drawn in the dynamic layer — capture
+// state and garrison mutate every frame, so it can't live in the terrainVersion cache.
+const drawBase = (g: Graphics, base: Base, time: number, selfId: number): void => {
+  const holder = base.capture >= 1 && base.capturedBy !== undefined ? base.capturedBy : base.owner
+  const body = holder === selfId ? Color.SHIP : Color.ENEMY
+  const w = 120
+  const h = 52
+  const x = base.x - w / 2
+  const y = base.y - h
+  g.roundRect(x, y, w, h, 8).fill({ color: body, alpha: 0.26 }).stroke({ width: 2, color: body })
+  g.circle(base.x, y, 15).fill({ color: body, alpha: 0.5 }) // roof dome
+  g.rect(base.x - 9, y + h - 26, 18, 26).fill({ color: Color.INK, alpha: 0.85 }) // door
+  g.moveTo(x + w - 16, y)
+    .lineTo(x + w - 16, y - 22)
+    .stroke({ width: 2, color: body }) // antenna
+  g.circle(x + w - 16, y - 24, 3).fill({ color: body })
+  // Garrison pips: one helmet dot per housed trooper, racked beside the door.
+  const housed = Math.floor(base.garrison)
+  for (let i = 0; i < housed; i += 1) {
+    const px = x + 10 + (i % 6) * 10
+    const py = y + 12 + Math.floor(i / 6) * 9
+    g.circle(px, py, 3).fill({ color: Color.SMOKE })
+  }
+  // Takeover bar above the roof while a capture is running (flashes to read as an alarm).
+  if (base.capture > 0 && base.capture < 1) {
+    const blink = Math.floor(time * 4) % 2 === 0
+    g.rect(x, y - 34, w, 5).fill({ color: Color.BAR_BACK })
+    g.rect(x, y - 34, w * base.capture, 5).fill({ color: Color.THRUST, alpha: blink ? 1 : 0.55 })
+  }
+}
+
 export const createRenderer = (rng: Rng): Renderer => {
   const view = new Container()
   const starLayer = new Graphics()
@@ -750,6 +808,7 @@ export const createRenderer = (rng: Rng): Renderer => {
       drawWaterBodies(terrainGfx, world.water)
     }
     dynGfx.clear()
+    for (const base of world.bases) drawBase(dynGfx, base, world.time, selfId)
     for (const device of world.devices) drawDevice(dynGfx, device, world.time, selfId)
     for (const bullet of world.bullets) {
       const color = bullet.color ?? (bullet.owner === selfId ? Color.BULLET : Color.BULLET_ENEMY)

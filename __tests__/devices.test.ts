@@ -1,15 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { updateBeams } from '$/game/beams'
-import {
-  DeviceKind,
-  InfantryState,
-  InfantryWeapon,
-  ShipKind,
-  StructureType,
-  Surface,
-  WeaponKind,
-} from '$/game/constants'
+import { DeviceKind, InfantryState, ShipKind, StructureType, Surface, WeaponKind } from '$/game/constants'
 import { resolveInfantryContacts, stateOf, updateDevices } from '$/game/devices'
 import { createRng } from '$/game/rng'
 import type { Device, Ship, World } from '$/game/types'
@@ -32,6 +24,9 @@ const makeShip = (over: Partial<Ship>): Ship => ({
   charge: 100,
   altCooldown: 0,
   disabled: 0,
+  troops: 0,
+  squad: WeaponKind.GRENADE,
+  deployCooldown: 0,
   ...over,
 })
 
@@ -45,6 +40,7 @@ const makeWorld = (ships: Ship[], devices: Device[]): World => ({
   blocks: [],
   terrainVersion: 0,
   water: [],
+  bases: [],
   shake: 0,
   rng: createRng(1),
 })
@@ -152,7 +148,6 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     vy: 0,
     owner: 0,
     radius: 6,
-    weapon: InfantryWeapon.RIFLE,
     attached: false,
     swim: 0,
     sinking: 0,
@@ -252,7 +247,7 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
 
   test('a landed grenadier plants on one knee to fire, lobbing mid-crouch', () => {
     const enemy = makeShip({ id: 1, kind: ShipKind.BOT, x: 200, y: 100 })
-    const world = makeWorld([enemy], [infantry({ weapon: InfantryWeapon.GRENADE, x: 100, y: 100, attached: true })])
+    const world = makeWorld([enemy], [infantry({ heavy: WeaponKind.GRENADE, x: 100, y: 100, attached: true })])
     world.blocks = [{ x: 40, y: 108, w: 120, h: 40, structure: StructureType.EARTH, surface: Surface.EARTH }] // ground beneath
     updateDevices(world, 0.016) // cadence ready + target in sight → drops to a knee (no lob yet)
     const crouched = world.devices.find((d) => d.kind === DeviceKind.INFANTRY)
@@ -272,7 +267,7 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
       [enemy],
       [
         infantry({
-          weapon: InfantryWeapon.GRENADE,
+          heavy: WeaponKind.GRENADE,
           x: 100,
           y: 100,
           attached: true,
@@ -328,13 +323,43 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     expect(world.devices.length).toBe(0)
   })
 
-  test('a slow owner reaching its own trooper scoops it up and re-arms Infantry', () => {
-    const owner = makeShip({ id: 0, x: 100, y: 100, vx: 10, vy: 0, weapon: WeaponKind.RAIL, charge: 0 })
+  test('a slow owner reaching its own trooper scoops it back into the bay', () => {
+    const owner = makeShip({ id: 0, x: 100, y: 100, vx: 10, vy: 0, troops: 0 })
     const world = makeWorld([owner], [infantry({ owner: 0, x: 100, y: 100, attached: true, pickupLock: 0 })])
     resolveInfantryContacts(world)
     expect(world.devices.length).toBe(0)
-    expect(owner.weapon).toBe(WeaponKind.INFANTRY)
-    expect(owner.charge).toBeGreaterThan(0)
+    expect(owner.troops).toBe(1)
+  })
+
+  test('a full bay leaves the trooper fielded (no silent loss)', () => {
+    const owner = makeShip({ id: 0, x: 100, y: 100, vx: 10, vy: 0, troops: 8 })
+    const world = makeWorld([owner], [infantry({ owner: 0, x: 100, y: 100, attached: true, pickupLock: 0 })])
+    resolveInfantryContacts(world)
+    expect(world.devices.length).toBe(1) // still on the ground
+    expect(owner.troops).toBe(8)
+  })
+
+  test('a slow enemy ship recruits a fielded trooper in place (side flip, lockout, no free shot)', () => {
+    const raider = makeShip({ id: 1, kind: ShipKind.BOT, x: 100, y: 100, vx: 10, vy: 0, troops: 0 })
+    const turncoat = infantry({ owner: 0, x: 100, y: 100, attached: true, pickupLock: 0, heavy: WeaponKind.RAIL })
+    const world = makeWorld([raider], [turncoat])
+    resolveInfantryContacts(world)
+    expect(world.devices).toHaveLength(1) // converted, not scooped — he stays fielded
+    if (turncoat.kind === DeviceKind.INFANTRY) {
+      expect(turncoat.owner).toBe(1) // now fights for the raider
+      expect(turncoat.heavy).toBe(WeaponKind.RAIL) // keeps his specialist kit
+      expect(turncoat.pickupLock).toBeGreaterThan(0) // can't be instantly re-flipped or bayed
+      expect(turncoat.fireCooldown).toBeGreaterThan(0) // no free shot at his old side
+    }
+    expect(raider.troops).toBe(0) // recruiting is not a pickup
+  })
+
+  test('a drowning trooper cannot be recruited by an enemy (only its own ship saves it)', () => {
+    const raider = makeShip({ id: 1, kind: ShipKind.BOT, x: 100, y: 205, vx: 0, vy: 0 })
+    const sinker = infantry({ owner: 0, x: 100, y: 205, sinking: 1.4, pickupLock: 0 })
+    const world = makeWorld([raider], [sinker])
+    resolveInfantryContacts(world)
+    if (sinker.kind === DeviceKind.INFANTRY) expect(sinker.owner).toBe(0) // still going down with his colors
   })
 
   test('a ship ramming through a trooper splatters it (own or enemy)', () => {
@@ -512,11 +537,11 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
   })
 
   test('a drowning trooper is rescuable within the window, but not after', () => {
-    const ownerEarly = makeShip({ id: 0, x: 100, y: 205, vx: 0, vy: 0, weapon: WeaponKind.RAIL, charge: 0 })
+    const ownerEarly = makeShip({ id: 0, x: 100, y: 205, vx: 0, vy: 0 })
     const early = makeWorld([ownerEarly], [infantry({ owner: 0, x: 100, y: 205, sinking: 1.4, pickupLock: 0 })])
     resolveInfantryContacts(early)
     expect(early.devices.length).toBe(0) // scooped mid-sink (within INFANTRY_DROWN_RESCUE_WINDOW)
-    expect(ownerEarly.weapon).toBe(WeaponKind.INFANTRY)
+    expect(ownerEarly.troops).toBe(1)
 
     const ownerLate = makeShip({ id: 0, x: 100, y: 205, vx: 0, vy: 0 })
     const late = makeWorld([ownerLate], [infantry({ owner: 0, x: 100, y: 205, sinking: 0.5, pickupLock: 0 })])

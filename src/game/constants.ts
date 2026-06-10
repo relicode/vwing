@@ -5,6 +5,7 @@ export enum GamePhase {
   TITLE = 'TITLE',
   PLAYING = 'PLAYING',
   GAME_OVER = 'GAME_OVER',
+  VICTORY = 'VICTORY', // the campaign won: the bot eliminated (base captured + ship downed)
 }
 
 // Who controls a ship. PLAYER is the camera-followed, life-counted human; BOT is AI.
@@ -27,12 +28,13 @@ export const DEATHMATCH_FRAG_SCORE = 1 // points a kill awards its shooter in DE
 export const PLAYER_ID = 0
 export const BOT_ID = 1
 
-// The eleven random secondary weapons; one is rolled onto each ship on every (re)spawn.
+// The ten random heavy weapons; one is rolled onto each ship on every (re)spawn, and the
+// ship's infantry squad type (the man-portable variant its specialists carry) is a second,
+// independent roll from the same pool.
 export enum WeaponKind {
   SCATTERGUN = 'SCATTERGUN',
   WATER_CANNON = 'WATER_CANNON',
   INCENDIARY = 'INCENDIARY',
-  INFANTRY = 'INFANTRY',
   SEEKER = 'SEEKER',
   RAIL = 'RAIL',
   GRENADE = 'GRENADE',
@@ -68,12 +70,6 @@ export enum DeviceKind {
   GRENADE = 'GRENADE',
   FLAK = 'FLAK',
   WELL = 'WELL',
-}
-
-// What a deployed infantry unit fights with (rolled per unit on deploy).
-export enum InfantryWeapon {
-  RIFLE = 'RIFLE',
-  GRENADE = 'GRENADE',
 }
 
 // The behavioural state of a deployed trooper, derived from its fields each tick (see stateOf in
@@ -120,14 +116,42 @@ export const WALL_THICKNESS = 26 // thickness of the bedrock border frame (emitt
 // ── Procedural arena generation (terrain-map.ts createTerrain) ───────────────
 // The arena is generated once per run from a seeded sub-stream so it is deterministic per seed
 // (identical on server + client) yet varied between runs. Layout is banded: an open SKY band up top
-// carrying every spawn, a MID band of grasslands / rock / caves, and a LOW band of sea + pools.
+// carrying the deathmatch spawn anchors, a tall MID band of mesas / grasslands / rock / caves /
+// shelves, and a LOW band of sea + pools. The two campaign home-base pads are flattened into the
+// MID band with clamped approach aprons so each side's spawn column stays open.
 export const TERRAIN_SALT = 0x9e3779b9 // xor'd into the seed for the terrain rng sub-stream
 export const SPAWN_KEEPOUT_RADIUS = 400 // px disc around every spawn kept free of structure + water
-export const BOT_SPAWN_OFFSET_PX = 575 // px right of the player the bot spawns (≈0.45 viewport — on-screen at any world size)
-export const BAND_SKY_BOTTOM = 0.45 // fraction of WORLD_HEIGHT: open airspace above this (all spawns live here)
+export const BAND_SKY_BOTTOM = 0.3 // fraction of WORLD_HEIGHT: open airspace above this (DM anchors live here)
 export const PLATEAU_MIN_CELLS = 8 // min flat-run width (cells) so plateau tops are wide patrol ledges
 export const CAVE_MOUTH_CELLS = 5 // min cave-mouth width (cells) so a ship flies in/out (>= ship diameter)
-export const MAX_AUTHORED_WATER = 4 // sea + a pool or two (headroom under the runtime MAX_WATER_BODIES cap)
+export const MAX_AUTHORED_WATER = 6 // sea + a few pools (headroom under the runtime MAX_WATER_BODIES cap)
+// Deathmatch respawn anchors (fractions of the world) — shared by the generator's keep-outs,
+// the sim's spawn picker, and the tests, so the three can never drift apart. Both rows sit in
+// the SKY band, above BAND_SKY_BOTTOM, so they are open by construction.
+export const SPAWN_ANCHOR_FRACS_X: readonly number[] = [0.18, 0.34, 0.5, 0.66, 0.82]
+export const SPAWN_ANCHOR_FRACS_Y: readonly number[] = [0.12, 0.24]
+
+// ── Home bases (barracks) ───────────────────────────────────────────────────
+// Each campaign side owns a barracks on a flat pad; its ship spawns hovering above its own pad.
+export const BASE_PLAYER_X_FRAC = 0.12 // west pad center, fraction of WORLD_WIDTH
+export const BASE_BOT_X_FRAC = 0.88 // east pad center
+export const BASE_PAD_Y_FRAC = 0.52 // pad top, fraction of WORLD_HEIGHT (flattened by the generator)
+export const BASE_PAD_CELLS = 24 // pad width in voxel cells (432 px of flat grass)
+export const BASE_APRON_CELLS = 24 // span each side of the pad where land is clamped to pad level (open approach)
+export const SPAWN_ALTITUDE = 320 // px above its pad top where a campaign ship (re)spawns
+// The barracks itself: it houses a garrison the owner ship loads aboard (hover/land slow by the
+// pad, same learned verb as the trooper rescue), regrowing over time — so troops are a stream,
+// not a faucet. Enemy troopers landed inside the capture disc push capture progress; defenders
+// in the zone contest it; a purged zone bleeds progress back. A captured base stops garrison
+// regen, loading, AND the owner's respawns — death while captured is elimination (see sim.ts).
+export const BASE_GARRISON_CAP = 12 // troopers a barracks can house
+export const BASE_GARRISON_START = 8 // housed at match start
+export const BASE_GARRISON_REGEN = 0.15 // troopers/s regrown while uncaptured (~6.7 s per man)
+export const BASE_LOAD_RADIUS = 140 // px from the pad within which a slow owner ship loads troops
+export const BASE_LOAD_RATE = 1.5 // troopers/s transferred garrison → bay while loading
+export const BASE_CAPTURE_RADIUS = 460 // px disc around the pad center that counts capturers/defenders
+export const BASE_CAPTURE_TIME = 30 // s of uncontested enemy presence to capture
+export const BASE_REVERT_TIME = 12 // s for progress to bleed back once the zone is purged
 
 // Neon-on-near-black palette, stored as 0xRRGGBB for PixiJS fills.
 export const Color = {
@@ -206,6 +230,30 @@ export const SHIP_MAX_SHIELDS = 50
 export const SHIP_SHIELD_REGEN = 9 // shield points/s recovered between hits
 export const BOT_KILL_SCORE = 250 // awarded when the player downs the bot
 
+// The bot's campaign goal layer (bot.ts): a priority ladder over the inner dogfight reflexes.
+// DOGFIGHT when pressed, DEFEND a contested home base, REARM at the barracks when the bay runs
+// low (sticky until topped up), ASSAULT the enemy pad with a paradrop, else dogfight.
+export enum BotGoal {
+  DOGFIGHT = 'DOGFIGHT',
+  REARM = 'REARM',
+  ASSAULT = 'ASSAULT',
+  DEFEND = 'DEFEND',
+}
+export const BOT_THREAT_RANGE = 520 // px: an enemy ship this close always wins the bot's attention
+export const BOT_ASSAULT_MIN_TROOPS = 4 // don't fly an assault with a near-empty bay
+export const BOT_REARM_DONE_TROOPS = 6 // hysteresis: stop loading once this many are aboard
+export const BOT_DROP_ALTITUDE = 400 // px above the target pad to release (chutes open in time)
+export const BOT_DROP_WINDOW_X = 160 // |x - pad center| within which the bot streams its drop
+export const BOT_HOVER_SLOW = 60 // px/s target speed for the loading hover (under the rescue gate)
+export const BOT_ARRIVAL_RADIUS = 120 // px from a steer destination where the bot starts braking
+export const BOT_CRUISE_SPEED = 320 // px/s along-track cap while ferrying (stays controllable)
+// Ferry routing: long crossings fly a two-leg route — climb to the open SKY band (above every
+// mesa top), transit, then descend the destination column (the pad aprons keep it clear). Pure
+// reactive dodging can't survive the new mesa country at cruise speed.
+export const BOT_CRUISE_ALT_FRAC = 0.22 // fraction of WORLD_HEIGHT to cruise at (inside the sky band)
+export const BOT_DESCEND_DX = 600 // |x - destination| below which the bot leaves cruise and descends
+export const BOT_DROP_BAND = 240 // drop only within this band above the release altitude (short chute rides)
+
 // AI bot tuning (single balancing surface — the logic in bot.ts reads these).
 export const BOT_AIM_DEADBAND = 0.06 // rad of heading error tolerated before turning
 export const BOT_FIRE_CONE = 0.16 // rad of aim error within which the bot shoots
@@ -226,7 +274,6 @@ export const BOT_DODGE_DIST = 220 // px gap to a terrain block that triggers an 
 export const SECONDARY_DEPLOY_DIST = 22 // px ahead of the nose where devices spawn
 export const SECONDARY_MAX_CHARGE = 100 // full energy bar
 export const SECONDARY_REGEN = 22 // energy/s the bar refills (full in ~4.5s)
-export const INFANTRY_PICKUP_REFUND = 22 // energy returned when the owner rescues a unit
 
 export type WeaponConfig = { name: string; cost: number; cooldown: number }
 
@@ -234,7 +281,6 @@ export const WEAPON_CONFIG: Record<WeaponKind, WeaponConfig> = {
   [WeaponKind.SCATTERGUN]: { name: 'Scattergun', cost: 22, cooldown: 0.5 },
   [WeaponKind.WATER_CANNON]: { name: 'Water Cannon', cost: 3, cooldown: 0.05 }, // cheap stream
   [WeaponKind.INCENDIARY]: { name: 'Incendiary', cost: 18, cooldown: 0.45 },
-  [WeaponKind.INFANTRY]: { name: 'Infantry Drop', cost: 14, cooldown: 0.3 }, // per trooper while held
   [WeaponKind.SEEKER]: { name: 'Seeker Missiles', cost: 55, cooldown: 0.8 },
   [WeaponKind.RAIL]: { name: 'Rail Lance', cost: 80, cooldown: 0.9 },
   [WeaponKind.GRENADE]: { name: 'Grenade Lob', cost: 32, cooldown: 0.7 },
@@ -244,12 +290,12 @@ export const WEAPON_CONFIG: Record<WeaponKind, WeaponConfig> = {
   [WeaponKind.SINGULARITY]: { name: 'Singularity', cost: 100, cooldown: 1.5 }, // a full bar
 }
 
-// Pool the random respawn assignment draws from (all eleven, equal odds).
+// Pool the random respawn assignment draws from (all ten, equal odds) — used for both
+// the ship's heavy weapon roll and the independent infantry squad-type roll.
 export const WEAPON_POOL: readonly WeaponKind[] = [
   WeaponKind.SCATTERGUN,
   WeaponKind.WATER_CANNON,
   WeaponKind.INCENDIARY,
-  WeaponKind.INFANTRY,
   WeaponKind.SEEKER,
   WeaponKind.RAIL,
   WeaponKind.GRENADE,
@@ -282,16 +328,21 @@ export const INCENDIARY_SPEED = 460
 export const INCENDIARY_LIFE = 0.4
 export const INCENDIARY_BURN_RADIUS = 22 // px radius of grass→earth scorch on a terrain hit
 
-// Infantry Drop — held to stream units out one at a time; they parachute from high
-// drops (swaying apart on the wind so a stream fans out instead of stacking), patrol the
-// block they land on, and plink the nearest enemy in range/LOS. A unit dies from any
-// single hit, splats if it hits the ground too fast, falls if the block under it is
-// destroyed, dies instantly if it ends up embedded in a block, and is splattered by any
-// ship that rams through it — except its *own* ship can't run it over during the deploy
-// lockout (`INFANTRY_PICKUP_DELAY`), so a fast drop doesn't instantly mince the trooper it
-// just released. It swims (no shooting) if it lands in water and drowns unless rescued. To
-// be rescued, a unit walks/swims toward its own owner's slow (landed) ship — reaching it
-// restores the Infantry slot.
+// ── Infantry (troop bay) ────────────────────────────────────────────────────
+// Every ship carries a troop bay: it loads troopers from its barracks, then the deploy key
+// streams them out one at a time. They parachute from high drops (swaying apart on the wind
+// so a stream fans out instead of stacking), patrol the block they land on, and plink the
+// nearest enemy in range/LOS. A unit dies from any single hit, splats if it hits the ground
+// too fast, falls if the block under it is destroyed, dies instantly if it ends up embedded
+// in a block, and is splattered by any ship that rams through it — except its *own* ship
+// can't run it over during the deploy lockout (`INFANTRY_PICKUP_DELAY`), so a fast drop
+// doesn't instantly mince the trooper it just released. It swims (no shooting) if it lands
+// in water and drowns unless rescued. To be rescued, a unit walks/swims toward its own
+// owner's slow (landed) ship — reaching it returns the trooper to the bay. A *slow* enemy
+// ship over a trooper recruits it instead (the trooper switches sides where it stands).
+export const TROOP_BAY_CAPACITY = 8 // troopers a ship can hold (float: barracks loading accrues fractionally)
+export const TROOP_DEPLOY_COOLDOWN = 0.3 // s between drops while the deploy key is held
+export const TROOP_SPECIALIST_CHANCE = 0.2 // 1 in 5 deployed units carries the squad's man-portable heavy weapon
 export const INFANTRY_RADIUS = 9 // bigger so Cannon-Fodder-style detail reads at the 1280×800 viewport
 export const INFANTRY_FIRE_INTERVAL = 1.1 // s between rifle shots (landed)
 export const INFANTRY_GRENADE_FIRE_INTERVAL = 2.6 // s between grenade lobs (slower; landed grenadier)
@@ -304,7 +355,6 @@ export const INFANTRY_PARACHUTE_FIRE_INTERVAL = 3.2 // s between shots while des
 export const INFANTRY_SHOT_DAMAGE = 6
 export const INFANTRY_SHOT_SPEED = 380
 export const INFANTRY_RANGE = 520
-export const INFANTRY_GRENADE_CHANCE = 0.2 // 1 in 5 units carries a grenade launcher
 export const INFANTRY_WALK_SPEED = 26 // px/s patrol speed on a surface
 export const INFANTRY_WALK_TURN_CHANCE = 0.012 // per-frame chance a patroller spontaneously reverses
 export const INFANTRY_PICKUP_DELAY = 2 // s after deploy before a unit can be picked up
@@ -336,6 +386,75 @@ export const INFANTRY_SLIP_FRICTION = 1.2 // s^-1 decay of the slide (low → it
 export const INFANTRY_SLIP_STOP_SPEED = 4 // px/s below which a slide ends (snaps back to firm footing)
 // Drowning is saveable: the owner can still scoop a sinking trooper this soon after it goes under.
 export const INFANTRY_DROWN_RESCUE_WINDOW = 0.8 // s of the sink during which a rescue still works
+
+// ── Man-portable heavy weapons (squad specialists) ──────────────────────────
+// One trooper in TROOP_SPECIALIST_CHANCE carries the squad's heavy kind — a scaled-down,
+// shoulder-fired cousin of the ship weapon. Most plant themselves with the grenadier's
+// kneel-brace-fire cycle; the mine sapper instead seeds its patrol path (no kneel, no target).
+// Airborne/swimming specialists fall back to the rifle sidearm — the heavy only comes out landed.
+export type InfantryHeavySpec = { interval: number; kneel: boolean }
+export const INFANTRY_HEAVY: Record<WeaponKind, InfantryHeavySpec> = {
+  [WeaponKind.SCATTERGUN]: { interval: 2.2, kneel: true },
+  [WeaponKind.WATER_CANNON]: { interval: 2.0, kneel: true },
+  [WeaponKind.INCENDIARY]: { interval: 2.6, kneel: true },
+  [WeaponKind.SEEKER]: { interval: 4.5, kneel: true },
+  [WeaponKind.RAIL]: { interval: 3.5, kneel: true },
+  [WeaponKind.GRENADE]: { interval: 2.6, kneel: true }, // the original grenadier cadence
+  [WeaponKind.MINES]: { interval: 8.0, kneel: false }, // plants along the patrol
+  [WeaponKind.FLAK]: { interval: 4.0, kneel: true },
+  [WeaponKind.EMP]: { interval: 5.0, kneel: true },
+  [WeaponKind.SINGULARITY]: { interval: 10.0, kneel: true }, // rare, absurd, wonderful
+}
+// Scattergun trooper — a hand cannon's pellet cone.
+export const INFANTRY_SCATTER_PELLETS = 4
+export const INFANTRY_SCATTER_SPREAD = 0.3
+export const INFANTRY_SCATTER_DAMAGE = 5
+export const INFANTRY_SCATTER_SPEED = 420
+export const INFANTRY_SCATTER_LIFE = 0.35
+// Water-cannon trooper — a knockback squirt that wets terrain like the ship stream.
+export const INFANTRY_WATER_SHOTS = 3
+export const INFANTRY_WATER_SPREAD = 0.08
+export const INFANTRY_WATER_PUSH = 60
+export const INFANTRY_WATER_SPEED = 400
+export const INFANTRY_WATER_DAMAGE = 1
+export const INFANTRY_WATER_LIFE = 0.5
+// Incendiary trooper — a short flame fan that scorches grass.
+export const INFANTRY_FIRE_PELLETS = 3
+export const INFANTRY_FIRE_SPREAD = 0.2
+export const INFANTRY_FIRE_DAMAGE = 4
+export const INFANTRY_FIRE_SPEED = 380
+export const INFANTRY_FIRE_LIFE = 0.4
+// Seeker trooper — one shoulder-launched homing missile per brace.
+export const INFANTRY_SEEKER_SPEED = 300
+export const INFANTRY_SEEKER_TURN = 2.2
+export const INFANTRY_SEEKER_LIFE = 3
+export const INFANTRY_SEEKER_RADIUS = 4
+export const INFANTRY_SEEKER_DAMAGE = 18
+export const INFANTRY_SEEKER_BLAST = 50
+export const INFANTRY_SEEKER_BLAST_DAMAGE = 10
+// Rail sniper — a scaled hitscan lance from the kneel.
+export const INFANTRY_RAIL_RANGE = 700
+export const INFANTRY_RAIL_DAMAGE = 30
+// Mine sapper — area denial seeded at its feet while patrolling.
+export const INFANTRY_MINE_RADIUS = 4
+export const INFANTRY_MINE_ARM = 1.2
+export const INFANTRY_MINE_TRIGGER = 50
+export const INFANTRY_MINE_BLAST = 70
+export const INFANTRY_MINE_DAMAGE = 25
+// Flak trooper — a slow shell that airbursts into the standard shard ring.
+export const INFANTRY_FLAK_SPEED = 320
+// EMP trooper — base defense: a slow orb that locks a strafing ship's controls.
+export const INFANTRY_EMP_SPEED = 240
+export const INFANTRY_EMP_LIFE = 2
+export const INFANTRY_EMP_RADIUS = 5
+export const INFANTRY_EMP_DISABLE = 1.2
+export const INFANTRY_EMP_DRAIN = 20
+// Singularity trooper — a pocket gravity well lobbed a short way toward the target.
+export const INFANTRY_WELL_DIST = 140
+export const INFANTRY_WELL_LIFE = 2.5
+export const INFANTRY_WELL_RADIUS = 5
+export const INFANTRY_WELL_PULL = 200
+export const INFANTRY_WELL_STRENGTH = 40000
 
 // Parachute: deploys on a fast fall and opens over PARACHUTE_OPEN_TIME. The brake is
 // all-or-nothing — until the canopy is *fully* open it does nothing (the unit keeps

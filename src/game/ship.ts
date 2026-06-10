@@ -1,5 +1,7 @@
 import {
-  BOT_SPAWN_OFFSET_PX,
+  BASE_BOT_X_FRAC,
+  BASE_PAD_Y_FRAC,
+  BASE_PLAYER_X_FRAC,
   GRAVITY,
   PLAYER_ID,
   SECONDARY_MAX_CHARGE,
@@ -13,6 +15,7 @@ import {
   SHIP_THRUST,
   SHIP_TURN_RATE,
   ShipKind,
+  SPAWN_ALTITUDE,
   WATER_BUOYANCY,
   WATER_DRAG,
   WeaponKind,
@@ -32,11 +35,16 @@ export type ShipEnv = { water: WaterBody[] }
 // `forced` (a debug override) pins the weapon when set, bypassing the random roll.
 const DEFAULT_WEAPON = WeaponKind.SCATTERGUN
 const rollWeapon = (rng?: Rng, forced?: WeaponKind): WeaponKind => forced ?? (rng ? assignWeapon(rng) : DEFAULT_WEAPON)
+// The squad type is its own draw (never pinned by `forced`): rolled *after* the weapon, and
+// that order is load-bearing — both sides of the network must consume the rng identically.
+const rollSquad = (rng?: Rng): WeaponKind => (rng ? assignWeapon(rng) : DEFAULT_WEAPON)
 
-export const PLAYER_SPAWN_X = WORLD_WIDTH / 2
-export const PLAYER_SPAWN_Y = WORLD_HEIGHT * 0.4
-export const BOT_SPAWN_X = PLAYER_SPAWN_X + BOT_SPAWN_OFFSET_PX // a fixed px offset stays on-screen at any world size
-export const BOT_SPAWN_Y = WORLD_HEIGHT * 0.4
+// Campaign ships spawn perched above their own home pad (the generator clamps the pad's
+// approach aprons, so this column is open by construction).
+export const PLAYER_SPAWN_X = WORLD_WIDTH * BASE_PLAYER_X_FRAC
+export const PLAYER_SPAWN_Y = WORLD_HEIGHT * BASE_PAD_Y_FRAC - SPAWN_ALTITUDE
+export const BOT_SPAWN_X = WORLD_WIDTH * BASE_BOT_X_FRAC
+export const BOT_SPAWN_Y = WORLD_HEIGHT * BASE_PAD_Y_FRAC - SPAWN_ALTITUDE
 const FACING_UP = -Math.PI / 2
 
 export const createShip = (
@@ -48,6 +56,7 @@ export const createShip = (
   forced?: WeaponKind
 ): Ship => {
   const weapon = rollWeapon(rng, forced)
+  const squad = rollSquad(rng)
   return {
     id,
     kind,
@@ -66,6 +75,9 @@ export const createShip = (
     charge: SECONDARY_MAX_CHARGE,
     altCooldown: 0,
     disabled: 0,
+    troops: 0, // the sim fills the bay per mode (DEATHMATCH full, CAMPAIGN loads at the barracks)
+    squad,
+    deployCooldown: 0,
   }
 }
 
@@ -74,6 +86,7 @@ export const createShip = (
 // unless `forced` pins it).
 export const respawnShipAt = (ship: Ship, x: number, y: number, rng?: Rng, forced?: WeaponKind): void => {
   const weapon = rollWeapon(rng, forced)
+  const squad = rollSquad(rng)
   ship.x = x
   ship.y = y
   ship.vx = 0
@@ -88,6 +101,9 @@ export const respawnShipAt = (ship: Ship, x: number, y: number, rng?: Rng, force
   ship.charge = SECONDARY_MAX_CHARGE
   ship.altCooldown = 0
   ship.disabled = 0
+  ship.troops = 0 // the sim refills per mode (DEATHMATCH full, CAMPAIGN reloads at the barracks)
+  ship.squad = squad
+  ship.deployCooldown = 0
 }
 
 export const respawnShip = (ship: Ship, rng?: Rng, forced?: WeaponKind): void =>
@@ -120,6 +136,7 @@ export const updateShip = (ship: Ship, input: Input, dt: number, env?: ShipEnv):
   ship.y += ship.vy * dt
   if (ship.fireCooldown > 0) ship.fireCooldown -= dt
   if (ship.altCooldown > 0) ship.altCooldown -= dt
+  if (ship.deployCooldown > 0) ship.deployCooldown -= dt
   if (ship.invuln > 0) ship.invuln -= dt
   if (ship.disabled > 0) ship.disabled -= dt
   if (ship.shields < SHIP_MAX_SHIELDS) ship.shields = Math.min(SHIP_MAX_SHIELDS, ship.shields + SHIP_SHIELD_REGEN * dt)

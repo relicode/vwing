@@ -7,6 +7,7 @@ import {
   ShipKind,
   SimMode,
   StructureType,
+  TROOP_BAY_CAPACITY,
 } from '$/game/constants'
 import { inputFromSnapshot, NEUTRAL_INPUT } from '$/game/input'
 import { createShip } from '$/game/ship'
@@ -83,13 +84,109 @@ describe('createSim — campaign', () => {
   })
 })
 
+describe('createSim — base capture cuts respawns', () => {
+  test('CAMPAIGN seeds one barracks per side; DEATHMATCH stays baseless', () => {
+    const campaign = createWorld(21)
+    createSim(campaign, [combatant(0, 500, 400, 3)], { mode: SimMode.CAMPAIGN })
+    expect(campaign.bases).toHaveLength(2)
+    const dm = createWorld(21)
+    createSim(dm, [combatant(0, 500, 400, Number.POSITIVE_INFINITY)], { mode: SimMode.DEATHMATCH })
+    expect(dm.bases).toHaveLength(0)
+  })
+
+  test('dying while your base is captured is elimination, lives or not — and the wreck leaves the world', () => {
+    const world = createWorld(22)
+    const player = combatant(0, 500, 400, 3) // plenty of lives left
+    const enemy = combatant(1, 1500, 400, Number.POSITIVE_INFINITY)
+    const sim = createSim(world, [player, enemy], { mode: SimMode.CAMPAIGN })
+    const home = world.bases.find((b) => b.owner === 0)
+    if (home) {
+      home.capture = 1
+      home.capturedBy = 1
+    }
+    player.ship.health = 5
+    world.bullets.push(lethalShot(player.ship.x, player.ship.y, enemy.ship.id))
+
+    const events = sim.step(1 / 60)
+
+    expect(events[0]).toMatchObject({ victimId: 0, eliminated: true })
+    expect(player.lives).toBe(2) // the lives counter wasn't the reason
+    expect(world.ships.some((s) => s.id === 0)).toBe(false) // no ghost left to target or draw
+  })
+
+  test('an uncaptured base means a normal respawn (the noose only closes when the base falls)', () => {
+    const world = createWorld(23)
+    const player = combatant(0, 500, 400, 3)
+    const enemy = combatant(1, 1500, 400, Number.POSITIVE_INFINITY)
+    const sim = createSim(world, [player, enemy], { mode: SimMode.CAMPAIGN })
+    player.ship.health = 5
+    world.bullets.push(lethalShot(player.ship.x, player.ship.y, enemy.ship.id))
+    const events = sim.step(1 / 60)
+    expect(events[0]).toMatchObject({ victimId: 0, eliminated: false })
+    expect(world.ships.some((s) => s.id === 0)).toBe(true)
+  })
+})
+
+describe('createSim — troop bay + deploy', () => {
+  const deployInput = inputFromSnapshot({ ...NEUTRAL_INPUT, deploying: true })
+
+  test('mode fills the bay: DEATHMATCH spawns full, CAMPAIGN spawns empty', () => {
+    const dm = combatant(0, 500, 400, Number.POSITIVE_INFINITY)
+    createSim(createWorld(11), [dm], { mode: SimMode.DEATHMATCH })
+    expect(dm.ship.troops).toBe(TROOP_BAY_CAPACITY)
+
+    const camper = combatant(0, 500, 400, 3)
+    createSim(createWorld(11), [camper], { mode: SimMode.CAMPAIGN })
+    expect(camper.ship.troops).toBe(0)
+  })
+
+  test('holding deploy streams troopers at the cadence and drains the bay', () => {
+    const world = createWorld(12)
+    const carrier = combatant(0, 500, 400, Number.POSITIVE_INFINITY)
+    carrier.input = deployInput
+    const sim = createSim(world, [carrier], { mode: SimMode.DEATHMATCH })
+
+    sim.step(1 / 60)
+    expect(world.devices).toHaveLength(1) // first trooper out
+    expect(carrier.ship.troops).toBe(TROOP_BAY_CAPACITY - 1)
+    sim.step(1 / 60) // still inside TROOP_DEPLOY_COOLDOWN
+    expect(world.devices).toHaveLength(1)
+
+    for (let i = 0; i < 180; i += 1) sim.step(1 / 60) // 3s hold: the whole bay empties, then stops
+    expect(carrier.ship.troops).toBeLessThan(1)
+    const troopers = world.devices.filter((d) => d.owner === 0)
+    expect(troopers).toHaveLength(TROOP_BAY_CAPACITY) // exactly one bay's worth — never more
+  })
+
+  test('an empty bay deploys nothing (CAMPAIGN spawn)', () => {
+    const world = createWorld(13)
+    const empty = combatant(0, 500, 400, 3)
+    empty.input = deployInput
+    const sim = createSim(world, [empty], { mode: SimMode.CAMPAIGN })
+    for (let i = 0; i < 10; i += 1) sim.step(1 / 60)
+    expect(world.devices).toHaveLength(0)
+  })
+
+  test('a DEATHMATCH respawn refills the bay', () => {
+    const world = createWorld(14)
+    const shooter = combatant(0, 500, 400, Number.POSITIVE_INFINITY)
+    const victim = combatant(1, 520, 400, Number.POSITIVE_INFINITY)
+    const sim = createSim(world, [victim, shooter], { mode: SimMode.DEATHMATCH })
+    victim.ship.troops = 2 // partially spent bay
+    victim.ship.health = 10
+    world.bullets.push(lethalShot(victim.ship.x, victim.ship.y, shooter.ship.id))
+    sim.step(1 / 60)
+    expect(victim.ship.troops).toBe(TROOP_BAY_CAPACITY)
+  })
+})
+
 describe('createSim — destructible terrain', () => {
   test('firing into a destructible surface carves it and bumps the terrain version', () => {
     const world = createWorld(7)
     const gunner = combatant(0, 540, 1280, Number.POSITIVE_INFINITY)
     gunner.ship.angle = Math.PI / 2 // forward = +y (straight down into the earth)
     gunner.ship.invuln = 999 // keep it from dying on the terrain while it shoots
-    gunner.input = inputFromSnapshot({ turn: 0, thrusting: false, firing: true, altFiring: false })
+    gunner.input = inputFromSnapshot({ turn: 0, thrusting: false, firing: true, altFiring: false, deploying: false })
     const sim = createSim(world, [gunner], { mode: SimMode.DEATHMATCH })
     // The arena is procedural, so target whatever destructible earth this seed produced: park the
     // gunner just above the highest exposed earth top and let its downward stream carve into it.

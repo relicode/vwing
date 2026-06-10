@@ -1,3 +1,4 @@
+import { createCampaignBases, stepBases } from '$/game/bases'
 import { updateBeams } from '$/game/beams'
 import { spawnBullet, updateBullets } from '$/game/bullets'
 import { circleRectContact, circlesOverlap } from '$/game/collision'
@@ -20,12 +21,16 @@ import {
   ShipKind,
   SimMode,
   SMOKE_LIFE,
+  SPAWN_ANCHOR_FRACS_X,
+  SPAWN_ANCHOR_FRACS_Y,
   SPLASH_MIN_SPEED,
   SPLASH_PARTICLES,
   StructureType,
   TERRAIN_SALT,
   THRUST_PARTICLE_LIFE,
   THRUST_PARTICLE_SPEED,
+  TROOP_BAY_CAPACITY,
+  TROOP_DEPLOY_COOLDOWN,
   WATER_CANNON_WET_RADIUS,
   type WeaponKind,
   WORLD_HEIGHT,
@@ -38,6 +43,7 @@ import { createRng } from '$/game/rng'
 import { respawnShipAt, type ShipEnv, updateShip } from '$/game/ship'
 import { resolveShipTerrain } from '$/game/terrain'
 import { createTerrain } from '$/game/terrain-map'
+import { spawnTrooper } from '$/game/troops'
 import type { Bullet, Ship, Vec2, World } from '$/game/types'
 import {
   burnSurface,
@@ -105,16 +111,17 @@ export const createWorld = (seed: number): World => {
     blocks,
     terrainVersion: 0,
     water,
+    bases: [],
     shake: 0,
     rng: createRng(seed),
   }
 }
 
 // Candidate respawn anchors spread across the open upper airspace (DEATHMATCH picks the one
-// farthest from live enemies). Blocked points are skipped at pick-time, so a few sitting
-// inside islands are harmless.
-const SPAWN_POINTS: readonly Vec2[] = [0.18, 0.34, 0.5, 0.66, 0.82].flatMap((fx) =>
-  [0.22, 0.4].map((fy) => ({ x: WORLD_WIDTH * fx, y: WORLD_HEIGHT * fy }))
+// farthest from live enemies), derived from the same fracs the terrain keep-outs use. Blocked
+// points are skipped at pick-time, so a few sitting inside islands are harmless.
+const SPAWN_POINTS: readonly Vec2[] = SPAWN_ANCHOR_FRACS_X.flatMap((fx) =>
+  SPAWN_ANCHOR_FRACS_Y.map((fy) => ({ x: WORLD_WIDTH * fx, y: WORLD_HEIGHT * fy }))
 )
 
 const pointBlocked = (world: World, x: number, y: number, r: number): boolean => {
@@ -140,8 +147,18 @@ export const chooseSpawn = (world: World, occupants: readonly Ship[]): Vec2 => {
   return best
 }
 
+// DEATHMATCH ships carry a full bay per life (no barracks online yet); CAMPAIGN ships
+// spawn empty and load up at their home barracks — that round-trip IS the infantry loop.
+const refillBay = (ship: Ship, mode: SimMode): void => {
+  ship.troops = mode === SimMode.DEATHMATCH ? TROOP_BAY_CAPACITY : 0
+}
+
 export const createSim = (world: World, combatants: Combatant[], config: SimConfig): Sim => {
   world.ships = combatants.map((combatant) => combatant.ship)
+  for (const { ship } of combatants) refillBay(ship, config.mode)
+  // The campaign is the base war: one barracks per side. DEATHMATCH stays baseless (frags only),
+  // which short-circuits every base/capture rule below into a no-op.
+  if (config.mode === SimMode.CAMPAIGN) world.bases = createCampaignBases()
   const submergedShips = new Set<number>() // ids currently underwater, for splash-on-crossing
   const eliminated = new Set<number>() // ids removed from play this run (CAMPAIGN, out of lives)
   // Read `water` live: pooling can replace world.water with a new array mid-run, so a one-time
@@ -195,11 +212,18 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
       vc.lives -= 1
       if (vc.lives <= 0) isEliminated = true
     }
+    // The base-war noose: a side whose home barracks is captured has no respawns left —
+    // dying in that state is elimination, regardless of how many lives remain.
+    const home = world.bases.find((b) => b.owner === victim.id)
+    if (home && home.capture >= 1) isEliminated = true
     if (isEliminated) {
       eliminated.add(victim.id)
+      // Drop the wreck from the world so nothing keeps targeting (or drawing) a ghost.
+      world.ships = world.ships.filter((ship) => ship.id !== victim.id)
     } else {
       const spawn = config.mode === SimMode.DEATHMATCH ? pickSpawn(victim.id) : vc.spawn
       respawnShipAt(victim, spawn.x, spawn.y, world.rng, config.forcedWeapon)
+      refillBay(victim, config.mode)
       victim.lastHitBy = undefined
       clearSpawnArea(victim.x, victim.y)
     }
@@ -336,6 +360,11 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
         ship.fireCooldown = SHIP_FIRE_INTERVAL
       }
       if (control.altFiring()) for (const killed of fireSecondary(world, ship)) reap(killed, events)
+      if (control.deploying() && ship.troops >= 1 && ship.deployCooldown <= 0 && ship.disabled <= 0) {
+        spawnTrooper(world, ship)
+        ship.troops -= 1
+        ship.deployCooldown = TROOP_DEPLOY_COOLDOWN
+      }
     }
     world.bullets = updateBullets(world.bullets, dt)
     for (const killed of updateDevices(world, dt)) reap(killed, events)
@@ -344,6 +373,7 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     resolveBulletHits(events)
     resolveTerrain(dt, events)
     resolveInfantryContacts(world)
+    stepBases(world, dt)
     // Advance loosed terrain chunks; rebuild the derived blocks if the terrain changed this frame.
     const debrisMoved = stepVoxel(voxel, dt)
     if (terrainDirty || debrisMoved) {
@@ -354,6 +384,7 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
   }
 
   const addCombatant = (combatant: Combatant): void => {
+    refillBay(combatant.ship, config.mode)
     combatants.push(combatant)
     world.ships.push(combatant.ship)
   }

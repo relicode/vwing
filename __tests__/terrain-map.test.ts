@@ -2,31 +2,24 @@ import { describe, expect, test } from 'bun:test'
 
 import { circleRectContact } from '$/game/collision'
 import {
-  BOT_SPAWN_OFFSET_PX,
+  BASE_PAD_CELLS,
+  BASE_PAD_Y_FRAC,
   MAX_AUTHORED_WATER,
   SHIP_RADIUS,
+  SPAWN_ALTITUDE,
   StructureType,
   Surface,
   VOXEL_CELL,
+  WALL_THICKNESS,
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from '$/game/constants'
 import { createRng } from '$/game/rng'
-import { createTerrain } from '$/game/terrain-map'
-import type { Vec2 } from '$/game/types'
+import { basePadCenters, createTerrain, spawnPoints } from '$/game/terrain-map'
 import { createVoxelTerrain } from '$/game/voxel'
 import { waterSurfaceAt } from '$/game/water'
 
 const SEEDS = [1, 0xc0ffee, 0x1234, 42, 0xdeadbeef]
-
-// The spawn points the world must keep clear (campaign player/bot + the deathmatch respawn anchors).
-const spawnPoints = (): Vec2[] => [
-  { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT * 0.4 },
-  { x: WORLD_WIDTH / 2 + BOT_SPAWN_OFFSET_PX, y: WORLD_HEIGHT * 0.4 },
-  ...[0.18, 0.34, 0.5, 0.66, 0.82].flatMap((fx) =>
-    [0.22, 0.4].map((fy) => ({ x: WORLD_WIDTH * fx, y: WORLD_HEIGHT * fy }))
-  ),
-]
 
 describe('createTerrain (procedural arena)', () => {
   test('is deterministic per seed (same seed → identical blocks + water)', () => {
@@ -95,6 +88,38 @@ describe('createTerrain (procedural arena)', () => {
       const pinned = vt.pinned.reduce((sum, pin) => sum + pin.size, 0)
       expect(filled).toBeGreaterThan(0)
       expect(pinned / filled).toBeLessThan(0.1) // pinned (floating) cells are a small minority
+    }
+  })
+
+  test('both home pads are flat grass at pad level with an open approach column above', () => {
+    const padY = Math.round((WORLD_HEIGHT * BASE_PAD_Y_FRAC) / VOXEL_CELL) * VOXEL_CELL
+    const halfSpan = (BASE_PAD_CELLS / 2 - 1) * VOXEL_CELL // just inside the pad edges
+    for (const seed of SEEDS) {
+      const { blocks, water } = createTerrain(createRng(seed))
+      for (const pad of basePadCenters()) {
+        for (const dx of [-halfSpan, 0, halfSpan]) {
+          const x = pad.x + dx
+          // The surface at pad level: a grass cap whose top is exactly padY (the cap is pushed
+          // after the body, so the last matching block is the visible surface).
+          const surfaceBlock = blocks.filter((b) => x >= b.x && x < b.x + b.w && b.y === padY).at(-1)
+          expect(surfaceBlock?.surface).toBe(Surface.GRASS)
+          // Open air from the pad top up to the spawn perch (nothing overhangs the approach).
+          const obstructed = blocks.some(
+            (b) => x >= b.x && x < b.x + b.w && b.y + b.h > padY - SPAWN_ALTITUDE && b.y < padY
+          )
+          expect(obstructed).toBe(false)
+          expect(waterSurfaceAt(water, x, padY - VOXEL_CELL)).toBeUndefined() // no water over the pad
+        }
+      }
+    }
+  })
+
+  test('the world is substantially ground: destructible earth covers >= 30% of the interior', () => {
+    const interior = (WORLD_WIDTH - 2 * WALL_THICKNESS) * (WORLD_HEIGHT - 2 * WALL_THICKNESS)
+    for (const seed of SEEDS) {
+      const { blocks } = createTerrain(createRng(seed))
+      const area = blocks.reduce((sum, b) => (b.structure === StructureType.EARTH ? sum + b.w * b.h : sum), 0)
+      expect(area / interior).toBeGreaterThanOrEqual(0.3)
     }
   })
 })

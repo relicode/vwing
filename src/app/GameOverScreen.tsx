@@ -7,16 +7,25 @@ import type { EngineStatus } from '$/game/types'
 
 type GameOverScreenProps = {
   status: EngineStatus
+  victory: boolean // true = the enemy base fell and their ship went down with it
   onRestart: () => void
   onExit: () => void
 }
 
-const GameOverScreen = ({ status, onRestart, onExit }: GameOverScreenProps) => {
+const GameOverScreen = ({ status, victory, onRestart, onExit }: GameOverScreenProps) => {
   const isNewBest = status.score > 0 && status.score >= status.best
   return (
     <Overlay>
-      <Typography variant="h3" sx={{ fontWeight: 900, letterSpacing: '0.12em', color: 'secondary.main' }}>
-        WRECKED
+      <Typography
+        variant="h3"
+        sx={{
+          fontWeight: 900,
+          letterSpacing: '0.12em',
+          color: victory ? 'primary.main' : 'secondary.main',
+          textShadow: victory ? '0 0 24px rgba(51,245,163,0.6)' : undefined,
+        }}
+      >
+        {victory ? 'BASE SECURED — VICTORY' : 'WRECKED'}
       </Typography>
       <Typography sx={{ color: 'text.secondary' }}>Final score</Typography>
       <Typography
