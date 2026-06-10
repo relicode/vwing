@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 
-import { createBotInput, decideBot } from '$/game/bot'
+import { createBotInput, decideBot, nextGoal } from '$/game/bot'
 import {
   BOT_ID,
+  BotGoal,
   PLAYER_ID,
   ShipKind,
   StructureType,
@@ -11,7 +12,7 @@ import {
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from '$/game/constants'
-import type { Block, Ship, World } from '$/game/types'
+import type { Base, Block, Ship, World } from '$/game/types'
 
 const CENTER_X = WORLD_WIDTH / 2
 const CENTER_Y = WORLD_HEIGHT / 2
@@ -162,5 +163,97 @@ describe('decideBot', () => {
     // New frame → recompute against the moved target → now aims upward.
     world.time = 2
     expect(input.turn()).toBe(-1)
+  })
+})
+
+describe('nextGoal (the campaign goal ladder)', () => {
+  const homeBase = (over: Partial<Base>): Base => ({
+    owner: BOT_ID,
+    x: WORLD_WIDTH * 0.88,
+    y: WORLD_HEIGHT * 0.52,
+    garrison: 8,
+    capture: 0,
+    ...over,
+  })
+  const enemyBase = (over: Partial<Base>): Base => ({
+    owner: PLAYER_ID,
+    x: WORLD_WIDTH * 0.12,
+    y: WORLD_HEIGHT * 0.52,
+    garrison: 8,
+    capture: 0,
+    ...over,
+  })
+  const baseWorld = (bases: Base[], ships: Ship[]): World => ({
+    time: 1,
+    ships,
+    bullets: [],
+    particles: [],
+    devices: [],
+    beams: [],
+    blocks: [],
+    terrainVersion: 0,
+    water: [],
+    bases,
+    shake: 0,
+    rng: () => 0,
+  })
+
+  test('no bases (deathmatch world) → pure DOGFIGHT regardless of the bay', () => {
+    const self = makeShip({ troops: 8 })
+    const world = baseWorld([], [self])
+    expect(nextGoal(BotGoal.ASSAULT, self, world, undefined)).toBe(BotGoal.DOGFIGHT)
+  })
+
+  test('an enemy ship inside the threat range overrides everything', () => {
+    const self = makeShip({ troops: 8 })
+    const target = makeTarget({ x: self.x + 200, y: self.y })
+    const world = baseWorld([homeBase({ capture: 0.5 }), enemyBase({})], [self, target])
+    expect(nextGoal(BotGoal.ASSAULT, self, world, target)).toBe(BotGoal.DOGFIGHT)
+  })
+
+  test('a contested home base pulls the bot to DEFEND', () => {
+    const self = makeShip({ troops: 8 })
+    const world = baseWorld([homeBase({ capture: 0.2 }), enemyBase({})], [self])
+    expect(nextGoal(BotGoal.ASSAULT, self, world, undefined)).toBe(BotGoal.DEFEND)
+  })
+
+  test('a low bay sends the bot to REARM, which sticks until topped up', () => {
+    const low = makeShip({ troops: 1 })
+    const world = baseWorld([homeBase({}), enemyBase({})], [low])
+    expect(nextGoal(BotGoal.DOGFIGHT, low, world, undefined)).toBe(BotGoal.REARM)
+    const half = makeShip({ troops: 5 }) // above the assault floor, below the rearm-done bar
+    expect(nextGoal(BotGoal.REARM, half, world, undefined)).toBe(BotGoal.REARM) // sticky
+    const full = makeShip({ troops: 6 })
+    expect(nextGoal(BotGoal.REARM, full, world, undefined)).toBe(BotGoal.ASSAULT) // topped up → go
+  })
+
+  test('a stocked bay flies the ASSAULT; a dry garrison attacks with what is aboard', () => {
+    const stocked = makeShip({ troops: 6 })
+    const world = baseWorld([homeBase({}), enemyBase({})], [stocked])
+    expect(nextGoal(BotGoal.DOGFIGHT, stocked, world, undefined)).toBe(BotGoal.ASSAULT)
+    const scraps = makeShip({ troops: 2 })
+    const dry = baseWorld([homeBase({ garrison: 0 }), enemyBase({})], [scraps])
+    expect(nextGoal(BotGoal.DOGFIGHT, scraps, dry, undefined)).toBe(BotGoal.ASSAULT)
+    const empty = makeShip({ troops: 0 })
+    expect(nextGoal(BotGoal.DOGFIGHT, empty, dry, undefined)).toBe(BotGoal.DOGFIGHT)
+  })
+
+  test('an ASSAULT bot over the enemy pad streams its drop', () => {
+    const foe = enemyBase({})
+    const self = makeShip({ id: BOT_ID, troops: 6, x: foe.x + 50, y: foe.y - 500, vx: 0, vy: 0 })
+    const world = baseWorld([homeBase({}), foe], [self])
+    const input = createBotInput(self, () => world)
+    expect(input.deploying()).toBe(true) // inside the drop window, above the pad → bombs away
+  })
+
+  test('a REARM bot steers toward its own barracks', () => {
+    const home = homeBase({})
+    const self = makeShip({ id: BOT_ID, troops: 0, x: home.x - 2000, y: home.y - 1500, angle: 0, vx: 0, vy: 0 })
+    const world = baseWorld([home, enemyBase({})], [self])
+    const input = createBotInput(self, () => world)
+    input.turn() // force a refresh
+    // Steering target is down-right of the bot (the pad sits below and to the east): the desired
+    // heading has a positive x component, and facing 0 (due east) is within the thrust cone.
+    expect(input.thrusting()).toBe(true)
   })
 })

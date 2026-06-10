@@ -230,6 +230,24 @@ export const SHIP_MAX_SHIELDS = 50
 export const SHIP_SHIELD_REGEN = 9 // shield points/s recovered between hits
 export const BOT_KILL_SCORE = 250 // awarded when the player downs the bot
 
+// The bot's campaign goal layer (bot.ts): a priority ladder over the inner dogfight reflexes.
+// DOGFIGHT when pressed, DEFEND a contested home base, REARM at the barracks when the bay runs
+// low (sticky until topped up), ASSAULT the enemy pad with a paradrop, else dogfight.
+export enum BotGoal {
+  DOGFIGHT = 'DOGFIGHT',
+  REARM = 'REARM',
+  ASSAULT = 'ASSAULT',
+  DEFEND = 'DEFEND',
+}
+export const BOT_THREAT_RANGE = 520 // px: an enemy ship this close always wins the bot's attention
+export const BOT_ASSAULT_MIN_TROOPS = 4 // don't fly an assault with a near-empty bay
+export const BOT_REARM_DONE_TROOPS = 6 // hysteresis: stop loading once this many are aboard
+export const BOT_DROP_ALTITUDE = 400 // px above the target pad to release (chutes open in time)
+export const BOT_DROP_WINDOW_X = 160 // |x - pad center| within which the bot streams its drop
+export const BOT_HOVER_SLOW = 60 // px/s target speed for the loading hover (under the rescue gate)
+export const BOT_ARRIVAL_RADIUS = 120 // px from a steer destination where the bot starts braking
+export const BOT_CRUISE_SPEED = 320 // px/s along-track cap while ferrying (stays controllable)
+
 // AI bot tuning (single balancing surface — the logic in bot.ts reads these).
 export const BOT_AIM_DEADBAND = 0.06 // rad of heading error tolerated before turning
 export const BOT_FIRE_CONE = 0.16 // rad of aim error within which the bot shoots
