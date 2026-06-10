@@ -1,5 +1,7 @@
 import {
-  BOT_SPAWN_OFFSET_PX,
+  BASE_BOT_X_FRAC,
+  BASE_PAD_Y_FRAC,
+  BASE_PLAYER_X_FRAC,
   GRAVITY,
   PLAYER_ID,
   SECONDARY_MAX_CHARGE,
@@ -13,6 +15,7 @@ import {
   SHIP_THRUST,
   SHIP_TURN_RATE,
   ShipKind,
+  SPAWN_ALTITUDE,
   WATER_BUOYANCY,
   WATER_DRAG,
   WeaponKind,
@@ -36,10 +39,12 @@ const rollWeapon = (rng?: Rng, forced?: WeaponKind): WeaponKind => forced ?? (rn
 // that order is load-bearing — both sides of the network must consume the rng identically.
 const rollSquad = (rng?: Rng): WeaponKind => (rng ? assignWeapon(rng) : DEFAULT_WEAPON)
 
-export const PLAYER_SPAWN_X = WORLD_WIDTH / 2
-export const PLAYER_SPAWN_Y = WORLD_HEIGHT * 0.4
-export const BOT_SPAWN_X = PLAYER_SPAWN_X + BOT_SPAWN_OFFSET_PX // a fixed px offset stays on-screen at any world size
-export const BOT_SPAWN_Y = WORLD_HEIGHT * 0.4
+// Campaign ships spawn perched above their own home pad (the generator clamps the pad's
+// approach aprons, so this column is open by construction).
+export const PLAYER_SPAWN_X = WORLD_WIDTH * BASE_PLAYER_X_FRAC
+export const PLAYER_SPAWN_Y = WORLD_HEIGHT * BASE_PAD_Y_FRAC - SPAWN_ALTITUDE
+export const BOT_SPAWN_X = WORLD_WIDTH * BASE_BOT_X_FRAC
+export const BOT_SPAWN_Y = WORLD_HEIGHT * BASE_PAD_Y_FRAC - SPAWN_ALTITUDE
 const FACING_UP = -Math.PI / 2
 
 export const createShip = (

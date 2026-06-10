@@ -20,6 +20,8 @@ import {
   ShipKind,
   SimMode,
   SMOKE_LIFE,
+  SPAWN_ANCHOR_FRACS_X,
+  SPAWN_ANCHOR_FRACS_Y,
   SPLASH_MIN_SPEED,
   SPLASH_PARTICLES,
   StructureType,
@@ -115,10 +117,10 @@ export const createWorld = (seed: number): World => {
 }
 
 // Candidate respawn anchors spread across the open upper airspace (DEATHMATCH picks the one
-// farthest from live enemies). Blocked points are skipped at pick-time, so a few sitting
-// inside islands are harmless.
-const SPAWN_POINTS: readonly Vec2[] = [0.18, 0.34, 0.5, 0.66, 0.82].flatMap((fx) =>
-  [0.22, 0.4].map((fy) => ({ x: WORLD_WIDTH * fx, y: WORLD_HEIGHT * fy }))
+// farthest from live enemies), derived from the same fracs the terrain keep-outs use. Blocked
+// points are skipped at pick-time, so a few sitting inside islands are harmless.
+const SPAWN_POINTS: readonly Vec2[] = SPAWN_ANCHOR_FRACS_X.flatMap((fx) =>
+  SPAWN_ANCHOR_FRACS_Y.map((fy) => ({ x: WORLD_WIDTH * fx, y: WORLD_HEIGHT * fy }))
 )
 
 const pointBlocked = (world: World, x: number, y: number, r: number): boolean => {

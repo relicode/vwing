@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { SHIP_TURN_RATE, WALL_THICKNESS, WORLD_HEIGHT, WORLD_WIDTH } from '$/game/constants'
 import type { Input } from '$/game/input'
-import { createShip, respawnShip, updateShip } from '$/game/ship'
+import { createShip, PLAYER_SPAWN_X, respawnShip, updateShip } from '$/game/ship'
 import type { WaterBody } from '$/game/types'
 
 const makeInput = (turn: number, thrusting: boolean): Input => ({
@@ -46,7 +46,7 @@ describe('ship physics', () => {
     respawnShip(ship)
     expect(ship.vx).toBe(0)
     expect(ship.invuln).toBeGreaterThan(0)
-    expect(ship.x).toBeCloseTo(WORLD_WIDTH / 2)
+    expect(ship.x).toBeCloseTo(PLAYER_SPAWN_X)
   })
 
   test('water buoyancy lifts a submerged ship relative to open air', () => {

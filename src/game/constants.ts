@@ -116,14 +116,29 @@ export const WALL_THICKNESS = 26 // thickness of the bedrock border frame (emitt
 // ── Procedural arena generation (terrain-map.ts createTerrain) ───────────────
 // The arena is generated once per run from a seeded sub-stream so it is deterministic per seed
 // (identical on server + client) yet varied between runs. Layout is banded: an open SKY band up top
-// carrying every spawn, a MID band of grasslands / rock / caves, and a LOW band of sea + pools.
+// carrying the deathmatch spawn anchors, a tall MID band of mesas / grasslands / rock / caves /
+// shelves, and a LOW band of sea + pools. The two campaign home-base pads are flattened into the
+// MID band with clamped approach aprons so each side's spawn column stays open.
 export const TERRAIN_SALT = 0x9e3779b9 // xor'd into the seed for the terrain rng sub-stream
 export const SPAWN_KEEPOUT_RADIUS = 400 // px disc around every spawn kept free of structure + water
-export const BOT_SPAWN_OFFSET_PX = 575 // px right of the player the bot spawns (≈0.45 viewport — on-screen at any world size)
-export const BAND_SKY_BOTTOM = 0.45 // fraction of WORLD_HEIGHT: open airspace above this (all spawns live here)
+export const BAND_SKY_BOTTOM = 0.3 // fraction of WORLD_HEIGHT: open airspace above this (DM anchors live here)
 export const PLATEAU_MIN_CELLS = 8 // min flat-run width (cells) so plateau tops are wide patrol ledges
 export const CAVE_MOUTH_CELLS = 5 // min cave-mouth width (cells) so a ship flies in/out (>= ship diameter)
-export const MAX_AUTHORED_WATER = 4 // sea + a pool or two (headroom under the runtime MAX_WATER_BODIES cap)
+export const MAX_AUTHORED_WATER = 6 // sea + a few pools (headroom under the runtime MAX_WATER_BODIES cap)
+// Deathmatch respawn anchors (fractions of the world) — shared by the generator's keep-outs,
+// the sim's spawn picker, and the tests, so the three can never drift apart. Both rows sit in
+// the SKY band, above BAND_SKY_BOTTOM, so they are open by construction.
+export const SPAWN_ANCHOR_FRACS_X: readonly number[] = [0.18, 0.34, 0.5, 0.66, 0.82]
+export const SPAWN_ANCHOR_FRACS_Y: readonly number[] = [0.12, 0.24]
+
+// ── Home bases (barracks) ───────────────────────────────────────────────────
+// Each campaign side owns a barracks on a flat pad; its ship spawns hovering above its own pad.
+export const BASE_PLAYER_X_FRAC = 0.12 // west pad center, fraction of WORLD_WIDTH
+export const BASE_BOT_X_FRAC = 0.88 // east pad center
+export const BASE_PAD_Y_FRAC = 0.52 // pad top, fraction of WORLD_HEIGHT (flattened by the generator)
+export const BASE_PAD_CELLS = 24 // pad width in voxel cells (432 px of flat grass)
+export const BASE_APRON_CELLS = 24 // span each side of the pad where land is clamped to pad level (open approach)
+export const SPAWN_ALTITUDE = 320 // px above its pad top where a campaign ship (re)spawns
 
 // Neon-on-near-black palette, stored as 0xRRGGBB for PixiJS fills.
 export const Color = {
