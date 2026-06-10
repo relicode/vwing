@@ -11,6 +11,8 @@ import {
   INFANTRY_KNEEL_FIRE_AT,
   INFANTRY_SINK_TIME,
   InfantryState,
+  MINIMAP_MARGIN,
+  MINIMAP_WIDTH,
   SHAKE_FREQ,
   SHIP_MAX_HEALTH,
   SHIP_MAX_SHIELDS,
@@ -764,6 +766,58 @@ const drawBase = (g: Graphics, base: Base, time: number, selfId: number): void =
   }
 }
 
+// ── Minimap ──────────────────────────────────────────────────────────────────
+// A corner overview of the whole arena: terrain silhouette + water, both bases, every ship —
+// tinted with the same owner colors as the world — and the camera's current window.
+const MAP_SCALE = MINIMAP_WIDTH / WORLD_WIDTH
+const MINIMAP_HEIGHT = Math.round(WORLD_HEIGHT * MAP_SCALE)
+
+// The arena silhouette, cached per terrainVersion like the main terrain layer. Painted sizes
+// get a floor so one-cell caps and shelves still read at map scale.
+const drawMapTerrain = (g: Graphics, world: RenderWorld): void => {
+  g.clear()
+  g.roundRect(-3, -3, MINIMAP_WIDTH + 6, MINIMAP_HEIGHT + 6, 4)
+    .fill({ color: Color.BACKGROUND, alpha: 0.78 })
+    .stroke({ width: 1, color: Color.BEDROCK_EDGE, alpha: 0.6 })
+  for (const b of world.blocks) {
+    const style = blockStyle(b)
+    g.rect(b.x * MAP_SCALE, b.y * MAP_SCALE, Math.max(b.w * MAP_SCALE, 0.7), Math.max(b.h * MAP_SCALE, 0.7)).fill({
+      color: style.fill,
+      alpha: 0.9,
+    })
+  }
+  for (const w of world.water) {
+    g.rect(w.x * MAP_SCALE, w.y * MAP_SCALE, Math.max(w.w * MAP_SCALE, 0.7), Math.max(w.h * MAP_SCALE, 0.7)).fill({
+      color: Color.WATER,
+      alpha: 0.85,
+    })
+  }
+}
+
+// Live markers, redrawn each frame: bases as owner-tinted bunkers (the tint flips to the
+// capturer when one falls), ships as dots — self gets a brighter core — plus the viewport box.
+const drawMapMarkers = (g: Graphics, world: RenderWorld, camera: Vec2, selfId: number): void => {
+  g.clear()
+  for (const base of world.bases) {
+    const holder = base.capture >= 1 && base.capturedBy !== undefined ? base.capturedBy : base.owner
+    const color = holder === selfId ? Color.SHIP : Color.ENEMY
+    g.rect(base.x * MAP_SCALE - 3.5, base.y * MAP_SCALE - 5, 7, 5)
+      .fill({ color, alpha: 0.9 })
+      .stroke({ width: 1, color, alpha: 1 })
+  }
+  for (const ship of world.ships) {
+    const own = ship.id === selfId
+    const color = own ? Color.SHIP : Color.ENEMY
+    g.circle(ship.x * MAP_SCALE, ship.y * MAP_SCALE, own ? 3 : 2.4).fill({ color })
+    if (own) g.circle(ship.x * MAP_SCALE, ship.y * MAP_SCALE, 1.2).fill({ color: Color.SHIP_CORE })
+  }
+  g.rect(camera.x * MAP_SCALE, camera.y * MAP_SCALE, VIEW_WIDTH * MAP_SCALE, VIEW_HEIGHT * MAP_SCALE).stroke({
+    width: 1,
+    color: Color.STAR_NEAR,
+    alpha: 0.45,
+  })
+}
+
 export const createRenderer = (rng: Rng): Renderer => {
   const view = new Container()
   const starLayer = new Graphics()
@@ -771,11 +825,18 @@ export const createRenderer = (rng: Rng): Renderer => {
   const terrainGfx = new Graphics()
   const dynGfx = new Graphics()
   worldLayer.addChild(terrainGfx, dynGfx)
-  view.addChild(starLayer, worldLayer)
+  const mapLayer = new Container()
+  const mapTerrainGfx = new Graphics()
+  const mapDynGfx = new Graphics()
+  mapLayer.addChild(mapTerrainGfx, mapDynGfx)
+  view.addChild(starLayer, worldLayer, mapLayer)
+  const mapBaseX = VIEW_WIDTH - MINIMAP_WIDTH - MINIMAP_MARGIN
+  const mapBaseY = VIEW_HEIGHT - MINIMAP_HEIGHT - MINIMAP_MARGIN
   const stars = createStars(rng)
-  // Redraw the cached terrain layer only when it actually changes — the sim bumps
+  // Redraw the cached terrain layers only when they actually change — the sim bumps
   // world.terrainVersion on every carve and while debris is falling, and once per fresh run.
   let terrainVersion = -1
+  let mapTerrainVersion = -1
   // Eased camera state (smooth follow); undefined until the first frame snaps to the target.
   let camX: number | undefined
   let camY = 0
@@ -821,6 +882,17 @@ export const createRenderer = (rng: Rng): Renderer => {
     // spawn invulnerability never ticks down and they'd blink forever over the backdrop.
     if (phase === GamePhase.PLAYING)
       for (const ship of world.ships) drawShip(dynGfx, ship, world.time, ship.id === selfId)
+    // Minimap: in-play only (it's HUD furniture). Counter-shifted by the shake so the map
+    // holds still while the battle view rattles.
+    mapLayer.visible = phase === GamePhase.PLAYING
+    if (mapLayer.visible) {
+      mapLayer.position.set(mapBaseX - shakeX, mapBaseY - shakeY)
+      if (world.terrainVersion !== mapTerrainVersion) {
+        mapTerrainVersion = world.terrainVersion
+        drawMapTerrain(mapTerrainGfx, world)
+      }
+      drawMapMarkers(mapDynGfx, world, camera, selfId)
+    }
   }
 
   const destroy = (): void => {

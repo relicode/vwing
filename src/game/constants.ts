@@ -95,6 +95,12 @@ export const NET_PERSIST_EVERY = 15 // ticks between full-state writes to Redis 
 export const NET_EMPTY_ROOM_TTL = 30 // s an emptied room lingers (state kept in Redis) before disposal
 export const NET_GAME_NAME_MAX = 24 // max characters in a hosted game name
 
+// Minimap (renderer.ts): a corner overview of the whole arena — terrain silhouette, water,
+// both bases, and every ship, tinted with the same owner colors as the world (self cyan,
+// enemy red). Height follows the world's aspect ratio.
+export const MINIMAP_WIDTH = 200 // px on screen (world aspect 10800×6750 → 125 px tall)
+export const MINIMAP_MARGIN = 12 // px inset from the viewport's bottom-right corner
+
 // Camera follow + screen shake.
 export const CAMERA_EASE_RATE = 9 // higher = snappier follow (per-second easing toward the target)
 export const CAMERA_SNAP_DIST = 400 // px target jump beyond which the camera snaps (respawns) not eases
