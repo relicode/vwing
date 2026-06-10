@@ -80,6 +80,7 @@ export const createShipsView = (): ShipsView => {
 
   const buildView = (isSelf: boolean): ShipView => {
     const root = new Container()
+    root.cullable = true // far-away ships skip rendering entirely (CullerPlugin)
     const thrust = new Graphics(thrustFrames[0])
     const retro = new Graphics(retroFrames[0])
     const hull = new Graphics(isSelf ? selfHull : enemyHull)

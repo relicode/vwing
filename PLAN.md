@@ -17,8 +17,8 @@ shows what's done.
 - [x] Phase 4 — Particles → ParticleContainer — branch `feature/pixi-p4-particle-container` (merged `fd6fa36`)
 - [x] Phase 5 — Bullets & flame gouts → particle atlas — branch `feature/pixi-p5-bullet-atlas` (merged `2d385e7`)
 - [x] Phase 6 — Ships → retained Containers + GraphicsContext banks — branch `feature/pixi-p6-retained-ships` (merged `5f8ef68`)
-- [x] Phase 7 — Starfield → TilingSprite parallax bands — branch `feature/pixi-p7-tiling-stars`
-- [ ] Phase 8 — Terrain chunking + minimap cacheAsTexture + culling
+- [x] Phase 7 — Starfield → TilingSprite parallax bands — branch `feature/pixi-p7-tiling-stars` (merged `9387a85`)
+- [x] Phase 8 — Terrain chunking + minimap cacheAsTexture + culling — branch `feature/pixi-p8-terrain-chunks`
 - [ ] Phase 9 — (optional, profile-gated) infantry draw batching
 
 ## Honest scope
