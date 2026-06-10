@@ -45,7 +45,7 @@ const writeBest = (value: number): void => {
 
 export const createEngine = async (): Promise<Engine> => {
   const app = await createCanvasApp()
-  const renderer = createRenderer(createRng(0xc0ffee))
+  const renderer = createRenderer(createRng(0xc0ffee), app.renderer)
   app.stage.addChild(renderer.view)
   const input = createInput(window)
 

@@ -60,7 +60,7 @@ const HEARTBEAT_MS = 400 // resend the current input at least this often (covers
 
 export const connectGame = async (game: string, name: string, intent: JoinIntent): Promise<NetClient> => {
   const app = await createCanvasApp()
-  const renderer = createRenderer(createRng(0xc0ffee))
+  const renderer = createRenderer(createRng(0xc0ffee), app.renderer)
   app.stage.addChild(renderer.view)
   const input = createInput(window)
   const fxRng = createRng(0x51ce) // cosmetic-only stream for client-side particles
