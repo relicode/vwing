@@ -10,8 +10,8 @@ shows what's done.
 
 ## Status
 
-- [x] Phase 0 — Docs sync (README.md is stale, CLAUDE.md layout) — branch `feature/pixi-p0-docs-sync`
-- [ ] Phase 1 — Boundary guard test
+- [x] Phase 0 — Docs sync (README.md is stale, CLAUDE.md layout) — branch `feature/pixi-p0-docs-sync` (merged `cc2c6e3`)
+- [x] Phase 1 — Boundary guard test — branch `feature/pixi-p1-boundary-guard`
 - [ ] Phase 2 — Application lifecycle & loop hygiene
 - [ ] Phase 3 — Mechanical split of renderer.ts
 - [ ] Phase 4 — Particles → ParticleContainer
@@ -74,6 +74,14 @@ signature, contract-safe) for boot-time `generateTexture()`.
 Every phase: game playable offline + online, `bun run lint` + `bun test` green, screenshot
 spot-check (`bun run dev` + `bun run chrome`, CDP on :9222). Branch `feature/pixi-pN-<slug>`,
 finish with `bun run git:feature:finish`.
+
+**Use the bundled PixiJS skills** (`.claude/skills/pixijs*` — the official collection,
+github.com/pixijs/pixijs-skills) before writing Pixi code in a phase: P2 → `pixijs-application` +
+`pixijs-events` + `pixijs-ticker`; P3 → `pixijs-scene-container`; P4/P5 →
+`pixijs-scene-particle-container`; P6 → `pixijs-scene-graphics` (GraphicsContext) +
+`pixijs-scene-container`; P7 → `pixijs-scene-sprite` (TilingSprite); P8/P9 →
+`pixijs-performance` (culling, cacheAsTexture). Anything not covered (e.g. RenderTexture /
+`generateTexture`): WebFetch `https://pixijs.download/release/docs/llms.txt` and follow its links.
 
 ### Phase 1 — Boundary guard
 New `__tests__/presentation-boundary.test.ts`: walks the import graph from `src/server/index.ts`,
