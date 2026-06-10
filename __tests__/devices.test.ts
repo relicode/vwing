@@ -339,6 +339,29 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     expect(owner.troops).toBe(8)
   })
 
+  test('a slow enemy ship recruits a fielded trooper in place (side flip, lockout, no free shot)', () => {
+    const raider = makeShip({ id: 1, kind: ShipKind.BOT, x: 100, y: 100, vx: 10, vy: 0, troops: 0 })
+    const turncoat = infantry({ owner: 0, x: 100, y: 100, attached: true, pickupLock: 0, heavy: WeaponKind.RAIL })
+    const world = makeWorld([raider], [turncoat])
+    resolveInfantryContacts(world)
+    expect(world.devices).toHaveLength(1) // converted, not scooped — he stays fielded
+    if (turncoat.kind === DeviceKind.INFANTRY) {
+      expect(turncoat.owner).toBe(1) // now fights for the raider
+      expect(turncoat.heavy).toBe(WeaponKind.RAIL) // keeps his specialist kit
+      expect(turncoat.pickupLock).toBeGreaterThan(0) // can't be instantly re-flipped or bayed
+      expect(turncoat.fireCooldown).toBeGreaterThan(0) // no free shot at his old side
+    }
+    expect(raider.troops).toBe(0) // recruiting is not a pickup
+  })
+
+  test('a drowning trooper cannot be recruited by an enemy (only its own ship saves it)', () => {
+    const raider = makeShip({ id: 1, kind: ShipKind.BOT, x: 100, y: 205, vx: 0, vy: 0 })
+    const sinker = infantry({ owner: 0, x: 100, y: 205, sinking: 1.4, pickupLock: 0 })
+    const world = makeWorld([raider], [sinker])
+    resolveInfantryContacts(world)
+    if (sinker.kind === DeviceKind.INFANTRY) expect(sinker.owner).toBe(0) // still going down with his colors
+  })
+
   test('a ship ramming through a trooper splatters it (own or enemy)', () => {
     const rammer = makeShip({ id: 1, kind: ShipKind.BOT, x: 100, y: 100, vx: 300, vy: 0 })
     const world = makeWorld([rammer], [infantry({ owner: 0, x: 100, y: 100, attached: true })])

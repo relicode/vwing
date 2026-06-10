@@ -26,6 +26,7 @@ import {
   INFANTRY_KNEEL_TIME,
   INFANTRY_PANIC_DIST,
   INFANTRY_PARACHUTE_FIRE_INTERVAL,
+  INFANTRY_PICKUP_DELAY,
   INFANTRY_PICKUP_RADIUS,
   INFANTRY_PICKUP_SPEED,
   INFANTRY_RAM_SPEED,
@@ -651,13 +652,16 @@ export const updateDevices = (world: World, dt: number): Ship[] => {
   return [...dead]
 }
 
-// Resolve ship-vs-trooper overlaps: an owner drifting slowly over its own unit scoops it
-// back into the troop bay (if there's room — a full bay leaves it fielded), while any ship
-// fast enough to ram (own or enemy) splatters the trooper it ploughs through, save for an
+// Resolve ship-vs-trooper overlaps. A *slow* ship over a trooper is a gentle hand: its own
+// unit is scooped back into the troop bay (if there's room — a full bay leaves it fielded),
+// while an ENEMY unit is recruited where it stands — it flips sides on the spot (the
+// Dungeon-Keeper conversion; hover it again after the lockout to bay it). Any ship fast
+// enough to ram (own or enemy) splatters the trooper it ploughs through instead, save for an
 // owner still inside its trooper's deploy lockout (so a fast drop can't instantly mince it).
-// Drowning is saveable: a sinking trooper can still be scooped for INFANTRY_DROWN_RESCUE_WINDOW
-// after it goes under; past that it's an unreachable corpse. Iterates from the tail so removals
-// don't disturb pending indices.
+// Drowning is saveable by the trooper's OWN ship for INFANTRY_DROWN_RESCUE_WINDOW after it
+// goes under (enemies can't recruit the sinking — only swimmers and the landed); past the
+// window it's an unreachable corpse. Iterates from the tail so removals don't disturb
+// pending indices.
 export const resolveInfantryContacts = (world: World): void => {
   for (const ship of world.ships) {
     const speed = Math.hypot(ship.vx, ship.vy)
@@ -679,6 +683,24 @@ export const resolveInfantryContacts = (world: World): void => {
       ) {
         world.devices.splice(i, 1)
         ship.troops = Math.min(TROOP_BAY_CAPACITY, ship.troops + 1)
+        continue
+      }
+      if (
+        slow &&
+        d.owner !== ship.id &&
+        d.pickupLock <= 0 &&
+        d.sinking <= 0 &&
+        (d.attached || d.swim > 0) &&
+        circlesOverlap(ship.x, ship.y, INFANTRY_PICKUP_RADIUS, d.x, d.y, d.radius)
+      ) {
+        // Recruited: same side-switch sparkle for both teams; the renderer's owner tint flips.
+        // The lockout blocks an instant re-flip/scoop, and the reset cooldown denies a free shot.
+        d.owner = ship.id
+        d.pickupLock = INFANTRY_PICKUP_DELAY
+        d.fireCooldown = INFANTRY_FIRE_INTERVAL
+        d.kneel = 0
+        d.running = false
+        spawnExplosion(world.particles, d.x, d.y, Color.EMP, world.rng, 8)
         continue
       }
       if (ramming && d.sinking <= 0 && circlesOverlap(ship.x, ship.y, ship.radius, d.x, d.y, d.radius)) {
