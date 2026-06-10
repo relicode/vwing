@@ -178,7 +178,12 @@ export const createEngine = async (): Promise<Engine> => {
     input.destroy()
     app.ticker.stop()
     renderer.destroy()
-    app.destroy(true)
+    // releaseGlobalResources drains Pixi's global pools (batches, texture caches) — without it,
+    // the Practice↔Online destroy/recreate cycles in App routing leak stale GL state.
+    app.destroy(
+      { removeView: true, releaseGlobalResources: true },
+      { children: true, texture: true, textureSource: true }
+    )
     listeners.clear()
   }
 

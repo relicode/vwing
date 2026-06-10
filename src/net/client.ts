@@ -73,8 +73,7 @@ export const connectGame = async (game: string, name: string, intent: JoinIntent
   let error: string | undefined
   let leaving = false
   let lastSent = ''
-  let lastSentAt = 0
-  let frame = 0
+  let sinceSentMs = 0 // real ms since the input was last streamed (heartbeat timer)
 
   const listeners = new Set<() => void>()
   const notify = (): void => {
@@ -157,15 +156,14 @@ export const connectGame = async (game: string, name: string, intent: JoinIntent
   // Each rendered frame: stream the current control state to the server (on change or as a
   // heartbeat), regenerate local cosmetic particles from the latest snapshot, then draw it.
   app.ticker.add((ticker) => {
-    frame += 1
+    sinceSentMs += ticker.deltaMS
     if (ws.readyState === WebSocket.OPEN && phase === NetPhase.PLAYING) {
       const snapshot = readSnapshot(input)
       const serialized = JSON.stringify(snapshot)
-      const now = frame * (1000 / 60)
-      if (serialized !== lastSent || now - lastSentAt > HEARTBEAT_MS) {
+      if (serialized !== lastSent || sinceSentMs > HEARTBEAT_MS) {
         ws.send(encode({ t: MsgType.INPUT, input: snapshot }))
         lastSent = serialized
-        lastSentAt = now
+        sinceSentMs = 0
       }
     }
     if (!world) return
@@ -203,7 +201,12 @@ export const connectGame = async (game: string, name: string, intent: JoinIntent
     input.destroy()
     app.ticker.stop()
     renderer.destroy()
-    app.destroy(true)
+    // releaseGlobalResources drains Pixi's global pools (batches, texture caches) — without it,
+    // the Practice↔Online destroy/recreate cycles in App routing leak stale GL state.
+    app.destroy(
+      { removeView: true, releaseGlobalResources: true },
+      { children: true, texture: true, textureSource: true }
+    )
     listeners.clear()
   }
 
