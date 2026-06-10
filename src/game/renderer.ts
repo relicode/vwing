@@ -24,7 +24,7 @@ import {
 import { stateOf } from '$/game/devices'
 import { clamp } from '$/game/math'
 import { randRange } from '$/game/rng'
-import type { Beam, Block, Device, Particle, RenderWorld, Rng, Ship, Vec2, WaterBody } from '$/game/types'
+import type { Base, Beam, Block, Device, Particle, RenderWorld, Rng, Ship, Vec2, WaterBody } from '$/game/types'
 
 type Star = { x: number; y: number; depth: number; size: number }
 
@@ -705,6 +705,39 @@ const drawShip = (g: Graphics, ship: Ship, time: number, isSelf: boolean): void 
   drawBars(g, ship)
 }
 
+// A home barracks: a bunker squatting on its pad, tinted by whoever holds it (the tint flips to
+// the capturer's color the moment it falls), with garrison helmet pips over the door and a
+// flashing takeover bar while the capture is in progress. Drawn in the dynamic layer — capture
+// state and garrison mutate every frame, so it can't live in the terrainVersion cache.
+const drawBase = (g: Graphics, base: Base, time: number, selfId: number): void => {
+  const holder = base.capture >= 1 && base.capturedBy !== undefined ? base.capturedBy : base.owner
+  const body = holder === selfId ? Color.SHIP : Color.ENEMY
+  const w = 120
+  const h = 52
+  const x = base.x - w / 2
+  const y = base.y - h
+  g.roundRect(x, y, w, h, 8).fill({ color: body, alpha: 0.26 }).stroke({ width: 2, color: body })
+  g.circle(base.x, y, 15).fill({ color: body, alpha: 0.5 }) // roof dome
+  g.rect(base.x - 9, y + h - 26, 18, 26).fill({ color: Color.INK, alpha: 0.85 }) // door
+  g.moveTo(x + w - 16, y)
+    .lineTo(x + w - 16, y - 22)
+    .stroke({ width: 2, color: body }) // antenna
+  g.circle(x + w - 16, y - 24, 3).fill({ color: body })
+  // Garrison pips: one helmet dot per housed trooper, racked beside the door.
+  const housed = Math.floor(base.garrison)
+  for (let i = 0; i < housed; i += 1) {
+    const px = x + 10 + (i % 6) * 10
+    const py = y + 12 + Math.floor(i / 6) * 9
+    g.circle(px, py, 3).fill({ color: Color.SMOKE })
+  }
+  // Takeover bar above the roof while a capture is running (flashes to read as an alarm).
+  if (base.capture > 0 && base.capture < 1) {
+    const blink = Math.floor(time * 4) % 2 === 0
+    g.rect(x, y - 34, w, 5).fill({ color: Color.BAR_BACK })
+    g.rect(x, y - 34, w * base.capture, 5).fill({ color: Color.THRUST, alpha: blink ? 1 : 0.55 })
+  }
+}
+
 export const createRenderer = (rng: Rng): Renderer => {
   const view = new Container()
   const starLayer = new Graphics()
@@ -749,6 +782,7 @@ export const createRenderer = (rng: Rng): Renderer => {
       drawWaterBodies(terrainGfx, world.water)
     }
     dynGfx.clear()
+    for (const base of world.bases) drawBase(dynGfx, base, world.time, selfId)
     for (const device of world.devices) drawDevice(dynGfx, device, world.time, selfId)
     for (const bullet of world.bullets) {
       const color = bullet.color ?? (bullet.owner === selfId ? Color.BULLET : Color.BULLET_ENEMY)

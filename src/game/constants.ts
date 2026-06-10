@@ -139,6 +139,19 @@ export const BASE_PAD_Y_FRAC = 0.52 // pad top, fraction of WORLD_HEIGHT (flatte
 export const BASE_PAD_CELLS = 24 // pad width in voxel cells (432 px of flat grass)
 export const BASE_APRON_CELLS = 24 // span each side of the pad where land is clamped to pad level (open approach)
 export const SPAWN_ALTITUDE = 320 // px above its pad top where a campaign ship (re)spawns
+// The barracks itself: it houses a garrison the owner ship loads aboard (hover/land slow by the
+// pad, same learned verb as the trooper rescue), regrowing over time — so troops are a stream,
+// not a faucet. Enemy troopers landed inside the capture disc push capture progress; defenders
+// in the zone contest it; a purged zone bleeds progress back. A captured base stops garrison
+// regen, loading, AND the owner's respawns — death while captured is elimination (see sim.ts).
+export const BASE_GARRISON_CAP = 12 // troopers a barracks can house
+export const BASE_GARRISON_START = 8 // housed at match start
+export const BASE_GARRISON_REGEN = 0.15 // troopers/s regrown while uncaptured (~6.7 s per man)
+export const BASE_LOAD_RADIUS = 140 // px from the pad within which a slow owner ship loads troops
+export const BASE_LOAD_RATE = 1.5 // troopers/s transferred garrison → bay while loading
+export const BASE_CAPTURE_RADIUS = 460 // px disc around the pad center that counts capturers/defenders
+export const BASE_CAPTURE_TIME = 30 // s of uncontested enemy presence to capture
+export const BASE_REVERT_TIME = 12 // s for progress to bleed back once the zone is purged
 
 // Neon-on-near-black palette, stored as 0xRRGGBB for PixiJS fills.
 export const Color = {

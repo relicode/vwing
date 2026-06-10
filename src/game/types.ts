@@ -215,4 +215,8 @@ export type EngineStatus = {
   lives: number
   weapon: WeaponKind // the PLAYER ship's current secondary
   charge: number // the PLAYER ship's secondary energy as a 0..100 percent (for the HUD bar)
+  troops: number // whole troopers aboard the PLAYER ship (bay pips)
+  squad: WeaponKind // the PLAYER squad's specialist kind
+  homeCapture: number // enemy capture progress on the player's base, whole percent 0..100 (alarm)
+  enemyCapture: number // the player's capture progress on the enemy base, whole percent 0..100
 }

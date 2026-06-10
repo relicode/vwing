@@ -62,8 +62,13 @@ const PracticeGame = ({ weapon, onExit }: PracticeGameProps) => {
           </Button>
         </Box>
       ) : null}
-      {status.phase === GamePhase.GAME_OVER ? (
-        <GameOverScreen status={status} onRestart={onRestart} onExit={onExit} />
+      {status.phase === GamePhase.GAME_OVER || status.phase === GamePhase.VICTORY ? (
+        <GameOverScreen
+          status={status}
+          victory={status.phase === GamePhase.VICTORY}
+          onRestart={onRestart}
+          onExit={onExit}
+        />
       ) : null}
     </>
   )

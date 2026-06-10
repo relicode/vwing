@@ -1,3 +1,4 @@
+import { createCampaignBases, stepBases } from '$/game/bases'
 import { updateBeams } from '$/game/beams'
 import { spawnBullet, updateBullets } from '$/game/bullets'
 import { circleRectContact, circlesOverlap } from '$/game/collision'
@@ -155,6 +156,9 @@ const refillBay = (ship: Ship, mode: SimMode): void => {
 export const createSim = (world: World, combatants: Combatant[], config: SimConfig): Sim => {
   world.ships = combatants.map((combatant) => combatant.ship)
   for (const { ship } of combatants) refillBay(ship, config.mode)
+  // The campaign is the base war: one barracks per side. DEATHMATCH stays baseless (frags only),
+  // which short-circuits every base/capture rule below into a no-op.
+  if (config.mode === SimMode.CAMPAIGN) world.bases = createCampaignBases()
   const submergedShips = new Set<number>() // ids currently underwater, for splash-on-crossing
   const eliminated = new Set<number>() // ids removed from play this run (CAMPAIGN, out of lives)
   // Read `water` live: pooling can replace world.water with a new array mid-run, so a one-time
@@ -208,8 +212,14 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
       vc.lives -= 1
       if (vc.lives <= 0) isEliminated = true
     }
+    // The base-war noose: a side whose home barracks is captured has no respawns left —
+    // dying in that state is elimination, regardless of how many lives remain.
+    const home = world.bases.find((b) => b.owner === victim.id)
+    if (home && home.capture >= 1) isEliminated = true
     if (isEliminated) {
       eliminated.add(victim.id)
+      // Drop the wreck from the world so nothing keeps targeting (or drawing) a ghost.
+      world.ships = world.ships.filter((ship) => ship.id !== victim.id)
     } else {
       const spawn = config.mode === SimMode.DEATHMATCH ? pickSpawn(victim.id) : vc.spawn
       respawnShipAt(victim, spawn.x, spawn.y, world.rng, config.forcedWeapon)
@@ -363,6 +373,7 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     resolveBulletHits(events)
     resolveTerrain(dt, events)
     resolveInfantryContacts(world)
+    stepBases(world, dt)
     // Advance loosed terrain chunks; rebuild the derived blocks if the terrain changed this frame.
     const debrisMoved = stepVoxel(voxel, dt)
     if (terrainDirty || debrisMoved) {
