@@ -50,31 +50,47 @@ src/
   main.tsx            # React root (no StrictMode: avoids double WebGL context in dev)
   app/                # React + MUI shell — component files are PascalCase.tsx;
                       # hooks (use-engine, use-net) and theme.ts stay lowercase
-    App.tsx           # stage frame + phase routing
+    App.tsx           # stage frame + phase routing (title / practice / lobby / online)
     theme.ts          # MUI dark-neon theme (pure factory)
-    use-engine.ts     # boot engine + subscribe to status (useSyncExternalStore)
+    use-engine.ts use-net.ts  # boot engine / net client + subscribe (useSyncExternalStore)
     GameCanvas.tsx    # mounts engine.canvas
-    Hud.tsx, TitleScreen.tsx, GameOverScreen.tsx, Overlay.tsx, LobbyScreen.tsx, OnlineGame.tsx
-  game/               # framework-free simulation + PixiJS engine
+    Hud.tsx OnlineHud.tsx TitleScreen.tsx GameOverScreen.tsx Overlay.tsx
+    LobbyScreen.tsx PracticeGame.tsx OnlineGame.tsx
+  game/               # framework-free simulation + PixiJS presentation
     constants.ts      # enums + all tunables (single balancing surface)
-    types.ts          # shared types (World, Ship, Bullet, Asteroid, EngineStatus)
+    types.ts          # shared types (World, Ship, Bullet, Device, Base, EngineStatus)
     math.ts rng.ts collision.ts input.ts
-    ship.ts           # Newtonian flight: turn, thrust, gravity, drag, wall test
-    bullets.ts        # straight shots inheriting ship velocity
-    asteroids.ts      # drifting / wall-bouncing rocks + split mechanic + wave spawner
+    sim.ts            # the authoritative step: combatants, scoring, respawns, victory events
+    ship.ts           # Newtonian flight: turn, thrust, retro-brake, gravity, drag, land/crash
+    bullets.ts beams.ts weapons.ts  # primary shots, rail beams, the 10 random secondaries
+    devices.ts        # deployed world entities: troopers (state machine + stateOf), missiles,
+                      # mines, grenades, flak, gravity wells
+    troops.ts bases.ts  # troop bay, rescue/recruit; barracks, garrison-as-HP, capture
+    bot.ts            # the AI combatant: REARM / ASSAULT / DEFEND goals driving an Input
+    voxel.ts terrain.ts terrain-map.ts water.ts  # destructible voxel grid → greedy-meshed
+                      # blocks; seeded biome worldgen; carving + falling debris; water/pooling
     camera.ts         # follow camera origin, clamped to the world
-    particles.ts      # explosion debris
-    renderer.ts       # draws the World with PixiJS (camera-offset world layer + parallax stars)
-    engine.ts         # Pixi Application + game loop + state machine + status pub/sub
-__tests__/            # bun:test specs for the pure logic
+    particles.ts      # explosion/exhaust debris (sim-owned data; the renderer only draws it)
+    renderer.ts       # draws the World with PixiJS (camera-offset world layer, parallax stars,
+                      # procedural infantry art, minimap) — migrating to v8 built-ins, see PLAN.md
+    view.ts           # PixiJS Application boot (shared by the engine and the net client)
+    engine.ts         # game loop + phase machine + status pub/sub (offline campaign vs. bot)
+  net/                # protocol.ts (JSON wire format) + client.ts (snapshot-drawing online client)
+  server/             # authoritative Bun server: index.ts (HTTP + WS), room.ts, store.ts (Redis
+                      # state with in-memory fallback)
+scripts/              # server.ts (game-server entry), preview.ts
+__tests__/            # bun:test specs for the pure logic (sim only — never imports pixi.js)
 ```
 
 ## Architecture notes
 
 - **Separation:** `game/` holds no React. `engine.createEngine()` returns `{ canvas, getStatus,
   subscribe, start, destroy }`; React subscribes for HUD state and calls `start()` to (re)begin.
-- **Phases:** `GamePhase` (TITLE / PLAYING / GAME_OVER). The engine sims flight only while PLAYING;
-  in TITLE/GAME_OVER it just drifts rocks + fades debris as ambiance.
+- **Sim/presentation boundary:** the sim modules never import `pixi.js` — only `view.ts` and the
+  renderer (presentation) do. The same sim steps headlessly on the server and under `bun test`.
+  `PLAN.md` tracks the phased migration of the presentation layer to Pixi v8 built-ins.
+- **Phases:** `GamePhase` (TITLE / PLAYING / GAME_OVER / VICTORY). The engine sims flight only
+  while PLAYING; in TITLE/GAME_OVER it just fades debris + beams as ambiance (terrain stays put).
 - **Coordinates:** the world is `WORLD_WIDTH × WORLD_HEIGHT` (larger than the `VIEW_WIDTH ×
   VIEW_HEIGHT` viewport). `camera.ts` returns the viewport's top-left in world space, clamped to the
   walls; the renderer offsets a world `Container` by `-camera`. Heading `angle` has forward =
