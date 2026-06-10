@@ -2,14 +2,16 @@ import { describe, expect, test } from 'bun:test'
 
 import { SHIP_TURN_RATE, WALL_THICKNESS, WORLD_HEIGHT, WORLD_WIDTH } from '$/game/constants'
 import type { Input } from '$/game/input'
-import { createShip, respawnShip, updateShip } from '$/game/ship'
+import { createShip, PLAYER_SPAWN_X, respawnShip, updateShip } from '$/game/ship'
 import type { WaterBody } from '$/game/types'
 
-const makeInput = (turn: number, thrusting: boolean): Input => ({
+const makeInput = (turn: number, thrusting: boolean, reversing = false): Input => ({
   turn: () => turn,
   thrusting: () => thrusting,
+  reversing: () => reversing,
   firing: () => false,
   altFiring: () => false,
+  deploying: () => false,
   destroy: () => {},
 })
 
@@ -37,6 +39,20 @@ describe('ship physics', () => {
     expect(ship.angle).toBeCloseTo(startAngle + SHIP_TURN_RATE * 0.1)
   })
 
+  test('the retro nozzles brake along the nose without turning the ship', () => {
+    const braking = createShip()
+    braking.angle = 0 // nose +x
+    braking.vx = 200
+    const coasting = createShip()
+    coasting.angle = 0
+    coasting.vx = 200
+    updateShip(braking, makeInput(0, false, true), 0.1)
+    updateShip(coasting, makeInput(0, false), 0.1)
+    expect(braking.reversing).toBe(true)
+    expect(braking.angle).toBe(0) // a brake, not a flip
+    expect(braking.vx).toBeLessThan(coasting.vx) // shed speed beyond plain drag
+  })
+
   test('respawn recenters, stops, and grants invulnerability', () => {
     const ship = createShip()
     ship.x = 123
@@ -45,7 +61,7 @@ describe('ship physics', () => {
     respawnShip(ship)
     expect(ship.vx).toBe(0)
     expect(ship.invuln).toBeGreaterThan(0)
-    expect(ship.x).toBeCloseTo(WORLD_WIDTH / 2)
+    expect(ship.x).toBeCloseTo(PLAYER_SPAWN_X)
   })
 
   test('water buoyancy lifts a submerged ship relative to open air', () => {

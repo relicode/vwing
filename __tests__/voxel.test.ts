@@ -8,6 +8,8 @@ import {
   createVoxelTerrain,
   findPool,
   hasDebris,
+  restoreVoxel,
+  snapshotVoxel,
   stepVoxel,
   voxelToBlocks,
   wetSurface,
@@ -257,5 +259,35 @@ describe('findPool (basin detection)', () => {
       expect(pool.y).toBeCloseTo(PILLAR_TOP_Y, -1) // surface sits at the surviving rim row
     }
     expect(findPool(vt, ...cellCenter(50, 10))).toBeUndefined() // far open air still refuses to pool
+  })
+})
+
+describe('snapshotVoxel / restoreVoxel (terrain persistence round-trip)', () => {
+  test('a carved, scorched, wetted arena restores cell-for-cell onto a same-fixture grid', () => {
+    const vt = mkVt()
+    // Crater the pillar, scorch + wet the island cap, and carve into island B (possibly
+    // severing a chunk into flight — whatever results must round-trip exactly).
+    carveVoxel(vt, ...cellCenter(PILLAR_C0 + 4, PILLAR_TOP_ROW), 2.5 * C)
+    burnSurface(vt, ...cellCenter(A_C0 + 2, A_TOP_ROW - 1), C)
+    wetSurface(vt, ...cellCenter(A_C0 + 8, A_TOP_ROW - 1), C)
+    carveVoxel(vt, ...cellCenter(B_C0 + 5, B_TOP_ROW + 2), 2.2 * C)
+    stepVoxel(vt, 0.1) // let any loosed chunk accrue fall state worth persisting
+    const snap = snapshotVoxel(vt)
+
+    const restored = mkVt()
+    expect(restoreVoxel(restored, snap)).toBe(true)
+    expect(restored.mat.every((value, i) => value === vt.mat[i])).toBe(true)
+    expect(restored.pinned.map((s) => [...s].sort())).toEqual(vt.pinned.map((s) => [...s].sort()))
+    expect(restored.bodies.length).toBe(vt.bodies.length)
+    expect([...restored.regrow.entries()]).toEqual([...vt.regrow.entries()])
+    expect(JSON.stringify(voxelToBlocks(restored))).toBe(JSON.stringify(voxelToBlocks(vt)))
+  })
+
+  test('a snapshot that does not fit the grid is rejected untouched', () => {
+    const vt = mkVt()
+    const before = JSON.stringify(voxelToBlocks(vt))
+    const snap = snapshotVoxel(vt)
+    expect(restoreVoxel(vt, { ...snap, cols: vt.cols - 1 })).toBe(false)
+    expect(JSON.stringify(voxelToBlocks(vt))).toBe(before)
   })
 })

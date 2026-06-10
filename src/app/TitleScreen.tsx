@@ -74,8 +74,10 @@ const TitleScreen = ({ onPractice, onMultiplayer, weapon, onWeaponChange }: Titl
     <Box sx={{ width: '100%', mt: 1 }}>
       <ControlRow action="Rotate" keys="← → / A D" />
       <ControlRow action="Thrust" keys="↑ / W" />
+      <ControlRow action="Retro-brake" keys="↓ / S" />
       <ControlRow action="Fire" keys="Space / J" />
       <ControlRow action="Secondary" keys="K / Shift" />
+      <ControlRow action="Deploy troops" keys="X / L" />
     </Box>
   </Overlay>
 )

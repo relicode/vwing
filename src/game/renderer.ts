@@ -6,12 +6,14 @@ import {
   CAMERA_SNAP_DIST,
   Color,
   DeviceKind,
+  FLAMETHROWER_LIFE,
   GamePhase,
   INFANTRY_FIRE_INTERVAL,
   INFANTRY_KNEEL_FIRE_AT,
   INFANTRY_SINK_TIME,
   InfantryState,
-  InfantryWeapon,
+  MINIMAP_MARGIN,
+  MINIMAP_WIDTH,
   SHAKE_FREQ,
   SHIP_MAX_HEALTH,
   SHIP_MAX_SHIELDS,
@@ -19,13 +21,14 @@ import {
   Surface,
   VIEW_HEIGHT,
   VIEW_WIDTH,
+  WeaponKind,
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from '$/game/constants'
 import { stateOf } from '$/game/devices'
 import { clamp } from '$/game/math'
 import { randRange } from '$/game/rng'
-import type { Beam, Block, Device, Particle, RenderWorld, Rng, Ship, Vec2, WaterBody } from '$/game/types'
+import type { Base, Beam, Block, Device, Particle, RenderWorld, Rng, Ship, Vec2, WaterBody } from '$/game/types'
 
 type Star = { x: number; y: number; depth: number; size: number }
 
@@ -279,17 +282,42 @@ const head = (
   }
 }
 
-// The shoulder-fired bazooka (GRENADE weapon): green tube + flared muzzle + grey venturi, with a
+// The shoulder-fired heavy tube (any specialist kind): tinted tube + flared muzzle + grey venturi, with a
 // forward puff and the signature rear backblast while firing.
-const bazooka = (g: Graphics, sx: number, sy: number, f: number, r: number, alpha: number, flashT: number): void => {
+// Tube tint per specialist kind, so a kneeling rail sniper / EMP trooper / sapper reads at a
+// glance (each borrows its ship weapon's signature colour).
+const HEAVY_TUBE: Record<WeaponKind, number> = {
+  [WeaponKind.SCATTERGUN]: Color.SHRAPNEL,
+  [WeaponKind.WATER_CANNON]: Color.WATER_EDGE,
+  [WeaponKind.FLAMETHROWER]: Color.THRUST,
+  [WeaponKind.SEEKER]: Color.MISSILE,
+  [WeaponKind.RAIL]: Color.RAIL,
+  [WeaponKind.GRENADE]: Color.GRENADE,
+  [WeaponKind.MINES]: Color.MINE_ARMED,
+  [WeaponKind.FLAK]: Color.FLAK,
+  [WeaponKind.EMP]: Color.EMP,
+  [WeaponKind.SINGULARITY]: Color.WELL,
+}
+const tubeColor = (d: InfantrySprite): number => HEAVY_TUBE[d.heavy ?? WeaponKind.GRENADE]
+
+const bazooka = (
+  g: Graphics,
+  sx: number,
+  sy: number,
+  f: number,
+  r: number,
+  alpha: number,
+  flashT: number,
+  tube: number
+): void => {
   const rearX = sx - f * r * 1.0
   const rearY = sy + r * 0.12
   const muzX = sx + f * r * 2.3
   const muzY = sy - r * 0.7
   g.moveTo(rearX, rearY)
     .lineTo(muzX, muzY)
-    .stroke({ width: r * 0.4, color: Color.GRENADE, alpha }) // tube
-  g.circle(muzX, muzY, r * 0.5).fill({ color: Color.GRENADE, alpha }) // muzzle
+    .stroke({ width: r * 0.4, color: tube, alpha }) // tube
+  g.circle(muzX, muzY, r * 0.5).fill({ color: tube, alpha }) // muzzle
   g.circle(rearX, rearY, r * 0.32).fill({ color: Color.SMOKE, alpha }) // venturi
   if (flashT > 0) {
     g.circle(muzX + f * r * 0.5, muzY, r * 0.5 * flashT).fill({ color: Color.EXPLOSION, alpha: 0.85 * flashT })
@@ -357,12 +385,12 @@ const drawStanding = (g: Graphics, d: InfantrySprite, kit: Kit, time: number, f:
     boot(g, d.x + f * r * 0.28, footY, f, r, a)
   }
   torso(g, d.x, cy - r * 0.55, r, kit, a)
-  if (d.weapon === InfantryWeapon.GRENADE) {
+  if (d.heavy !== undefined) {
     head(g, d.x, cy - r * 0.95, r, f, kit, a, walking ? Mood.SMILE : Mood.SMIRK)
     g.moveTo(d.x + f * r * 0.2, cy - r * 0.3)
       .lineTo(d.x + f * r * 0.35, cy - r * 0.45)
       .stroke({ width: r * 0.3, color: kit.body, alpha: a }) // grip arm
-    bazooka(g, d.x + f * r * 0.1, cy - r * 0.5, f, r, a, 0) // a standing grenadier kneels before firing — no flash
+    bazooka(g, d.x + f * r * 0.1, cy - r * 0.5, f, r, a, 0, tubeColor(d)) // a standing specialist kneels before firing — no flash
   } else {
     const flashT = clamp((d.fireCooldown - (INFANTRY_FIRE_INTERVAL - FLASH_WINDOW)) / FLASH_WINDOW, 0, 1)
     head(g, d.x, cy - r * 0.95, r, f, kit, a, flashT > 0 ? Mood.GRIT : walking ? Mood.SMILE : Mood.SMIRK)
@@ -449,7 +477,7 @@ const drawKneeling = (g: Graphics, d: InfantrySprite, kit: Kit, f: number): void
   g.ellipse(d.x - f * r * 0.7, footY, r * 0.3, r * 0.22).fill({ color: BOOT_COLOR, alpha: a })
   torso(g, d.x + f * r * 0.1 + shove, d.y - r * 0.25, r, kit, a)
   head(g, d.x + shove, d.y - r * 0.55, r, f, kit, a, Mood.GRIT, 0.85)
-  bazooka(g, d.x + f * r * 0.3 + shove, d.y - r * 0.05, f, r, a, flashT)
+  bazooka(g, d.x + f * r * 0.3 + shove, d.y - r * 0.05, f, r, a, flashT, tubeColor(d))
   if (d.kneel > INFANTRY_KNEEL_FIRE_AT)
     g.circle(d.x - f * r * 0.3, d.y - r * 0.7, r * 0.1).fill({ color: Color.WATER_EDGE, alpha: 0.85 }) // sweat
 }
@@ -586,13 +614,44 @@ const drawDrowning = (g: Graphics, d: InfantrySprite, kit: Kit, time: number, f:
   g.circle(d.x + r * 0.3, by, r * 0.12).fill({ color: Color.WATER_EDGE, alpha: 0.5 * a }) // rising bubble
 }
 
-// Dispatch a trooper to its state pose. stateOf (devices.ts) is the single source of truth for the
-// behavioural state, so the pose ladder never drifts from the sim. The ice slide is a transient
-// stateOf intentionally doesn't model (it would otherwise read as WALKING/STANDING), so it's caught
+// Fire riding a burning trooper: a few flame tongues flickering up off the figure (taller core
+// tongue flanked by two smaller ones), with the flicker keyed to time + position so a crowd of
+// burning men doesn't pulse in unison. Drawn OVER the pose — burning is a field-keyed overlay
+// (like the ice slide), not a stateOf member, so every pose can burn.
+const drawBurning = (g: Graphics, d: InfantrySprite, time: number): void => {
+  const r = d.radius
+  for (const [i, off] of [-0.45, 0.05, 0.5].entries()) {
+    const flick = 0.7 + 0.3 * Math.sin(time * 13 + d.x * 0.31 + i * 2.1)
+    const baseY = d.y - r * 0.4
+    const h = r * (i === 1 ? 1.9 : 1.2) * flick
+    const w = r * 0.42 * flick
+    const cx = d.x + off * r + Math.sin(time * 9 + i * 1.7) * r * 0.12
+    g.moveTo(cx - w, baseY)
+      .quadraticCurveTo(cx - w * 0.4, baseY - h * 0.6, cx, baseY - h)
+      .quadraticCurveTo(cx + w * 0.4, baseY - h * 0.6, cx + w, baseY)
+      .fill({ color: Color.THRUST, alpha: 0.8 })
+    g.ellipse(cx, baseY - h * 0.25, w * 0.55, h * 0.3).fill({ color: Color.EXPLOSION, alpha: 0.85 })
+  }
+}
+
+// EMP seize-up: a pair of cyan sparks orbiting the helmet while the jolt lasts.
+const drawStunned = (g: Graphics, d: InfantrySprite, time: number): void => {
+  const r = d.radius
+  const angle = time * 9 + d.x * 0.2
+  for (const phase of [0, Math.PI]) {
+    g.circle(
+      d.x + Math.cos(angle + phase) * r * 0.95,
+      d.y - r * 1.5 + Math.sin(angle + phase) * r * 0.3,
+      r * 0.13
+    ).fill({ color: Color.EMP, alpha: 0.9 })
+  }
+}
+
+// A trooper's state pose. stateOf (devices.ts) is the single source of truth for the behavioural
+// state, so the pose ladder never drifts from the sim. The ice slide is a transient stateOf
+// intentionally doesn't model (it would otherwise read as WALKING/STANDING), so it's caught
 // first and routed to drawRunning's skid branch.
-const drawInfantry = (g: Graphics, d: InfantrySprite, time: number, selfId: number): void => {
-  const f = d.facing >= 0 ? 1 : -1
-  const kit = infantryKit(d, selfId)
+const drawInfantryPose = (g: Graphics, d: InfantrySprite, kit: Kit, time: number, f: number): void => {
   if (d.attached && d.slide !== 0 && !d.running) {
     drawRunning(g, d, kit, time, f)
     return
@@ -623,6 +682,16 @@ const drawInfantry = (g: Graphics, d: InfantrySprite, time: number, selfId: numb
       drawStanding(g, d, kit, time, f, false)
       break
   }
+}
+
+// Pose first, then the field-keyed overlays — burning and the EMP stun ride on top of whatever
+// pose the trooper holds (the precedent the ice slide set: transients never fork stateOf).
+const drawInfantry = (g: Graphics, d: InfantrySprite, time: number, selfId: number): void => {
+  const f = d.facing >= 0 ? 1 : -1
+  const kit = infantryKit(d, selfId)
+  drawInfantryPose(g, d, kit, time, f)
+  if (d.burning > 0) drawBurning(g, d, time)
+  if (d.stun > 0) drawStunned(g, d, time)
 }
 
 const drawDevice = (g: Graphics, d: Device, time: number, selfId: number): void => {
@@ -694,6 +763,24 @@ const drawShip = (g: Graphics, ship: Ship, time: number, isSelf: boolean): void 
       ship.y - Math.sin(a) * r * (1.1 + flick),
     ]).fill({ color: Color.THRUST, alpha: 0.9 })
   }
+  if (ship.reversing) {
+    // The two smaller retro plumes: short tongues licking FORWARD past the nose's flanks.
+    const flick = 0.5 + (Math.floor(time * 40 + 1) % 3) * 0.25
+    const nx = Math.cos(a)
+    const ny = Math.sin(a)
+    for (const side of [1, -1]) {
+      const bx = ship.x + nx * r * 0.9 - side * ny * r * 0.55
+      const by = ship.y + ny * r * 0.9 + side * nx * r * 0.55
+      g.poly([
+        bx - ny * side * r * 0.2,
+        by + nx * side * r * 0.2,
+        bx + ny * side * r * 0.2,
+        by - nx * side * r * 0.2,
+        bx + nx * r * (0.5 + flick * 0.6),
+        by + ny * r * (0.5 + flick * 0.6),
+      ]).fill({ color: Color.THRUST, alpha: 0.85 })
+    }
+  }
   g.poly([
     ship.x + Math.cos(a) * r * 1.5,
     ship.y + Math.sin(a) * r * 1.5,
@@ -706,6 +793,91 @@ const drawShip = (g: Graphics, ship: Ship, time: number, isSelf: boolean): void 
   drawBars(g, ship)
 }
 
+// A home barracks: a bunker squatting on its pad, tinted by whoever holds it (the tint flips to
+// the capturer's color the moment it falls), with garrison helmet pips over the door and a
+// flashing takeover bar while the capture is in progress. Drawn in the dynamic layer — capture
+// state and garrison mutate every frame, so it can't live in the terrainVersion cache.
+const drawBase = (g: Graphics, base: Base, time: number, selfId: number): void => {
+  const holder = base.capture >= 1 && base.capturedBy !== undefined ? base.capturedBy : base.owner
+  const body = holder === selfId ? Color.SHIP : Color.ENEMY
+  const w = 120
+  const h = 52
+  const x = base.x - w / 2
+  const y = base.y - h
+  g.roundRect(x, y, w, h, 8).fill({ color: body, alpha: 0.26 }).stroke({ width: 2, color: body })
+  g.circle(base.x, y, 15).fill({ color: body, alpha: 0.5 }) // roof dome
+  g.rect(base.x - 9, y + h - 26, 18, 26).fill({ color: Color.INK, alpha: 0.85 }) // door
+  g.moveTo(x + w - 16, y)
+    .lineTo(x + w - 16, y - 22)
+    .stroke({ width: 2, color: body }) // antenna
+  g.circle(x + w - 16, y - 24, 3).fill({ color: body })
+  // Garrison pips: one helmet dot per housed trooper, racked beside the door.
+  const housed = Math.floor(base.garrison)
+  for (let i = 0; i < housed; i += 1) {
+    const px = x + 10 + (i % 6) * 10
+    const py = y + 12 + Math.floor(i / 6) * 9
+    g.circle(px, py, 3).fill({ color: Color.SMOKE })
+  }
+  // Takeover bar above the roof while a capture is running (flashes to read as an alarm).
+  if (base.capture > 0 && base.capture < 1) {
+    const blink = Math.floor(time * 4) % 2 === 0
+    g.rect(x, y - 34, w, 5).fill({ color: Color.BAR_BACK })
+    g.rect(x, y - 34, w * base.capture, 5).fill({ color: Color.THRUST, alpha: blink ? 1 : 0.55 })
+  }
+}
+
+// ── Minimap ──────────────────────────────────────────────────────────────────
+// A corner overview of the whole arena: terrain silhouette + water, both bases, every ship —
+// tinted with the same owner colors as the world — and the camera's current window.
+const MAP_SCALE = MINIMAP_WIDTH / WORLD_WIDTH
+const MINIMAP_HEIGHT = Math.round(WORLD_HEIGHT * MAP_SCALE)
+
+// The arena silhouette, cached per terrainVersion like the main terrain layer. Painted sizes
+// get a floor so one-cell caps and shelves still read at map scale.
+const drawMapTerrain = (g: Graphics, world: RenderWorld): void => {
+  g.clear()
+  g.roundRect(-3, -3, MINIMAP_WIDTH + 6, MINIMAP_HEIGHT + 6, 4)
+    .fill({ color: Color.BACKGROUND, alpha: 0.78 })
+    .stroke({ width: 1, color: Color.BEDROCK_EDGE, alpha: 0.6 })
+  for (const b of world.blocks) {
+    const style = blockStyle(b)
+    g.rect(b.x * MAP_SCALE, b.y * MAP_SCALE, Math.max(b.w * MAP_SCALE, 0.7), Math.max(b.h * MAP_SCALE, 0.7)).fill({
+      color: style.fill,
+      alpha: 0.9,
+    })
+  }
+  for (const w of world.water) {
+    g.rect(w.x * MAP_SCALE, w.y * MAP_SCALE, Math.max(w.w * MAP_SCALE, 0.7), Math.max(w.h * MAP_SCALE, 0.7)).fill({
+      color: Color.WATER,
+      alpha: 0.85,
+    })
+  }
+}
+
+// Live markers, redrawn each frame: bases as owner-tinted bunkers (the tint flips to the
+// capturer when one falls), ships as dots — self gets a brighter core — plus the viewport box.
+const drawMapMarkers = (g: Graphics, world: RenderWorld, camera: Vec2, selfId: number): void => {
+  g.clear()
+  for (const base of world.bases) {
+    const holder = base.capture >= 1 && base.capturedBy !== undefined ? base.capturedBy : base.owner
+    const color = holder === selfId ? Color.SHIP : Color.ENEMY
+    g.rect(base.x * MAP_SCALE - 3.5, base.y * MAP_SCALE - 5, 7, 5)
+      .fill({ color, alpha: 0.9 })
+      .stroke({ width: 1, color, alpha: 1 })
+  }
+  for (const ship of world.ships) {
+    const own = ship.id === selfId
+    const color = own ? Color.SHIP : Color.ENEMY
+    g.circle(ship.x * MAP_SCALE, ship.y * MAP_SCALE, own ? 3 : 2.4).fill({ color })
+    if (own) g.circle(ship.x * MAP_SCALE, ship.y * MAP_SCALE, 1.2).fill({ color: Color.SHIP_CORE })
+  }
+  g.rect(camera.x * MAP_SCALE, camera.y * MAP_SCALE, VIEW_WIDTH * MAP_SCALE, VIEW_HEIGHT * MAP_SCALE).stroke({
+    width: 1,
+    color: Color.STAR_NEAR,
+    alpha: 0.45,
+  })
+}
+
 export const createRenderer = (rng: Rng): Renderer => {
   const view = new Container()
   const starLayer = new Graphics()
@@ -713,19 +885,32 @@ export const createRenderer = (rng: Rng): Renderer => {
   const terrainGfx = new Graphics()
   const dynGfx = new Graphics()
   worldLayer.addChild(terrainGfx, dynGfx)
-  view.addChild(starLayer, worldLayer)
+  const mapLayer = new Container()
+  const mapTerrainGfx = new Graphics()
+  const mapDynGfx = new Graphics()
+  mapLayer.addChild(mapTerrainGfx, mapDynGfx)
+  view.addChild(starLayer, worldLayer, mapLayer)
+  const mapBaseX = VIEW_WIDTH - MINIMAP_WIDTH - MINIMAP_MARGIN
+  const mapBaseY = VIEW_HEIGHT - MINIMAP_HEIGHT - MINIMAP_MARGIN
   const stars = createStars(rng)
-  // Redraw the cached terrain layer only when it actually changes — the sim bumps
+  // Redraw the cached terrain layers only when they actually change — the sim bumps
   // world.terrainVersion on every carve and while debris is falling, and once per fresh run.
   let terrainVersion = -1
+  let mapTerrainVersion = -1
   // Eased camera state (smooth follow); undefined until the first frame snaps to the target.
   let camX: number | undefined
   let camY = 0
   let lastTime = 0
 
   const draw = (world: RenderWorld, phase: GamePhase, selfId: number): void => {
-    const self = world.ships.find((ship) => ship.id === selfId) ?? world.ships[0]
-    const target = cameraOrigin(self ?? { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 })
+    // While the player's ship waits out its respawn it isn't in the world — hold the camera on
+    // the death spot (the eased position we already have) instead of snapping to another ship.
+    const self = world.ships.find((ship) => ship.id === selfId)
+    const target = self
+      ? cameraOrigin(self)
+      : camX !== undefined
+        ? { x: camX, y: camY }
+        : cameraOrigin({ x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 })
     if (camX === undefined || Math.hypot(target.x - camX, target.y - camY) > CAMERA_SNAP_DIST) {
       camX = target.x // first frame or a big jump (respawn): snap, don't drift across the arena
       camY = target.y
@@ -750,8 +935,23 @@ export const createRenderer = (rng: Rng): Renderer => {
       drawWaterBodies(terrainGfx, world.water)
     }
     dynGfx.clear()
+    for (const base of world.bases) drawBase(dynGfx, base, world.time, selfId)
     for (const device of world.devices) drawDevice(dynGfx, device, world.time, selfId)
     for (const bullet of world.bullets) {
+      if (bullet.burn) {
+        // A flame gout: it blooms as it ages — a swelling, dimming tongue around a white-hot
+        // core that cools out of existence (life runs FLAMETHROWER_LIFE → 0).
+        const age = clamp(1 - bullet.life / FLAMETHROWER_LIFE, 0, 1)
+        const r = bullet.radius * (1.6 + age * 2.8)
+        dynGfx.circle(bullet.x, bullet.y, r * 1.5).fill({ color: Color.THRUST, alpha: 0.14 })
+        dynGfx
+          .circle(bullet.x, bullet.y, r)
+          .fill({ color: age < 0.5 ? Color.EXPLOSION : Color.THRUST, alpha: 0.85 - age * 0.45 })
+        dynGfx
+          .circle(bullet.x, bullet.y, r * 0.45)
+          .fill({ color: Color.SHIP_CORE, alpha: Math.max(0, 0.9 - age * 1.5) })
+        continue
+      }
       const color = bullet.color ?? (bullet.owner === selfId ? Color.BULLET : Color.BULLET_ENEMY)
       dynGfx.circle(bullet.x, bullet.y, bullet.radius * 2.2).fill({ color, alpha: 0.18 }) // soft glow
       dynGfx.circle(bullet.x, bullet.y, bullet.radius).fill({ color })
@@ -762,6 +962,17 @@ export const createRenderer = (rng: Rng): Renderer => {
     // spawn invulnerability never ticks down and they'd blink forever over the backdrop.
     if (phase === GamePhase.PLAYING)
       for (const ship of world.ships) drawShip(dynGfx, ship, world.time, ship.id === selfId)
+    // Minimap: in-play only (it's HUD furniture). Counter-shifted by the shake so the map
+    // holds still while the battle view rattles.
+    mapLayer.visible = phase === GamePhase.PLAYING
+    if (mapLayer.visible) {
+      mapLayer.position.set(mapBaseX - shakeX, mapBaseY - shakeY)
+      if (world.terrainVersion !== mapTerrainVersion) {
+        mapTerrainVersion = world.terrainVersion
+        drawMapTerrain(mapTerrainGfx, world)
+      }
+      drawMapMarkers(mapDynGfx, world, camera, selfId)
+    }
   }
 
   const destroy = (): void => {

@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 
+import { StructureType } from '$/game/constants'
 import { decodeClient, gameNameKey, livesFromWire, livesToWire, MsgType, sanitizeGameName } from '$/net/protocol'
+import { createRoom, parseRestore } from '$/server/room'
 import { createStore } from '$/server/store'
 
 describe('protocol helpers', () => {
@@ -80,11 +82,18 @@ describe('store (in-memory fallback)', () => {
 describe('decodeClient (hostile-input hardening)', () => {
   const good = JSON.stringify({
     t: MsgType.INPUT,
-    input: { turn: 1, thrusting: true, firing: false, altFiring: false },
+    input: { turn: 1, thrusting: true, reversing: false, firing: false, altFiring: false, deploying: false },
   })
 
   test('accepts a well-formed INPUT message', () => {
-    expect(decodeClient(good)?.input).toEqual({ turn: 1, thrusting: true, firing: false, altFiring: false })
+    expect(decodeClient(good)?.input).toEqual({
+      turn: 1,
+      thrusting: true,
+      reversing: false,
+      firing: false,
+      altFiring: false,
+      deploying: false,
+    })
   })
 
   test('rejects malformed payloads that would crash the server (regression for the INPUT DoS)', () => {
@@ -102,5 +111,41 @@ describe('message kinds', () => {
     expect(MsgType.WELCOME).toBe('WELCOME' as MsgType)
     expect(MsgType.SNAPSHOT).toBe('SNAPSHOT' as MsgType)
     expect(MsgType.REJECTED).toBe('REJECTED' as MsgType)
+  })
+})
+
+describe('room persistence (carved terrain survives a restart)', () => {
+  test('persisted() → parseRestore → createRoom resurrects the same arena, craters included', () => {
+    const room = createRoom('Crater Lake')
+    const world = room.sim.world
+    // Carve: park a bullet inside the first destructible block and let the sim resolve the hit.
+    const target = world.blocks.find((b) => b.structure === StructureType.EARTH)
+    expect(target).toBeDefined()
+    if (!target) return
+    world.bullets.push({
+      x: target.x + target.w / 2,
+      y: target.y + 1,
+      vx: 0,
+      vy: 0,
+      radius: 6,
+      life: 1,
+      owner: 0,
+      damage: 22,
+    })
+    const versionBefore = world.terrainVersion
+    room.step(1 / 30)
+    expect(world.terrainVersion).toBeGreaterThan(versionBefore) // the crater landed
+
+    const restore = parseRestore(room.persisted())
+    expect(restore).toBeDefined()
+    const twin = createRoom('Crater Lake', restore)
+    expect(JSON.stringify(twin.sim.world.blocks)).toBe(JSON.stringify(world.blocks))
+    expect(JSON.stringify(twin.sim.world.water)).toBe(JSON.stringify(world.water))
+  })
+
+  test('a corrupt or foreign persisted blob is rejected (a fresh room, never a crash)', () => {
+    expect(parseRestore('{not json')).toBeUndefined()
+    expect(parseRestore('{"seed":"nope"}')).toBeUndefined()
+    expect(parseRestore('null')).toBeUndefined()
   })
 })

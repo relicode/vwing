@@ -82,39 +82,55 @@ export const createEngine = async (): Promise<Engine> => {
 
   let sim = buildSim()
   const player = (): Combatant => sim.combatants[0]
-  const playerShip = (): Ship => player().ship
 
   const listeners = new Set<() => void>()
   const chargePct = (ship: Ship): number => Math.round((ship.charge / SECONDARY_MAX_CHARGE) * 100)
-  let status: EngineStatus = {
-    phase,
-    score: 0,
-    lives: SHIP_START_LIVES,
-    best,
-    weapon: playerShip().weapon,
-    charge: chargePct(playerShip()),
+  // Whole percents so the dirty-check below doesn't re-render React at 60fps mid-capture.
+  const capturePct = (ownerId: number): number => {
+    const base = sim.world.bases.find((b) => b.owner === ownerId)
+    return base ? Math.round(base.capture * 100) : 0
   }
+  const readStatus = (): EngineStatus => {
+    const p = player()
+    return {
+      phase,
+      score: Math.floor(p.score),
+      lives: p.lives,
+      best,
+      weapon: p.ship.weapon,
+      charge: chargePct(p.ship),
+      troops: Math.floor(p.ship.troops),
+      squad: p.ship.squad,
+      homeCapture: capturePct(PLAYER_ID),
+      enemyCapture: capturePct(BOT_ID),
+      respawnIn: Math.ceil(sim.respawnIn(PLAYER_ID)),
+    }
+  }
+  let status: EngineStatus = readStatus()
 
   const publish = (): void => {
-    const p = player()
-    const score = Math.floor(p.score)
-    const charge = chargePct(p.ship)
+    const next = readStatus()
     if (
-      status.phase === phase &&
-      status.score === score &&
-      status.lives === p.lives &&
-      status.best === best &&
-      status.weapon === p.ship.weapon &&
-      status.charge === charge
+      status.phase === next.phase &&
+      status.score === next.score &&
+      status.lives === next.lives &&
+      status.best === next.best &&
+      status.weapon === next.weapon &&
+      status.charge === next.charge &&
+      status.troops === next.troops &&
+      status.squad === next.squad &&
+      status.homeCapture === next.homeCapture &&
+      status.enemyCapture === next.enemyCapture &&
+      status.respawnIn === next.respawnIn
     ) {
       return
     }
-    status = { phase, score, lives: p.lives, best, weapon: p.ship.weapon, charge }
+    status = next
     for (const listener of listeners) listener()
   }
 
-  const endGame = (): void => {
-    phase = GamePhase.GAME_OVER
+  const endGame = (victory: boolean): void => {
+    phase = victory ? GamePhase.VICTORY : GamePhase.GAME_OVER
     const finalScore = Math.floor(player().score)
     if (finalScore > best) {
       best = finalScore
@@ -125,8 +141,10 @@ export const createEngine = async (): Promise<Engine> => {
   const step = (dt: number): void => {
     if (phase === GamePhase.PLAYING) {
       const events = sim.step(dt)
-      // The run ends the moment the human is out of lives.
-      if (events.some((e) => e.eliminated && e.victimKind === ShipKind.PLAYER)) endGame()
+      // Victory first: the bot eliminated (base captured + ship downed) wins the run, even on
+      // the freak frame where both ships die. Otherwise the human's elimination ends it.
+      if (events.some((e) => e.eliminated && e.victimKind === ShipKind.BOT)) endGame(true)
+      else if (events.some((e) => e.eliminated && e.victimKind === ShipKind.PLAYER)) endGame(false)
     } else {
       // Title + game-over: just let debris and beams fade as ambiance (terrain is static).
       const world = sim.world

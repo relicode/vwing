@@ -1,9 +1,18 @@
 import { describe, expect, test } from 'bun:test'
 
 import { fireRail } from '$/game/beams'
-import { RAIL_DAMAGE, ShipKind, WeaponKind, WORLD_HEIGHT, WORLD_WIDTH } from '$/game/constants'
+import {
+  DeviceKind,
+  RAIL_DAMAGE,
+  ShipKind,
+  StructureType,
+  Surface,
+  WeaponKind,
+  WORLD_HEIGHT,
+  WORLD_WIDTH,
+} from '$/game/constants'
 import { createRng } from '$/game/rng'
-import type { Ship, World } from '$/game/types'
+import type { Device, Ship, World } from '$/game/types'
 
 const makeShip = (over: Partial<Ship>): Ship => ({
   id: 0,
@@ -15,6 +24,7 @@ const makeShip = (over: Partial<Ship>): Ship => ({
   angle: 0,
   radius: 12,
   thrusting: false,
+  reversing: false,
   fireCooldown: 0,
   invuln: 0,
   health: 100,
@@ -23,6 +33,9 @@ const makeShip = (over: Partial<Ship>): Ship => ({
   charge: 100,
   altCooldown: 0,
   disabled: 0,
+  troops: 0,
+  squad: WeaponKind.GRENADE,
+  deployCooldown: 0,
   ...over,
 })
 
@@ -36,6 +49,7 @@ const makeWorld = (ships: Ship[]): World => ({
   blocks: [],
   terrainVersion: 0,
   water: [],
+  bases: [],
   shake: 0,
   rng: createRng(1),
 })
@@ -70,5 +84,65 @@ describe('fireRail', () => {
     expect(fireRail(world, shooter)).toBeUndefined()
     expect(offAxis.health).toBe(100)
     expect(world.beams).toHaveLength(1)
+  })
+
+  test('terrain blocks the lance: a ship behind a wall is safe and the beam stops at the face', () => {
+    const shooter = makeShip({ id: 0, x: 0, y: 0, angle: 0 }) // facing +x
+    const bunkered = makeShip({ id: 1, x: 600, y: 0 })
+    const world = makeWorld([shooter, bunkered])
+    world.blocks = [{ x: 300, y: -200, w: 80, h: 400, structure: StructureType.EARTH, surface: Surface.EARTH }]
+    expect(fireRail(world, shooter)).toBeUndefined()
+    expect(bunkered.health).toBe(100) // the mountain ate the shot
+    expect(world.beams[0].x2).toBeCloseTo(300) // beam burns into the wall face, not through it
+  })
+
+  test('a ship in front of a wall is still fair game', () => {
+    const shooter = makeShip({ id: 0, x: 0, y: 0, angle: 0 })
+    const exposed = makeShip({ id: 1, x: 200, y: 0 })
+    const world = makeWorld([shooter, exposed])
+    world.blocks = [{ x: 300, y: -200, w: 80, h: 400, structure: StructureType.EARTH, surface: Surface.EARTH }]
+    expect(fireRail(world, shooter)).toBe(exposed)
+    expect(exposed.health).toBe(100 - RAIL_DAMAGE)
+  })
+
+  test('the lance pierces every trooper along the beam — either side — but not past terrain', () => {
+    const trooper = (x: number, owner: number): Device => ({
+      kind: DeviceKind.INFANTRY,
+      x,
+      y: 0,
+      vx: 0,
+      vy: 0,
+      owner,
+      radius: 9,
+      guard: false,
+      attached: true,
+      swim: 0,
+      sinking: 0,
+      chute: -1,
+      pickupLock: 0,
+      walkDir: 1,
+      facing: 1,
+      groundLeft: 0,
+      groundRight: 0,
+      fireCooldown: 99,
+      kneel: 0,
+      running: false,
+      slide: 0,
+      burning: 0,
+      stun: 0,
+    })
+    const shooter = makeShip({ id: 0, x: 0, y: 0, angle: 0 }) // facing +x
+    const world = makeWorld([shooter])
+    world.devices = [
+      trooper(100, 1), // skewered
+      trooper(200, 1), // skewered too — flesh doesn't stop the lance
+      trooper(150, 0), // the firer's own man: friendly fire is real — skewered with them
+      trooper(500, 1), // behind the wall: safe
+    ]
+    world.blocks = [{ x: 300, y: -200, w: 80, h: 400, structure: StructureType.EARTH, surface: Surface.EARTH }]
+    fireRail(world, shooter)
+    const survivors = world.devices.filter((d) => d.kind === DeviceKind.INFANTRY)
+    expect(survivors).toHaveLength(1)
+    expect(survivors[0]?.x).toBe(500)
   })
 })

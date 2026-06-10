@@ -2,31 +2,26 @@ import { describe, expect, test } from 'bun:test'
 
 import { circleRectContact } from '$/game/collision'
 import {
-  BOT_SPAWN_OFFSET_PX,
+  BAND_SKY_BOTTOM,
+  BASE_PAD_CELLS,
+  BASE_PAD_Y_FRAC,
   MAX_AUTHORED_WATER,
+  SEA_SPILL_FRAC,
   SHIP_RADIUS,
+  SPAWN_ALTITUDE,
   StructureType,
   Surface,
   VOXEL_CELL,
+  WALL_THICKNESS,
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from '$/game/constants'
 import { createRng } from '$/game/rng'
-import { createTerrain } from '$/game/terrain-map'
-import type { Vec2 } from '$/game/types'
-import { createVoxelTerrain } from '$/game/voxel'
+import { basePadCenters, createTerrain, spawnPoints } from '$/game/terrain-map'
+import { createVoxelTerrain, voxelToBlocks } from '$/game/voxel'
 import { waterSurfaceAt } from '$/game/water'
 
 const SEEDS = [1, 0xc0ffee, 0x1234, 42, 0xdeadbeef]
-
-// The spawn points the world must keep clear (campaign player/bot + the deathmatch respawn anchors).
-const spawnPoints = (): Vec2[] => [
-  { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT * 0.4 },
-  { x: WORLD_WIDTH / 2 + BOT_SPAWN_OFFSET_PX, y: WORLD_HEIGHT * 0.4 },
-  ...[0.18, 0.34, 0.5, 0.66, 0.82].flatMap((fx) =>
-    [0.22, 0.4].map((fy) => ({ x: WORLD_WIDTH * fx, y: WORLD_HEIGHT * fy }))
-  ),
-]
 
 describe('createTerrain (procedural arena)', () => {
   test('is deterministic per seed (same seed → identical blocks + water)', () => {
@@ -95,6 +90,104 @@ describe('createTerrain (procedural arena)', () => {
       const pinned = vt.pinned.reduce((sum, pin) => sum + pin.size, 0)
       expect(filled).toBeGreaterThan(0)
       expect(pinned / filled).toBeLessThan(0.1) // pinned (floating) cells are a small minority
+    }
+  })
+
+  test('both home pads are flat indestructible metal at pad level with an open approach column above', () => {
+    const padY = Math.round((WORLD_HEIGHT * BASE_PAD_Y_FRAC) / VOXEL_CELL) * VOXEL_CELL
+    const halfSpan = (BASE_PAD_CELLS / 2 - 1) * VOXEL_CELL // just inside the pad edges
+    for (const seed of SEEDS) {
+      const { blocks, water } = createTerrain(createRng(seed))
+      for (const pad of basePadCenters()) {
+        for (const dx of [-halfSpan, 0, halfSpan]) {
+          const x = pad.x + dx
+          // The surface at pad level: the metal landing slab (a bedrock anchor — the barracks
+          // always stands on ground no shot can carve out from under it).
+          const surfaceBlock = blocks.filter((b) => x >= b.x && x < b.x + b.w && b.y === padY).at(-1)
+          expect(surfaceBlock?.structure).toBe(StructureType.METAL)
+          // Open air from the pad top up to the spawn perch (nothing overhangs the approach).
+          const obstructed = blocks.some(
+            (b) => x >= b.x && x < b.x + b.w && b.y + b.h > padY - SPAWN_ALTITUDE && b.y < padY
+          )
+          expect(obstructed).toBe(false)
+          expect(waterSurfaceAt(water, x, padY - VOXEL_CELL)).toBeUndefined() // no water over the pad
+        }
+      }
+    }
+  })
+
+  test('the re-meshed voxel terrain stays grid-aligned: no bleed over the walls, no water overlap', () => {
+    // Guards the WALL_THICKNESS-is-a-cell-multiple invariant: an off-grid frame makes every
+    // wall-adjacent column round outward when voxelized, over the frame and the water lips.
+    for (const seed of SEEDS) {
+      const { blocks, water } = createTerrain(createRng(seed))
+      const vt = createVoxelTerrain(blocks, water)
+      for (const b of voxelToBlocks(vt)) {
+        if (b.structure !== StructureType.EARTH) continue
+        expect(b.x).toBeGreaterThanOrEqual(WALL_THICKNESS)
+        expect(b.x + b.w).toBeLessThanOrEqual(WORLD_WIDTH - WALL_THICKNESS)
+        expect(b.y + b.h).toBeLessThanOrEqual(WORLD_HEIGHT - WALL_THICKNESS)
+        for (const body of water) {
+          const ox = Math.min(b.x + b.w, body.x + body.w) - Math.max(b.x, body.x)
+          const oy = Math.min(b.y + b.h, body.y + body.h) - Math.max(b.y, body.y)
+          expect(ox > 0.5 && oy > 0.5).toBe(false) // solid earth never sits inside a water rect
+        }
+      }
+    }
+  })
+
+  test('a floating archipelago of narrow isles hangs in the gulf over the central sea', () => {
+    const snap = (v: number): number => Math.round(v / VOXEL_CELL) * VOXEL_CELL
+    const minTop = snap(WORLD_HEIGHT * BAND_SKY_BOTTOM) + 2 * VOXEL_CELL
+    const seaSpill = snap(WORLD_HEIGHT * SEA_SPILL_FRAC)
+    for (const seed of SEEDS) {
+      const { blocks, water } = createTerrain(createRng(seed))
+      const sea = water[0] // the sea is the first body pushed
+      // Isle bodies: earth blocks floating fully inside the gulf box (caps are exactly a cell tall).
+      const isles = blocks.filter(
+        (b) =>
+          b.structure === StructureType.EARTH &&
+          b.h > VOXEL_CELL &&
+          b.x >= sea.x &&
+          b.x + b.w <= sea.x + sea.w &&
+          b.y >= minTop &&
+          b.y + b.h <= seaSpill
+      )
+      expect(isles.length).toBeGreaterThanOrEqual(3) // the gulf is populated, not empty
+      const vt = createVoxelTerrain(blocks, water)
+      const cellIdx = (x: number, y: number): number =>
+        Math.floor(y / VOXEL_CELL) * vt.cols + Math.floor(x / VOXEL_CELL)
+      for (const isle of isles) {
+        expect(isle.w).toBeLessThanOrEqual(24 * VOXEL_CELL) // narrow: the bot's dodge slips around
+        expect(isle.y + isle.h).toBeLessThanOrEqual(seaSpill - 2 * VOXEL_CELL) // low-flying lane over the water
+        // Inset from the gulf walls: cell-adjacency to the grounded sea-lip mesas would weld the
+        // isle onto the mainland, and the voxelizer would never pin it.
+        expect(isle.x).toBeGreaterThanOrEqual(sea.x + 2 * VOXEL_CELL)
+        expect(isle.x + isle.w).toBeLessThanOrEqual(sea.x + sea.w - 2 * VOXEL_CELL)
+        // And it really floats: its core belongs to a pinned (ungrounded) component.
+        const core = cellIdx(isle.x + isle.w / 2, isle.y + isle.h / 2)
+        expect(vt.pinned.some((pin) => pin.has(core))).toBe(true)
+      }
+      // Every isle pair keeps an air channel on at least one axis so ships thread the archipelago.
+      const gap = 6 * VOXEL_CELL
+      for (let i = 0; i < isles.length; i += 1) {
+        for (let j = i + 1; j < isles.length; j += 1) {
+          const a = isles[i]
+          const b = isles[j]
+          const tooClose =
+            a.x < b.x + b.w + gap && b.x < a.x + a.w + gap && a.y < b.y + b.h + gap && b.y < a.y + a.h + gap
+          expect(tooClose).toBe(false)
+        }
+      }
+    }
+  })
+
+  test('the world is substantially ground: destructible earth covers >= 30% of the interior', () => {
+    const interior = (WORLD_WIDTH - 2 * WALL_THICKNESS) * (WORLD_HEIGHT - 2 * WALL_THICKNESS)
+    for (const seed of SEEDS) {
+      const { blocks } = createTerrain(createRng(seed))
+      const area = blocks.reduce((sum, b) => (b.structure === StructureType.EARTH ? sum + b.w * b.h : sum), 0)
+      expect(area / interior).toBeGreaterThanOrEqual(0.3)
     }
   })
 })

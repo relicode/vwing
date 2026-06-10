@@ -1,12 +1,4 @@
-import type {
-  DeviceKind,
-  GamePhase,
-  InfantryWeapon,
-  ShipKind,
-  StructureType,
-  Surface,
-  WeaponKind,
-} from '$/game/constants'
+import type { BaseAlarm, DeviceKind, GamePhase, ShipKind, StructureType, Surface, WeaponKind } from '$/game/constants'
 
 export type Vec2 = { x: number; y: number }
 
@@ -23,7 +15,8 @@ export type Ship = {
   vy: number
   angle: number // heading in radians; forward = (cos, sin)
   radius: number
-  thrusting: boolean // drives the engine-flame render
+  thrusting: boolean // drives the engine-flame render (and the exhaust's trooper ignition)
+  reversing: boolean // retro nozzles braking — two smaller forward plumes, same fire hazard
   fireCooldown: number // s until the next shot is allowed
   invuln: number // s of remaining spawn invulnerability
   health: number // hull points; ship is destroyed at <= 0
@@ -32,6 +25,9 @@ export type Ship = {
   charge: number // secondary energy (0..SECONDARY_MAX_CHARGE); spent per use, regenerates
   altCooldown: number // s until the secondary can fire again
   disabled: number // s of EMP lockout remaining (no thrust/turn/fire)
+  troops: number // troopers aboard (0..TROOP_BAY_CAPACITY; float — barracks loading accrues fractionally, deploy needs >= 1)
+  squad: WeaponKind // the squad's specialist kind, rolled per (re)spawn independently of `weapon`
+  deployCooldown: number // s until the next trooper can be dropped
   lastHitBy?: number // id of the ship whose fire last damaged this one (kill attribution); cleared on respawn
 }
 
@@ -44,9 +40,9 @@ export type Bullet = {
   life: number // s remaining
   owner: number // firing ship's id; cannot damage that ship
   damage: number // hp removed on a ship hit (primary = BULLET_DAMAGE)
-  push?: number // knockback impulse applied to a hit ship (water cannon)
-  burn?: boolean // incendiary: scorches grass→earth on terrain hit (no carve)
-  wet?: boolean // water cannon: wets earth→grass + pools on terrain hit (no carve)
+  push?: number // knockback impulse applied to a hit ship (water cannon); washes a trooper into a skid
+  burn?: boolean // flamethrower: scorches grass→earth on terrain hit (no carve), sets a hit trooper alight
+  wet?: boolean // water cannon: wets earth→grass + pools on terrain hit (no carve), douses a burning trooper
   color?: number // render tint override (undefined = owner-based default)
 }
 
@@ -101,7 +97,8 @@ export type Device =
       vy: number
       owner: number
       radius: number
-      weapon: InfantryWeapon // RIFLE (straight shots) or GRENADE (lobbed) — rolled on deploy
+      heavy?: WeaponKind // undefined = rifleman; set = specialist carrying that man-portable heavy (rolled on deploy)
+      guard: boolean // a base-garrison sentry: patrols its barracks, hides indoors from enemy ships, never boards a ship
       attached: boolean // true once it lands on a surface (then it patrols + shoots)
       swim: number // s of floating left while in water (0 = on land / airborne); drowns at 0
       sinking: number // s of sinking left after drowning (> 0 = a corpse descending + fading)
@@ -114,7 +111,9 @@ export type Device =
       fireCooldown: number
       kneel: number // s of post-launch crouch remaining (grenadier braces to fire its bazooka)
       running: boolean // sprinting clear of a point-blank threat (holds fire); drives the run pose
-      slide: number // px/s lateral slide from an ice slip (0 = firm footing); decays + holds fire
+      slide: number // px/s lateral slide from an ice slip or a water-jet wash (0 = firm footing); decays + holds fire
+      burning: number // s of fire left before the trooper collapses (0 = not alight); water douses it
+      stun: number // s of EMP seize-up remaining (a landed unit can't move or fire)
     }
   | {
       kind: DeviceKind.GRENADE // gravity arc → shrapnel ring on fuse
@@ -179,6 +178,21 @@ export type WaterBody = {
   h: number // depth from the surface to the bottom
 }
 
+// A home barracks: it garrisons troopers for its owner ship to load aboard, and is the
+// side's lifeline — enemy troopers capturing it cut the owner's respawns (see bases.ts).
+// The garrison doubles as the base's hitpoints: it fields live guards around the pad, and
+// attackers who clear them whittle the housed count before the capture timer can start.
+export type Base = {
+  owner: number // ship id whose respawns this barracks sustains
+  x: number // pad center, world px
+  y: number // pad top surface, world px (the building sits on this line)
+  garrison: number // housed troopers (0..BASE_GARRISON_CAP; float accumulator) — the base's HP pool
+  capture: number // enemy capture progress 0..1; >= 1 = captured (respawns cut)
+  capturedBy?: number // capturing ship id while captured; undefined = the owner holds it
+  alarm: BaseAlarm // the garrison's posture this tick (patrol / hide indoors / sortie), set by stepBases
+  door: number // s until the next guard can step out the door
+}
+
 // The full mutable simulation. Owned by the engine closure (never module-level).
 // `ships` holds every combatant; ships[0] / kind PLAYER is the camera-followed human.
 export type World = {
@@ -191,6 +205,7 @@ export type World = {
   blocks: Block[] // collision/render terrain — rectangles greedily meshed from the voxel grid + debris
   terrainVersion: number // bumped whenever `blocks` changes (carve / falling debris); drives render caching
   water: WaterBody[] // bodies the ship can submerge into
+  bases: Base[] // home barracks (CAMPAIGN populates one per side; DEATHMATCH leaves it empty)
   shake: number // screen-shake amplitude (px); bumped by explosions, decays each frame
   rng: Rng
 }
@@ -208,4 +223,9 @@ export type EngineStatus = {
   lives: number
   weapon: WeaponKind // the PLAYER ship's current secondary
   charge: number // the PLAYER ship's secondary energy as a 0..100 percent (for the HUD bar)
+  troops: number // whole troopers aboard the PLAYER ship (bay pips)
+  squad: WeaponKind // the PLAYER squad's specialist kind
+  homeCapture: number // enemy capture progress on the player's base, whole percent 0..100 (alarm)
+  enemyCapture: number // the player's capture progress on the enemy base, whole percent 0..100
+  respawnIn: number // whole seconds until the player's ship re-enters; 0 = flying
 }

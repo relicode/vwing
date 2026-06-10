@@ -11,6 +11,11 @@ const INITIAL_STATUS: EngineStatus = {
   lives: SHIP_START_LIVES,
   weapon: WeaponKind.SCATTERGUN,
   charge: 0,
+  troops: 0,
+  squad: WeaponKind.SCATTERGUN,
+  homeCapture: 0,
+  enemyCapture: 0,
+  respawnIn: 0,
 }
 
 export type EngineBoot = { engine: Engine | undefined; error: string | undefined }

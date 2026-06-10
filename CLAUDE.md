@@ -4,13 +4,18 @@ Guidance for working in this repo.
 
 ## What this is
 
-An **XPilot-style 2D space dogfighter** — Newtonian flight (thrust, rotation, inertia) under a
-constant global **gravity**, in an arena larger than the screen with a camera that follows the ship.
-PixiJS renders the game in a `<canvas>`; **React + MUI** provide the surrounding chrome (title, HUD,
-game-over). There is **no Astro** — only React + MUI for the wrappers.
+An **XPilot-style 2D dogfighter turned indirect-minion war game** (Settlers/Populous lineage) —
+Newtonian flight (thrust, rotation, inertia) under a constant global **gravity**, over a large
+destructible voxel-terrain arena with a camera that follows the ship. PixiJS renders the game in a
+`<canvas>`; **React + MUI** provide the surrounding chrome (title, HUD, game-over/victory).
 
-PvP is the end goal; the current scope is **single-player** (the ship vs. drifting asteroids). Ships
-are modeled as data in a list so AI bots / additional players slot in later.
+**Infantry is the heart of the game**: every ship carries a troop bay loaded at its home barracks,
+paradrops autonomous troopers (riflemen + one-in-five specialists carrying a man-portable version
+of the squad's heavy weapon kind), rescues its own and *recruits* enemy troopers by slow contact —
+and wins by capturing the enemy barracks with troops (a captured base cuts respawns; dying then is
+elimination → VICTORY). The campaign pits the player vs. an AI bot that plays the same game
+(REARM / ASSAULT / DEFEND goal layer); online DEATHMATCH stays a baseless frag-fest. Deploy keys:
+**X / L** (fire Space/J/Z, secondary K/Shift).
 
 ## Stack & toolchain
 

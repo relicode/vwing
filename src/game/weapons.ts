@@ -11,19 +11,14 @@ import {
   FLAK_FUSE,
   FLAK_RADIUS,
   FLAK_SPEED,
+  FLAMETHROWER_DAMAGE,
+  FLAMETHROWER_LIFE,
+  FLAMETHROWER_PELLETS,
+  FLAMETHROWER_SPEED,
+  FLAMETHROWER_SPREAD,
   GRENADE_FUSE,
   GRENADE_RADIUS,
   GRENADE_SPEED,
-  INCENDIARY_DAMAGE,
-  INCENDIARY_LIFE,
-  INCENDIARY_PELLETS,
-  INCENDIARY_SPEED,
-  INCENDIARY_SPREAD,
-  INFANTRY_FIRE_INTERVAL,
-  INFANTRY_GRENADE_CHANCE,
-  INFANTRY_PICKUP_DELAY,
-  INFANTRY_RADIUS,
-  InfantryWeapon,
   MINE_ARM_TIME,
   MINE_BLAST_RADIUS,
   MINE_COUNT,
@@ -165,36 +160,6 @@ const spawnMines = (world: World, ship: Ship): void => {
   }
 }
 
-// Deploy a single trooper just below the ship (held-fire streams them out one per cadence).
-// One in five carries a grenade launcher; the rest carry rifles.
-const spawnInfantry = (world: World, ship: Ship): void => {
-  const weapon = world.rng() < INFANTRY_GRENADE_CHANCE ? InfantryWeapon.GRENADE : InfantryWeapon.RIFLE
-  const walkDir = world.rng() < 0.5 ? -1 : 1
-  world.devices.push({
-    kind: DeviceKind.INFANTRY,
-    x: ship.x + randRange(world.rng, -8, 8),
-    y: ship.y + ship.radius + INFANTRY_RADIUS, // clear the whole (now taller) body below the hull
-    vx: ship.vx * 0.4,
-    vy: Math.max(0, ship.vy * 0.4),
-    owner: ship.id,
-    radius: INFANTRY_RADIUS,
-    weapon,
-    attached: false,
-    swim: 0,
-    sinking: 0,
-    chute: -1,
-    pickupLock: INFANTRY_PICKUP_DELAY,
-    walkDir,
-    facing: walkDir,
-    groundLeft: 0,
-    groundRight: 0,
-    fireCooldown: randRange(world.rng, 0, INFANTRY_FIRE_INTERVAL),
-    kneel: 0,
-    running: false,
-    slide: 0,
-  })
-}
-
 const spawnWell = (world: World, ship: Ship): void => {
   world.devices.push({
     kind: DeviceKind.WELL,
@@ -240,14 +205,14 @@ export const fireSecondary = (world: World, ship: Ship): Ship[] => {
         color: Color.WATER_EDGE,
       })
       return []
-    case WeaponKind.INCENDIARY:
+    case WeaponKind.FLAMETHROWER:
       spawnBurst(world.bullets, ship, world.rng, {
-        count: INCENDIARY_PELLETS,
-        spread: INCENDIARY_SPREAD,
-        speed: INCENDIARY_SPEED,
-        life: INCENDIARY_LIFE,
-        damage: INCENDIARY_DAMAGE,
-        burn: true, // scorches grass → bare earth on a terrain hit
+        count: FLAMETHROWER_PELLETS,
+        spread: FLAMETHROWER_SPREAD,
+        speed: FLAMETHROWER_SPEED,
+        life: FLAMETHROWER_LIFE,
+        damage: FLAMETHROWER_DAMAGE,
+        burn: true, // scorches grass → bare earth on a terrain hit; sets a hit trooper alight
         color: Color.THRUST,
       })
       return []
@@ -269,9 +234,6 @@ export const fireSecondary = (world: World, ship: Ship): Ship[] => {
       return []
     case WeaponKind.MINES:
       spawnMines(world, ship)
-      return []
-    case WeaponKind.INFANTRY:
-      spawnInfantry(world, ship)
       return []
     case WeaponKind.SINGULARITY:
       spawnWell(world, ship)
