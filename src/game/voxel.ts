@@ -432,7 +432,7 @@ export const carveVoxel = (vt: VoxelTerrain, x: number, y: number, radius: numbe
   return true
 }
 
-// Scorch the GRASS surface to bare EARTH inside a circle (incendiary). Structure is untouched
+// Scorch the GRASS surface to bare EARTH inside a circle (flamethrower). Structure is untouched
 // (no carve); cancels any pending regrow on the burned cells. Re-meshes if anything changed.
 // Returns whether the terrain changed (so the caller refreshes derived blocks).
 export const burnSurface = (vt: VoxelTerrain, x: number, y: number, radius: number): boolean => {

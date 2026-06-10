@@ -647,19 +647,10 @@ const drawStunned = (g: Graphics, d: InfantrySprite, time: number): void => {
   }
 }
 
-// Dispatch a trooper to its state pose. stateOf (devices.ts) is the single source of truth for the
-// behavioural state, so the pose ladder never drifts from the sim. The ice slide is a transient
-// stateOf intentionally doesn't model (it would otherwise read as WALKING/STANDING), so it's caught
-// first and routed to drawRunning's skid branch. Burning and the EMP stun are field-keyed overlays
-// drawn on top of whatever pose the trooper holds.
-const drawInfantry = (g: Graphics, d: InfantrySprite, time: number, selfId: number): void => {
-  const f = d.facing >= 0 ? 1 : -1
-  const kit = infantryKit(d, selfId)
-  drawInfantryPose(g, d, kit, time, f)
-  if (d.burning > 0) drawBurning(g, d, time)
-  if (d.stun > 0) drawStunned(g, d, time)
-}
-
+// A trooper's state pose. stateOf (devices.ts) is the single source of truth for the behavioural
+// state, so the pose ladder never drifts from the sim. The ice slide is a transient stateOf
+// intentionally doesn't model (it would otherwise read as WALKING/STANDING), so it's caught
+// first and routed to drawRunning's skid branch.
 const drawInfantryPose = (g: Graphics, d: InfantrySprite, kit: Kit, time: number, f: number): void => {
   if (d.attached && d.slide !== 0 && !d.running) {
     drawRunning(g, d, kit, time, f)
@@ -691,6 +682,16 @@ const drawInfantryPose = (g: Graphics, d: InfantrySprite, kit: Kit, time: number
       drawStanding(g, d, kit, time, f, false)
       break
   }
+}
+
+// Pose first, then the field-keyed overlays — burning and the EMP stun ride on top of whatever
+// pose the trooper holds (the precedent the ice slide set: transients never fork stateOf).
+const drawInfantry = (g: Graphics, d: InfantrySprite, time: number, selfId: number): void => {
+  const f = d.facing >= 0 ? 1 : -1
+  const kit = infantryKit(d, selfId)
+  drawInfantryPose(g, d, kit, time, f)
+  if (d.burning > 0) drawBurning(g, d, time)
+  if (d.stun > 0) drawStunned(g, d, time)
 }
 
 const drawDevice = (g: Graphics, d: Device, time: number, selfId: number): void => {
