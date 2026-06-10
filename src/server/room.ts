@@ -35,6 +35,7 @@ const sanitizeInput = (raw: InputSnapshot | undefined): InputSnapshot => {
   return {
     turn: raw.turn > 0 ? 1 : raw.turn < 0 ? -1 : 0,
     thrusting: raw.thrusting === true,
+    reversing: raw.reversing === true,
     firing: raw.firing === true,
     altFiring: raw.altFiring === true,
     deploying: raw.deploying === true, // absent on a stale client → safely false

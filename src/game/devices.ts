@@ -115,6 +115,8 @@ import {
   PARACHUTE_OPEN_TIME,
   PARACHUTE_SWAY,
   PARACHUTE_TERMINAL,
+  RETRO_IGNITE_LEN,
+  RETRO_IGNITE_RADIUS,
   Surface,
   TROOP_BAY_CAPACITY,
   WALL_THICKNESS,
@@ -140,6 +142,14 @@ const hasLineOfSight = (x1: number, y1: number, x2: number, y2: number, blocks: 
 // *above* its block, so this only fires when one is wrongly embedded (a kill condition).
 const insideAnyBlock = (x: number, y: number, blocks: Block[]): boolean =>
   blocks.some((b) => x > b.x && x < b.x + b.w && y > b.y && y < b.y + b.h)
+
+// Solid rock just ahead at body height — a step face or wall rising from the patrol block.
+// Lateral movers treat it like a patrol edge: walking into a cliff turns a trooper around, it
+// never grinds it into the embedded-death check (which is for terrain MOVING into a unit —
+// falling debris — not for a unit strolling into terrain). Probed past the leading edge so the
+// turn happens before the body ever clips the face.
+const wallAhead = (blocks: Block[], device: InfantryDevice, dir: number): boolean =>
+  insideAnyBlock(device.x + dir * (device.radius + 2), device.y, blocks)
 
 // A flying device's body touching any terrain block (walls included — the bedrock frame lives
 // in world.blocks). Projectile devices detonate or fizzle here instead of tunnelling through.
@@ -564,15 +574,19 @@ const clampToGround = (device: InfantryDevice, x: number): number => {
   return max <= min ? (device.groundLeft + device.groundRight) / 2 : clamp(x, min, max)
 }
 
-// March toward a target x along the supporting block (clamped to its edges) to be picked up.
-const walkToward = (device: InfantryDevice, targetX: number, dt: number): void => {
+// March toward a target x along the supporting block (clamped to its edges, halted by a wall
+// face) to be picked up.
+const walkToward = (world: World, device: InfantryDevice, targetX: number, dt: number): void => {
   device.walkDir = targetX >= device.x ? 1 : -1
-  device.x = clampToGround(device, device.x + device.walkDir * INFANTRY_WALK_SPEED * dt)
+  if (!wallAhead(world.blocks, device, device.walkDir)) {
+    device.x = clampToGround(device, device.x + device.walkDir * INFANTRY_WALK_SPEED * dt)
+  }
   device.facing = device.walkDir
 }
 
-// Walk back and forth along the supporting block, turning at its edges (never off it) and
-// occasionally reversing on a whim. `facing` tracks the movement direction for the sprite.
+// Walk back and forth along the supporting block, turning at its edges (never off it) and at
+// any wall face rising from it, and occasionally reversing on a whim. `facing` tracks the
+// movement direction for the sprite.
 const patrolInfantry = (device: InfantryDevice, world: World, dt: number): void => {
   const min = device.groundLeft + device.radius
   const max = device.groundRight - device.radius
@@ -581,6 +595,7 @@ const patrolInfantry = (device: InfantryDevice, world: World, dt: number): void 
     return
   }
   if (world.rng() < INFANTRY_WALK_TURN_CHANCE) device.walkDir = -device.walkDir
+  if (wallAhead(world.blocks, device, device.walkDir)) device.walkDir = -device.walkDir
   device.x += device.walkDir * INFANTRY_WALK_SPEED * dt
   if (device.x <= min) {
     device.x = min
@@ -594,7 +609,7 @@ const patrolInfantry = (device: InfantryDevice, world: World, dt: number): void 
 
 // A landed unit between firing actions: walk toward a slow rescuing owner sharing its block
 // (to be scooped up), otherwise patrol it. The vertical gate keeps the rescuer to a ship resting
-// at the unit's level (not hovering above), within reach of the pickup overlap once it arrives.
+// at the unit's level (not hovering above), within reach of the boarding touch once it arrives.
 const repositionLanded = (world: World, device: InfantryDevice, dt: number): void => {
   const rescuer = rescuingOwner(world, device)
   if (
@@ -603,7 +618,7 @@ const repositionLanded = (world: World, device: InfantryDevice, dt: number): voi
     rescuer.x <= device.groundRight &&
     Math.abs(rescuer.y - device.y) <= INFANTRY_PICKUP_RADIUS + device.radius
   ) {
-    walkToward(device, rescuer.x, dt)
+    walkToward(world, device, rescuer.x, dt)
   } else {
     patrolInfantry(device, world, dt)
   }
@@ -886,6 +901,7 @@ const stepDevice = (
         if (world.rng() < INFANTRY_BURN_TURN_CHANCE) device.walkDir = -device.walkDir
         if (device.x <= device.groundLeft + device.radius) device.walkDir = 1
         else if (device.x >= device.groundRight - device.radius) device.walkDir = -1
+        if (wallAhead(world.blocks, device, device.walkDir)) device.walkDir = -device.walkDir
         device.facing = device.walkDir
         device.x = clampToGround(device, device.x + device.walkDir * INFANTRY_BURN_RUN_SPEED * dt)
         return true
@@ -895,6 +911,7 @@ const stepDevice = (
       // A water-cannon wash lands a unit in the same skid (see resolveBulletHits).
       if (device.slide !== 0 || (ground.surface === Surface.ICE && world.rng() < INFANTRY_ICE_SLIP_CHANCE)) {
         if (device.slide === 0) device.slide = device.walkDir * INFANTRY_SLIP_SPEED // a fresh slip
+        if (wallAhead(world.blocks, device, Math.sign(device.slide))) device.slide = 0 // skidded into a face: dead stop
         device.x = clampToGround(device, device.x + device.slide * dt)
         device.slide *= Math.exp(-INFANTRY_SLIP_FRICTION * dt)
         if (Math.abs(device.slide) < INFANTRY_SLIP_STOP_SPEED) device.slide = 0
@@ -932,11 +949,11 @@ const stepDevice = (
           threatDist = dist
         }
       }
-      // A hot engine is an open flame: any THRUSTING ship this close (either side — your own
-      // pilot's exhaust burns just as hot) clears a circle. A ship that has cut thrust and
-      // landed is safe to approach and board.
+      // A hot engine is an open flame: any ship burning EITHER engine this close (your own
+      // pilot's exhaust burns just as hot) clears a circle. A ship that has cut its engines
+      // and landed is safe to approach and board.
       for (const ship of world.ships) {
-        if (!ship.thrusting) continue
+        if (!ship.thrusting && !ship.reversing) continue
         const dist = Math.hypot(ship.x - device.x, ship.y - device.y)
         if (dist < INFANTRY_THRUST_PANIC_DIST && dist < threatDist) {
           threatX = ship.x
@@ -949,7 +966,10 @@ const stepDevice = (
         device.walkDir = away
         device.facing = away
         device.kneel = 0
-        device.x = clampToGround(device, device.x + away * INFANTRY_RUN_SPEED * dt)
+        // Cornered against a wall: hold there (still running scared) rather than grind into it.
+        if (!wallAhead(world.blocks, device, away)) {
+          device.x = clampToGround(device, device.x + away * INFANTRY_RUN_SPEED * dt)
+        }
         return true
       }
       device.running = false
@@ -970,7 +990,9 @@ const stepDevice = (
           device.walkDir = dir
           device.facing = dir
           device.kneel = 0
-          device.x = clampToGround(device, device.x + dir * INFANTRY_RUN_SPEED * dt)
+          if (!wallAhead(world.blocks, device, dir)) {
+            device.x = clampToGround(device, device.x + dir * INFANTRY_RUN_SPEED * dt)
+          }
           return true
         }
       }
@@ -1123,24 +1145,63 @@ export const updateDevices = (world: World, dt: number): Ship[] => {
   return [...dead]
 }
 
-// Set alight every trooper the exhaust plume of a thrusting ship washes over — the plume is a
-// segment reaching AFTERBURNER_IGNITE_LEN behind the hull along -nose. Fire doesn't read
-// uniforms: a pilot hovering on the burner over their own boarding queue torches it, which is
-// why a loading ship cuts thrust and LANDS (and why the men give a hot engine room).
-const igniteExhaust = (world: World, ship: Ship): void => {
-  const bx = -Math.cos(ship.angle)
-  const by = -Math.sin(ship.angle)
-  const x0 = ship.x + bx * ship.radius
-  const y0 = ship.y + by * ship.radius
+// Set alight every trooper a flame plume washes over: a segment of `len` from (x0, y0) along
+// the unit direction (dx, dy), `radius` wide. Fire doesn't read uniforms: a pilot hovering on
+// the burner over their own boarding queue torches it, which is why a loading ship cuts thrust
+// and LANDS (and why the men give a hot engine room).
+const ignitePlume = (
+  world: World,
+  x0: number,
+  y0: number,
+  dx: number,
+  dy: number,
+  len: number,
+  radius: number
+): void => {
   for (const d of world.devices) {
     if (d.kind !== DeviceKind.INFANTRY || d.sinking > 0 || d.swim > 0 || d.burning > 0) continue
-    // Closest point on the plume segment to the trooper ((bx, by) is unit length).
-    const t = clamp((d.x - x0) * bx + (d.y - y0) * by, 0, AFTERBURNER_IGNITE_LEN)
-    const px = x0 + bx * t
-    const py = y0 + by * t
-    if (Math.hypot(d.x - px, d.y - py) > AFTERBURNER_IGNITE_RADIUS + d.radius) continue
+    // Closest point on the plume segment to the trooper ((dx, dy) is unit length).
+    const t = clamp((d.x - x0) * dx + (d.y - y0) * dy, 0, len)
+    const px = x0 + dx * t
+    const py = y0 + dy * t
+    if (Math.hypot(d.x - px, d.y - py) > radius + d.radius) continue
     d.burning = INFANTRY_BURN_TIME
     spawnExplosion(world.particles, d.x, d.y, Color.THRUST, world.rng, 4)
+  }
+}
+
+// A ship's live engine flames: the main afterburner plume behind the hull while thrusting, and
+// the two smaller retro plumes reaching FORWARD past the nose while braking.
+const igniteExhaust = (world: World, ship: Ship): void => {
+  const nx = Math.cos(ship.angle)
+  const ny = Math.sin(ship.angle)
+  if (ship.thrusting) {
+    ignitePlume(
+      world,
+      ship.x - nx * ship.radius,
+      ship.y - ny * ship.radius,
+      -nx,
+      -ny,
+      AFTERBURNER_IGNITE_LEN,
+      AFTERBURNER_IGNITE_RADIUS
+    )
+  }
+  if (ship.reversing) {
+    // The retro nozzles sit on the nose's flanks; their plumes wash whatever the ship is
+    // backing away from (perpendicular offset = ±(px, py)).
+    const px = -ny * ship.radius * 0.55
+    const py = nx * ship.radius * 0.55
+    for (const side of [1, -1]) {
+      ignitePlume(
+        world,
+        ship.x + nx * ship.radius + side * px,
+        ship.y + ny * ship.radius + side * py,
+        nx,
+        ny,
+        RETRO_IGNITE_LEN,
+        RETRO_IGNITE_RADIUS
+      )
+    }
   }
 }
 
@@ -1157,7 +1218,7 @@ const igniteExhaust = (world: World, ship: Ship): void => {
 // pending indices.
 export const resolveInfantryContacts = (world: World): void => {
   for (const ship of world.ships) {
-    if (ship.thrusting) igniteExhaust(world, ship)
+    if (ship.thrusting || ship.reversing) igniteExhaust(world, ship)
     const speed = Math.hypot(ship.vx, ship.vy)
     const slow = speed <= INFANTRY_PICKUP_SPEED
     const ramming = speed > INFANTRY_RAM_SPEED

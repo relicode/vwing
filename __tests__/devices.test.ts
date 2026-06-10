@@ -16,6 +16,7 @@ const makeShip = (over: Partial<Ship>): Ship => ({
   angle: 0,
   radius: 12,
   thrusting: false,
+  reversing: false,
   fireCooldown: 0,
   invuln: 0,
   health: 100,
@@ -642,6 +643,36 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     resolveInfantryContacts(world)
     expect(world.devices.length).toBe(1) // not rammed (no hull contact) — but alight
     if (ownMan.kind === DeviceKind.INFANTRY) expect(ownMan.burning).toBeGreaterThan(0)
+  })
+
+  test('the retro plumes ignite troopers ahead of a braking ship', () => {
+    const pilot = makeShip({ id: 0, x: 100, y: 100, vx: 100, vy: 0, angle: 0, reversing: true }) // nose +x
+    const victim = infantry({ owner: 1, x: 128, y: 100, attached: true }) // just past the nose
+    const world = makeWorld([pilot], [victim])
+    resolveInfantryContacts(world)
+    if (victim.kind === DeviceKind.INFANTRY) expect(victim.burning).toBeGreaterThan(0)
+  })
+
+  test('walking into a step face turns a trooper around instead of killing it', () => {
+    // The patrol bounds span the WHOLE floor even though a step rises mid-span — the stale-bounds
+    // case that used to march a unit into the face and the embedded-death check.
+    const u = infantry({
+      x: 240,
+      y: 193,
+      attached: true,
+      walkDir: 1,
+      groundLeft: 0,
+      groundRight: 600,
+      fireCooldown: 99,
+    })
+    const world = makeWorld([], [u])
+    world.blocks = [
+      { x: 0, y: 200, w: 600, h: 60, structure: StructureType.EARTH, surface: Surface.EARTH }, // floor
+      { x: 300, y: 140, w: 120, h: 60, structure: StructureType.EARTH, surface: Surface.EARTH }, // step face at x = 300
+    ]
+    for (let i = 0; i < 600; i += 1) updateDevices(world, 1 / 60) // 10 s of patrol
+    expect(world.devices).toHaveLength(1) // alive — never ground into the face
+    if (u.kind === DeviceKind.INFANTRY) expect(u.x).toBeLessThan(300)
   })
 
   test('landed troopers give a hot engine room (flee a thrusting ship)', () => {

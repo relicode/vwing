@@ -5,9 +5,10 @@ import type { Input } from '$/game/input'
 import { createShip, PLAYER_SPAWN_X, respawnShip, updateShip } from '$/game/ship'
 import type { WaterBody } from '$/game/types'
 
-const makeInput = (turn: number, thrusting: boolean): Input => ({
+const makeInput = (turn: number, thrusting: boolean, reversing = false): Input => ({
   turn: () => turn,
   thrusting: () => thrusting,
+  reversing: () => reversing,
   firing: () => false,
   altFiring: () => false,
   deploying: () => false,
@@ -36,6 +37,20 @@ describe('ship physics', () => {
     const startAngle = ship.angle
     updateShip(ship, makeInput(1, false), 0.1)
     expect(ship.angle).toBeCloseTo(startAngle + SHIP_TURN_RATE * 0.1)
+  })
+
+  test('the retro nozzles brake along the nose without turning the ship', () => {
+    const braking = createShip()
+    braking.angle = 0 // nose +x
+    braking.vx = 200
+    const coasting = createShip()
+    coasting.angle = 0
+    coasting.vx = 200
+    updateShip(braking, makeInput(0, false, true), 0.1)
+    updateShip(coasting, makeInput(0, false), 0.1)
+    expect(braking.reversing).toBe(true)
+    expect(braking.angle).toBe(0) // a brake, not a flip
+    expect(braking.vx).toBeLessThan(coasting.vx) // shed speed beyond plain drag
   })
 
   test('respawn recenters, stops, and grants invulnerability', () => {

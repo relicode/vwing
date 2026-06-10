@@ -763,6 +763,24 @@ const drawShip = (g: Graphics, ship: Ship, time: number, isSelf: boolean): void 
       ship.y - Math.sin(a) * r * (1.1 + flick),
     ]).fill({ color: Color.THRUST, alpha: 0.9 })
   }
+  if (ship.reversing) {
+    // The two smaller retro plumes: short tongues licking FORWARD past the nose's flanks.
+    const flick = 0.5 + (Math.floor(time * 40 + 1) % 3) * 0.25
+    const nx = Math.cos(a)
+    const ny = Math.sin(a)
+    for (const side of [1, -1]) {
+      const bx = ship.x + nx * r * 0.9 - side * ny * r * 0.55
+      const by = ship.y + ny * r * 0.9 + side * nx * r * 0.55
+      g.poly([
+        bx - ny * side * r * 0.2,
+        by + nx * side * r * 0.2,
+        bx + ny * side * r * 0.2,
+        by - nx * side * r * 0.2,
+        bx + nx * r * (0.5 + flick * 0.6),
+        by + ny * r * (0.5 + flick * 0.6),
+      ]).fill({ color: Color.THRUST, alpha: 0.85 })
+    }
+  }
   g.poly([
     ship.x + Math.cos(a) * r * 1.5,
     ship.y + Math.sin(a) * r * 1.5,

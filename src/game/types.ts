@@ -15,7 +15,8 @@ export type Ship = {
   vy: number
   angle: number // heading in radians; forward = (cos, sin)
   radius: number
-  thrusting: boolean // drives the engine-flame render
+  thrusting: boolean // drives the engine-flame render (and the exhaust's trooper ignition)
+  reversing: boolean // retro nozzles braking — two smaller forward plumes, same fire hazard
   fireCooldown: number // s until the next shot is allowed
   invuln: number // s of remaining spawn invulnerability
   health: number // hull points; ship is destroyed at <= 0

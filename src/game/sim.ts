@@ -365,6 +365,21 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
           THRUST_PARTICLE_LIFE
         )
       }
+      if (ship.reversing) {
+        // The retro nozzles spit a smaller ember stream forward past the nose.
+        const fx = Math.cos(ship.angle)
+        const fy = Math.sin(ship.angle)
+        spawnPuff(
+          world.particles,
+          ship.x + fx * ship.radius,
+          ship.y + fy * ship.radius,
+          fx * THRUST_PARTICLE_SPEED * 0.7,
+          fy * THRUST_PARTICLE_SPEED * 0.7,
+          Color.THRUST,
+          world.rng,
+          THRUST_PARTICLE_LIFE * 0.7
+        )
+      }
       if (ship.health < SHIP_SMOKE_HEALTH && ship.invuln <= 0) {
         spawnPuff(world.particles, ship.x, ship.y, 0, -30, Color.SMOKE, world.rng, SMOKE_LIFE)
       }

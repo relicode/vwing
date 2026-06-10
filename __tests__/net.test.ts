@@ -80,13 +80,14 @@ describe('store (in-memory fallback)', () => {
 describe('decodeClient (hostile-input hardening)', () => {
   const good = JSON.stringify({
     t: MsgType.INPUT,
-    input: { turn: 1, thrusting: true, firing: false, altFiring: false, deploying: false },
+    input: { turn: 1, thrusting: true, reversing: false, firing: false, altFiring: false, deploying: false },
   })
 
   test('accepts a well-formed INPUT message', () => {
     expect(decodeClient(good)?.input).toEqual({
       turn: 1,
       thrusting: true,
+      reversing: false,
       firing: false,
       altFiring: false,
       deploying: false,

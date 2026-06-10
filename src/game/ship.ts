@@ -11,6 +11,7 @@ import {
   SHIP_MAX_SHIELDS,
   SHIP_RADIUS,
   SHIP_RESPAWN_INVULN,
+  SHIP_REVERSE_THRUST,
   SHIP_SHIELD_REGEN,
   SHIP_THRUST,
   SHIP_TURN_RATE,
@@ -67,6 +68,7 @@ export const createShip = (
     angle: FACING_UP,
     radius: SHIP_RADIUS,
     thrusting: false,
+    reversing: false,
     fireCooldown: 0,
     invuln: SHIP_RESPAWN_INVULN,
     health: SHIP_MAX_HEALTH,
@@ -93,6 +95,7 @@ export const respawnShipAt = (ship: Ship, x: number, y: number, rng?: Rng, force
   ship.vy = 0
   ship.angle = FACING_UP
   ship.thrusting = false
+  ship.reversing = false
   ship.fireCooldown = 0
   ship.invuln = SHIP_RESPAWN_INVULN
   ship.health = SHIP_MAX_HEALTH
@@ -119,6 +122,13 @@ export const updateShip = (ship: Ship, input: Input, dt: number, env?: ShipEnv):
   if (ship.thrusting) {
     ship.vx += Math.cos(ship.angle) * SHIP_THRUST * dt
     ship.vy += Math.sin(ship.angle) * SHIP_THRUST * dt
+  }
+  // Retro-brake: the two smaller nose nozzles push opposite the nose — kill speed on an
+  // approach without flipping the ship (both engines held just fight each other).
+  ship.reversing = controllable && input.reversing()
+  if (ship.reversing) {
+    ship.vx -= Math.cos(ship.angle) * SHIP_REVERSE_THRUST * dt
+    ship.vy -= Math.sin(ship.angle) * SHIP_REVERSE_THRUST * dt
   }
   ship.vy += GRAVITY * dt
   const drag = Math.exp(-SHIP_DRAG * dt)

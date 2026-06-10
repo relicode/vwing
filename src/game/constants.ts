@@ -254,6 +254,9 @@ export const SMOKE_LIFE = 0.9 // s smoke puff lifetime
 // Ship flight model.
 export const SHIP_RADIUS = 12
 export const SHIP_THRUST = 580 // px/s^2 along the nose
+// Reverse-afterburners: a pair of smaller retro nozzles at the nose firing FORWARD to brake
+// without flipping the ship (↓ / S). Weaker than the main engine — a brake, not a second drive.
+export const SHIP_REVERSE_THRUST = 260 // px/s^2 opposite the nose while the retros burn
 export const SHIP_TURN_RATE = 3.6 // rad/s
 export const SHIP_DRAG = 0.22 // gentle velocity damping coefficient (per second)
 export const SHIP_START_LIVES = 3
@@ -449,7 +452,9 @@ export const INFANTRY_FIRE_PANIC_DIST = 110 // px: anyone alight (friend or foe)
 // hot engine room and a ship coming in to load must cut thrust and LAND before the men approach.
 export const AFTERBURNER_IGNITE_LEN = 30 // px the exhaust plume reaches behind the hull
 export const AFTERBURNER_IGNITE_RADIUS = 12 // px half-width of the plume's ignition zone
-export const INFANTRY_THRUST_PANIC_DIST = 100 // px: a THRUSTING ship this close makes a landed trooper bolt
+export const RETRO_IGNITE_LEN = 18 // px each of the two smaller retro plumes reaches ahead of the nose
+export const RETRO_IGNITE_RADIUS = 8 // px half-width of a retro plume's ignition zone
+export const INFANTRY_THRUST_PANIC_DIST = 100 // px: a ship burning ANY engine this close makes a landed trooper bolt
 // EMP vs infantry: a popped orb seizes nearby troopers up — no walking, no firing — for the
 // orb's disable time (the man-portable EMP carries its own shorter time).
 export const EMP_STUN_RADIUS = 80 // px around the popped orb that stuns troopers

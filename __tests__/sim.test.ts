@@ -188,7 +188,14 @@ describe('createSim — destructible terrain', () => {
     const gunner = combatant(0, 540, 1280, Number.POSITIVE_INFINITY)
     gunner.ship.angle = Math.PI / 2 // forward = +y (straight down into the earth)
     gunner.ship.invuln = 999 // keep it from dying on the terrain while it shoots
-    gunner.input = inputFromSnapshot({ turn: 0, thrusting: false, firing: true, altFiring: false, deploying: false })
+    gunner.input = inputFromSnapshot({
+      turn: 0,
+      thrusting: false,
+      reversing: false,
+      firing: true,
+      altFiring: false,
+      deploying: false,
+    })
     const sim = createSim(world, [gunner], { mode: SimMode.DEATHMATCH })
     // The arena is procedural, so target whatever destructible earth this seed produced: park the
     // gunner just above the highest exposed earth top and let its downward stream carve into it.
