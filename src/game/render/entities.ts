@@ -1,9 +1,9 @@
 import type { Graphics } from 'pixi.js'
 
-import { Color, DeviceKind, FLAMETHROWER_LIFE, SHIP_MAX_HEALTH, SHIP_MAX_SHIELDS } from '$/game/constants'
+import { Color, DeviceKind, SHIP_MAX_HEALTH, SHIP_MAX_SHIELDS } from '$/game/constants'
 import { clamp } from '$/game/math'
 import { drawInfantry } from '$/game/render/infantry'
-import type { Base, Beam, Bullet, Device, Ship } from '$/game/types'
+import type { Base, Beam, Device, Ship } from '$/game/types'
 
 const WING_SPREAD = 2.4 // radians from nose to each tail corner
 
@@ -38,28 +38,6 @@ export const drawDevice = (g: Graphics, d: Device, time: number, selfId: number)
       g.circle(d.x, d.y, d.radius * 2).stroke({ width: 2, color: Color.WELL, alpha: 0.5 })
       g.circle(d.x, d.y, d.radius).fill({ color: Color.WELL })
       break
-  }
-}
-
-// Primary shots and flame gouts. A gout blooms as it ages — a swelling, dimming tongue around a
-// white-hot core that cools out of existence (life runs FLAMETHROWER_LIFE → 0); everything else
-// is a hard round with a soft glow, tinted by ownership unless the bullet carries its own color.
-export const drawBullets = (g: Graphics, bullets: Bullet[], selfId: number): void => {
-  for (const bullet of bullets) {
-    if (bullet.burn) {
-      const age = clamp(1 - bullet.life / FLAMETHROWER_LIFE, 0, 1)
-      const r = bullet.radius * (1.6 + age * 2.8)
-      g.circle(bullet.x, bullet.y, r * 1.5).fill({ color: Color.THRUST, alpha: 0.14 })
-      g.circle(bullet.x, bullet.y, r).fill({
-        color: age < 0.5 ? Color.EXPLOSION : Color.THRUST,
-        alpha: 0.85 - age * 0.45,
-      })
-      g.circle(bullet.x, bullet.y, r * 0.45).fill({ color: Color.SHIP_CORE, alpha: Math.max(0, 0.9 - age * 1.5) })
-      continue
-    }
-    const color = bullet.color ?? (bullet.owner === selfId ? Color.BULLET : Color.BULLET_ENEMY)
-    g.circle(bullet.x, bullet.y, bullet.radius * 2.2).fill({ color, alpha: 0.18 }) // soft glow
-    g.circle(bullet.x, bullet.y, bullet.radius).fill({ color })
   }
 }
 
