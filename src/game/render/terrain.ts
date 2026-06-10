@@ -1,7 +1,7 @@
-import type { Graphics } from 'pixi.js'
+import { Container, Graphics, Rectangle } from 'pixi.js'
 
-import { Color, StructureType, Surface } from '$/game/constants'
-import type { Block, WaterBody } from '$/game/types'
+import { Color, StructureType, Surface, WORLD_HEIGHT, WORLD_WIDTH } from '$/game/constants'
+import type { Block, RenderWorld, WaterBody } from '$/game/types'
 
 // Per-surface fill + brighter edge for earth blocks; metal (any surface) always renders gray.
 const SURFACE_STYLE: Record<Surface, { fill: number; edge: number }> = {
@@ -71,4 +71,50 @@ export const drawWaterBodies = (g: Graphics, water: WaterBody[]): void => {
     g.rect(b.x, b.y, b.w, b.h).fill({ color: Color.WATER, alpha: 0.38 })
     g.rect(b.x, b.y, b.w, 2).fill({ color: Color.WATER_EDGE, alpha: 0.8 })
   }
+}
+
+const CHUNK_COUNT = 8 // ~1350 px column bands — the culler skips whole bands off-camera
+
+// The static terrain as column-band chunks: each band is its own cullable Graphics, so flying
+// over empty sky renders no terrain at all, and a carve re-tessellates only ~1/8 of the world
+// (every chunk redraws on a version bump — the win is render-side culling, not draw-side).
+export type TerrainView = {
+  container: Container
+  draw: (world: RenderWorld) => void
+}
+
+export const createTerrainView = (): TerrainView => {
+  const container = new Container()
+  const chunkWidth = WORLD_WIDTH / CHUNK_COUNT
+  const chunks = Array.from({ length: CHUNK_COUNT }, (_, i) => {
+    const g = new Graphics()
+    g.cullable = true
+    // Fixed band bounds: cheaper than measuring child geometry, and debris can't escape a band
+    // anyway (a block spanning bands is drawn into every band it touches).
+    g.cullArea = new Rectangle(i * chunkWidth, 0, chunkWidth, WORLD_HEIGHT)
+    container.addChild(g)
+    return g
+  })
+  const waterGfx = new Graphics() // basins span anywhere; few rects, drawn over the blocks
+  container.addChild(waterGfx)
+  let version = -1
+
+  const draw = (world: RenderWorld): void => {
+    if (world.terrainVersion === version) return
+    version = world.terrainVersion
+    const byChunk: Block[][] = chunks.map(() => [])
+    for (const block of world.blocks) {
+      const first = Math.max(0, Math.floor(block.x / chunkWidth))
+      const last = Math.min(CHUNK_COUNT - 1, Math.floor((block.x + block.w) / chunkWidth))
+      for (let i = first; i <= last; i += 1) byChunk[i].push(block)
+    }
+    for (let i = 0; i < CHUNK_COUNT; i += 1) {
+      chunks[i].clear()
+      drawBlocks(chunks[i], byChunk[i])
+    }
+    waterGfx.clear()
+    drawWaterBodies(waterGfx, world.water)
+  }
+
+  return { container, draw }
 }
