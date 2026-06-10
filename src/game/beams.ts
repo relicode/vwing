@@ -1,6 +1,6 @@
 import { applyDamage } from '$/game/combat'
 import { Color, RAIL_BEAM_LIFE, RAIL_DAMAGE, RAIL_RANGE } from '$/game/constants'
-import type { Ship, World } from '$/game/types'
+import type { Block, Ship, World } from '$/game/types'
 
 // Age out spent rail beams (damage was applied when they were fired).
 export const updateBeams = (world: World, dt: number): void => {
@@ -8,10 +8,32 @@ export const updateBeams = (world: World, dt: number): void => {
   world.beams = world.beams.filter((beam) => beam.life > 0)
 }
 
+// Distance along a ray (origin + t·dir, t >= 0) to its entry into a rect, or undefined if the
+// ray misses. Slab method; an origin already inside returns 0 (a muzzle pressed to the rock).
+const rayRectEntry = (x: number, y: number, dirX: number, dirY: number, b: Block): number | undefined => {
+  let tMin = 0
+  let tMax = Number.POSITIVE_INFINITY
+  for (const [origin, dir, lo, hi] of [
+    [x, dirX, b.x, b.x + b.w],
+    [y, dirY, b.y, b.y + b.h],
+  ] as const) {
+    if (dir === 0) {
+      if (origin < lo || origin > hi) return undefined
+    } else {
+      const t1 = (lo - origin) / dir
+      const t2 = (hi - origin) / dir
+      tMin = Math.max(tMin, Math.min(t1, t2))
+      tMax = Math.min(tMax, Math.max(t1, t2))
+    }
+  }
+  return tMin <= tMax ? tMin : undefined
+}
+
 // Shared rail hitscan: damage the nearest enemy ship lying along the ray from (x, y), draw the
-// transient beam to that ship (or to max range), and return the struck ship so the caller can
-// reap it if the hull is gone. Terrain does not block it. Fired by ships (full power along the
-// nose) and by kneeling rail troopers (a scaled man-portable lance).
+// transient beam to that ship (or to the first terrain face, or to max range), and return the
+// struck ship so the caller can reap it if the hull is gone. Terrain blocks the lance — it
+// burns into the first wall it meets, never through a mountain. Fired by ships (full power
+// along the nose) and by kneeling rail troopers (a scaled man-portable lance).
 export const castRail = (
   world: World,
   x: number,
@@ -26,6 +48,10 @@ export const castRail = (
 
   let hit: Ship | undefined
   let hitDist = range
+  for (const block of world.blocks) {
+    const t = rayRectEntry(x, y, dirX, dirY, block)
+    if (t !== undefined && t < hitDist) hitDist = t // the beam stops at the nearest terrain face
+  }
   for (const other of world.ships) {
     if (other.id === ownerId || other.invuln > 0) continue
     const relX = other.x - x

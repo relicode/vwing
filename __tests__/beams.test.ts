@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { fireRail } from '$/game/beams'
-import { RAIL_DAMAGE, ShipKind, WeaponKind, WORLD_HEIGHT, WORLD_WIDTH } from '$/game/constants'
+import { RAIL_DAMAGE, ShipKind, StructureType, Surface, WeaponKind, WORLD_HEIGHT, WORLD_WIDTH } from '$/game/constants'
 import { createRng } from '$/game/rng'
 import type { Ship, World } from '$/game/types'
 
@@ -74,5 +74,24 @@ describe('fireRail', () => {
     expect(fireRail(world, shooter)).toBeUndefined()
     expect(offAxis.health).toBe(100)
     expect(world.beams).toHaveLength(1)
+  })
+
+  test('terrain blocks the lance: a ship behind a wall is safe and the beam stops at the face', () => {
+    const shooter = makeShip({ id: 0, x: 0, y: 0, angle: 0 }) // facing +x
+    const bunkered = makeShip({ id: 1, x: 600, y: 0 })
+    const world = makeWorld([shooter, bunkered])
+    world.blocks = [{ x: 300, y: -200, w: 80, h: 400, structure: StructureType.EARTH, surface: Surface.EARTH }]
+    expect(fireRail(world, shooter)).toBeUndefined()
+    expect(bunkered.health).toBe(100) // the mountain ate the shot
+    expect(world.beams[0].x2).toBeCloseTo(300) // beam burns into the wall face, not through it
+  })
+
+  test('a ship in front of a wall is still fair game', () => {
+    const shooter = makeShip({ id: 0, x: 0, y: 0, angle: 0 })
+    const exposed = makeShip({ id: 1, x: 200, y: 0 })
+    const world = makeWorld([shooter, exposed])
+    world.blocks = [{ x: 300, y: -200, w: 80, h: 400, structure: StructureType.EARTH, surface: Surface.EARTH }]
+    expect(fireRail(world, shooter)).toBe(exposed)
+    expect(exposed.health).toBe(100 - RAIL_DAMAGE)
   })
 })

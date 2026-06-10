@@ -127,6 +127,11 @@ const hasLineOfSight = (x1: number, y1: number, x2: number, y2: number, blocks: 
 const insideAnyBlock = (x: number, y: number, blocks: Block[]): boolean =>
   blocks.some((b) => x > b.x && x < b.x + b.w && y > b.y && y < b.y + b.h)
 
+// A flying device's body touching any terrain block (walls included — the bedrock frame lives
+// in world.blocks). Projectile devices detonate or fizzle here instead of tunnelling through.
+const touchingBlock = (blocks: Block[], x: number, y: number, r: number): boolean =>
+  blocks.some((b) => circleRectContact(x, y, r, b.x, b.y, b.w, b.h) !== undefined)
+
 // The block directly under a landed trooper's feet (probed just below the soles), or undefined if
 // the ground was shot away. Its surface tells us whether the footing is icy (see the ice slip).
 const FOOTING_PROBE = 3 // px below the feet to sample for solid ground
@@ -572,6 +577,15 @@ const stepDevice = (
         spawnExplosion(world.particles, device.x, device.y, device.color, world.rng, 16)
         return false
       }
+      // Terrain stops it: a blast warhead (seeker) detonates against the rock — splashing any
+      // ship or trooper hugging the wall — while a bare orb (EMP) just fizzles out.
+      if (touchingBlock(world.blocks, device.x, device.y, device.radius)) {
+        if (device.blastRadius > 0) {
+          areaDamage(world, device.x, device.y, device.blastRadius, device.blastDamage, device.owner, dead, deadDevices)
+        }
+        spawnExplosion(world.particles, device.x, device.y, device.color, world.rng, 14)
+        return false
+      }
       if (device.life <= 0 || !inBounds(device.x, device.y)) return false
       return true
     }
@@ -779,7 +793,13 @@ const stepDevice = (
       device.x += device.vx * dt
       device.y += device.vy * dt
       device.fuse -= dt
-      if (device.fuse <= 0 || !inBounds(device.x, device.y)) {
+      // Pops on the fuse OR on impact — a grenade bursts where it lands instead of sinking
+      // into the rock (the shard ring then chews the surface like any bullets).
+      if (
+        device.fuse <= 0 ||
+        !inBounds(device.x, device.y) ||
+        touchingBlock(world.blocks, device.x, device.y, device.radius)
+      ) {
         spawnShards(
           world,
           device.x,
@@ -800,7 +820,12 @@ const stepDevice = (
       device.x += device.vx * dt
       device.y += device.vy * dt
       device.fuse -= dt
-      if (device.fuse <= 0 || !inBounds(device.x, device.y)) {
+      // Airbursts on the fuse OR against terrain — a shell never tunnels through a wall.
+      if (
+        device.fuse <= 0 ||
+        !inBounds(device.x, device.y) ||
+        touchingBlock(world.blocks, device.x, device.y, device.radius)
+      ) {
         spawnShards(
           world,
           device.x,

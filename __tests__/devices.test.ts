@@ -139,6 +139,64 @@ describe('updateDevices — mines', () => {
   })
 })
 
+describe('updateDevices — projectiles respect terrain', () => {
+  const wall = (x: number, y: number, w: number, h: number) => ({
+    x,
+    y,
+    w,
+    h,
+    structure: StructureType.EARTH,
+    surface: Surface.EARTH,
+  })
+
+  test('a seeker detonates against a wall, splashing a ship hugging it', () => {
+    const bystander = makeShip({ id: 1, kind: ShipKind.BOT, x: 180, y: 340, shields: 0 })
+    const world = makeWorld([bystander], [missile({ x: 150, y: 300, vx: 300, vy: 0, turnRate: 0 })])
+    world.blocks = [wall(200, 100, 80, 400)]
+    for (let i = 0; i < 30; i += 1) updateDevices(world, 1 / 60)
+    expect(world.devices).toHaveLength(0) // stopped by the rock, not sailing through
+    expect(bystander.health).toBeLessThan(100) // caught the blast beside the impact
+  })
+
+  test('an EMP orb fizzles on terrain without harming anyone', () => {
+    const bystander = makeShip({ id: 1, kind: ShipKind.BOT, x: 180, y: 340 })
+    const world = makeWorld(
+      [bystander],
+      [missile({ x: 150, y: 300, vx: 300, vy: 0, turnRate: 0, damage: 0, blastRadius: 0, disableTime: 2 })]
+    )
+    world.blocks = [wall(200, 100, 80, 400)]
+    for (let i = 0; i < 30; i += 1) updateDevices(world, 1 / 60)
+    expect(world.devices).toHaveLength(0)
+    expect(bystander.health).toBe(100)
+    expect(bystander.disabled).toBe(0) // never reached it
+  })
+
+  test('a grenade bursts where it lands instead of sinking into the ground', () => {
+    const world = makeWorld(
+      [],
+      [{ kind: DeviceKind.GRENADE, x: 100, y: 260, vx: 0, vy: 150, owner: 0, radius: 5, fuse: 99 }]
+    )
+    world.blocks = [wall(40, 300, 400, 100)]
+    for (let i = 0; i < 30; i += 1) updateDevices(world, 1 / 60)
+    expect(world.devices).toHaveLength(0) // popped on contact, fuse never elapsed
+    expect(world.bullets.length).toBeGreaterThan(0) // the shard ring flew
+    const grenade = world.devices.find((d) => d.kind === DeviceKind.GRENADE)
+    expect(grenade).toBeUndefined()
+  })
+
+  test('a flak shell airbursts against a wall, never tunnelling through', () => {
+    const world = makeWorld(
+      [],
+      [{ kind: DeviceKind.FLAK, x: 150, y: 300, vx: 300, vy: 0, owner: 0, radius: 4, fuse: 99 }]
+    )
+    world.blocks = [wall(200, 100, 80, 400)]
+    for (let i = 0; i < 30; i += 1) updateDevices(world, 1 / 60)
+    expect(world.devices).toHaveLength(0)
+    expect(world.bullets.length).toBeGreaterThan(0) // shards released at the face
+    expect(world.bullets.every((b) => b.x < 260)).toBe(true) // none spawned beyond the wall
+  })
+})
+
 describe('updateDevices — infantry / grenade / flak / well', () => {
   const infantry = (over: Partial<Extract<Device, { kind: DeviceKind.INFANTRY }>>): Device => ({
     kind: DeviceKind.INFANTRY,
