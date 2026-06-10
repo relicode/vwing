@@ -59,7 +59,10 @@ import {
   createVoxelTerrain,
   findPool,
   moveBedrock,
+  restoreVoxel,
+  snapshotVoxel,
   stepVoxel,
+  type VoxelSnapshot,
   voxelToBlocks,
   wetSurface,
 } from '$/game/voxel'
@@ -103,6 +106,10 @@ export type Sim = {
   removeCombatant: (id: number) => void
   getCombatant: (id: number) => Combatant | undefined
   respawnIn: (id: number) => number // s until the combatant's ship re-enters; 0 = alive (or gone)
+  // Terrain persistence: the carved voxel state as plain JSON, and its overlay onto a sim
+  // rebuilt from the SAME world seed (false = snapshot didn't fit; nothing was touched).
+  serializeTerrain: () => VoxelSnapshot
+  restoreTerrain: (snap: VoxelSnapshot) => boolean
 }
 
 // A blank arena: seeded rng + the procedurally generated terrain, with empty entity lists. Ships
@@ -510,5 +517,24 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     return queued ? Math.max(0, queued.at - world.time) : 0
   }
 
-  return { world, combatants, config, step, addCombatant, removeCombatant, getCombatant, respawnIn }
+  const serializeTerrain = (): VoxelSnapshot => snapshotVoxel(voxel)
+
+  const restoreTerrain = (snap: VoxelSnapshot): boolean => {
+    if (!restoreVoxel(voxel, snap)) return false
+    refreshTerrain()
+    return true
+  }
+
+  return {
+    world,
+    combatants,
+    config,
+    step,
+    addCombatant,
+    removeCombatant,
+    getCombatant,
+    respawnIn,
+    serializeTerrain,
+    restoreTerrain,
+  }
 }

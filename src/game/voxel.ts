@@ -634,3 +634,73 @@ export const voxelToBlocks = (vt: VoxelTerrain): Block[] => {
 }
 
 export const hasDebris = (vt: VoxelTerrain): boolean => vt.bodies.length > 0
+
+// ── Terrain persistence ───────────────────────────────────────────────────────
+// The carved state of the grid as plain JSON, so a server can persist a room's terrain and
+// rebuild it after a restart: the authored arena is reproduced from the room's SEED (the
+// generator is seed-deterministic by design), and this snapshot overlays everything the seed
+// can't know — craters (mat), the surviving floating-island pins, in-flight debris, and the
+// wet-cells regrow clock. Bedrock anchors are NOT here: same seed → same anchors.
+
+// Universal base64 for a cell grid (btoa/atob exist in both Bun and the browser; chunked so
+// String.fromCharCode never sees a 225k-argument spread).
+const encodeCells = (bytes: Uint8Array): string => {
+  let raw = ''
+  for (let i = 0; i < bytes.length; i += 0x8000) raw += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  return btoa(raw)
+}
+const decodeCells = (data: string): Uint8Array => {
+  const raw = atob(data)
+  const bytes = new Uint8Array(raw.length)
+  for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i)
+  return bytes
+}
+
+export type VoxelSnapshot = {
+  cols: number
+  rows: number
+  mat: string // base64 of the static grid
+  pinned: number[][] // each pinned floating-island component's cell indices
+  bodies: { col0: number; row0: number; boxCols: number; boxRows: number; cells: string; vy: number; fall: number }[]
+  regrow: [number, number][] // wetted-cell index → s left until grass regrows
+}
+
+export const snapshotVoxel = (vt: VoxelTerrain): VoxelSnapshot => ({
+  cols: vt.cols,
+  rows: vt.rows,
+  mat: encodeCells(vt.mat),
+  pinned: vt.pinned.map((component) => [...component]),
+  bodies: vt.bodies.map((b) => ({
+    col0: b.col0,
+    row0: b.row0,
+    boxCols: b.boxCols,
+    boxRows: b.boxRows,
+    cells: encodeCells(b.cells),
+    vy: b.vy,
+    fall: b.fall,
+  })),
+  regrow: [...vt.regrow],
+})
+
+// Overlay a persisted snapshot onto a terrain rebuilt from the SAME seed. Returns false (and
+// touches nothing) when the snapshot doesn't fit this grid — a stale or foreign snapshot must
+// never corrupt a live arena. The caller re-derives world.blocks afterwards.
+export const restoreVoxel = (vt: VoxelTerrain, snap: VoxelSnapshot): boolean => {
+  if (snap.cols !== vt.cols || snap.rows !== vt.rows) return false
+  const mat = decodeCells(snap.mat)
+  if (mat.length !== vt.mat.length) return false
+  vt.mat.set(mat)
+  vt.pinned = snap.pinned.map((component) => new Set(component))
+  vt.bodies = snap.bodies.map((b) => ({
+    col0: b.col0,
+    row0: b.row0,
+    boxCols: b.boxCols,
+    boxRows: b.boxRows,
+    cells: decodeCells(b.cells),
+    vy: b.vy,
+    fall: b.fall,
+  }))
+  vt.regrow = new Map(snap.regrow)
+  vt.staticBlocks = meshGrid(vt.mat, vt.cols, vt.rows, vt.cell, 0, 0)
+  return true
+}

@@ -9,7 +9,7 @@ import {
   NET_TICK_RATE,
 } from '$/game/constants'
 import { decodeClient, encode, gameNameKey, JoinIntent, MsgType, sanitizeGameName } from '$/net/protocol'
-import { createRoom, type Room } from '$/server/room'
+import { createRoom, parseRestore, type Room, type RoomRestore } from '$/server/room'
 import type { Store } from '$/server/store'
 
 // Per-connection data carried on each WebSocket (assigned at upgrade, finalized on open).
@@ -37,19 +37,27 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
   const dt = 1 / NET_TICK_RATE
   let tickCount = 0
 
-  // Always creates a fresh room indexed by its canonical key (and topic); the caller decides
-  // whether that's allowed — host into a free key, join into an existing one.
-  const createRoomState = (key: string, displayName: string): RoomState => {
+  // Creates a room indexed by its canonical key (and topic); the caller decides whether that's
+  // allowed — host into a free key, join into an existing one. With `restore` the room is
+  // resurrected from a persisted state (same seed, carved terrain overlaid) instead of fresh.
+  const createRoomState = (key: string, displayName: string, restore?: RoomRestore): RoomState => {
     const created: RoomState = {
-      room: createRoom(displayName),
+      room: createRoom(displayName, restore),
       topic: `game:${key}`,
       persistTick: 0,
       emptySince: undefined,
     }
     rooms.set(key, created)
     void store.registerGame(key, { name: displayName, players: 0, maxPlayers: NET_MAX_PLAYERS })
-    console.log(`[server] room created: "${displayName}"`)
+    console.log(`[server] room ${restore ? 'resumed from persisted state' : 'created'}: "${displayName}"`)
     return created
+  }
+
+  // The persisted state for a key, parsed into a restore — undefined when none exists or the
+  // blob is foreign/corrupt. This is what makes carved terrain survive a server restart.
+  const loadRestore = async (key: string): Promise<RoomRestore | undefined> => {
+    const json = await store.loadState(key)
+    return json ? parseRestore(json) : undefined
   }
 
   const disposeRoom = (key: string, rs: RoomState): void => {
@@ -94,23 +102,30 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
       return serveStatic(url.pathname)
     },
     websocket: {
-      open: (ws: ServerWebSocket<ConnData>) => {
+      open: async (ws: ServerWebSocket<ConnData>) => {
         const { key, intent, game } = ws.data
-        const existing = rooms.get(key)
+        let existing = rooms.get(key)
         // Enforce intent against the canonical key: you can't host onto a name that's already
-        // live, and you can't join one that doesn't exist.
+        // live, and you can't join one that doesn't exist — though a game whose room died with
+        // a server restart still "exists" in the store, and either intent resurrects it (same
+        // seed, carved terrain overlaid) for as long as its persisted state lives.
         if (intent === JoinIntent.HOST && existing) {
           const reason = `“${existing.room.name}” is already hosted — pick another name.`
           ws.send(encode({ t: MsgType.REJECTED, reason }))
           ws.close()
           return
         }
-        if (intent === JoinIntent.JOIN && !existing) {
-          ws.send(encode({ t: MsgType.REJECTED, reason: 'That game is no longer open.' }))
-          ws.close()
-          return
+        let restore: RoomRestore | undefined
+        if (!existing) {
+          restore = await loadRestore(key)
+          existing = rooms.get(key) // a parallel open may have created the room during the await
+          if (intent === JoinIntent.JOIN && !existing && !restore) {
+            ws.send(encode({ t: MsgType.REJECTED, reason: 'That game is no longer open.' }))
+            ws.close()
+            return
+          }
         }
-        const rs = existing ?? createRoomState(key, game)
+        const rs = existing ?? createRoomState(key, game, restore)
         const shipId = rs.room.join(ws.data.name)
         if (shipId === undefined) {
           ws.send(encode({ t: MsgType.REJECTED, reason: 'Game is full' }))
@@ -171,7 +186,7 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
       rs.persistTick += 1
       if (rs.persistTick >= NET_PERSIST_EVERY) {
         rs.persistTick = 0
-        void store.saveState(key, JSON.stringify(rs.room.snapshot([]))) // world snapshot → store (write-only; see store.ts)
+        void store.saveState(key, rs.room.persisted()) // seed + world + carved terrain → store (restorable; see store.ts)
         // refresh lobby TTL
         void store.registerGame(key, {
           name: rs.room.name,
