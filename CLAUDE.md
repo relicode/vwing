@@ -71,8 +71,10 @@ src/
                       # blocks; seeded biome worldgen; carving + falling debris; water/pooling
     camera.ts         # follow camera origin, clamped to the world
     particles.ts      # explosion/exhaust debris (sim-owned data; the renderer only draws it)
-    renderer.ts       # draws the World with PixiJS (camera-offset world layer, parallax stars,
-                      # procedural infantry art, minimap) — migrating to v8 built-ins, see PLAN.md
+    renderer.ts       # re-export shim → render/ (keeps engine/client imports stable)
+    render/           # draws the World with PixiJS — index.ts (createRenderer) wires stars,
+                      # terrain, infantry (procedural Cannon-Fodder art), entities, minimap,
+                      # camera-view — migrating to v8 built-ins, see PLAN.md
     view.ts           # PixiJS Application boot (shared by the engine and the net client)
     engine.ts         # game loop + phase machine + status pub/sub (offline campaign vs. bot)
   net/                # protocol.ts (JSON wire format) + client.ts (snapshot-drawing online client)
