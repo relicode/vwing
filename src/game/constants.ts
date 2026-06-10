@@ -5,6 +5,7 @@ export enum GamePhase {
   TITLE = 'TITLE',
   PLAYING = 'PLAYING',
   GAME_OVER = 'GAME_OVER',
+  VICTORY = 'VICTORY', // the campaign won: the bot eliminated (base captured + ship downed)
 }
 
 // Who controls a ship. PLAYER is the camera-followed, life-counted human; BOT is AI.
@@ -27,12 +28,13 @@ export const DEATHMATCH_FRAG_SCORE = 1 // points a kill awards its shooter in DE
 export const PLAYER_ID = 0
 export const BOT_ID = 1
 
-// The eleven random secondary weapons; one is rolled onto each ship on every (re)spawn.
+// The ten random heavy weapons; one is rolled onto each ship on every (re)spawn, and the
+// ship's infantry squad type (the man-portable variant its specialists carry) is a second,
+// independent roll from the same pool.
 export enum WeaponKind {
   SCATTERGUN = 'SCATTERGUN',
   WATER_CANNON = 'WATER_CANNON',
   INCENDIARY = 'INCENDIARY',
-  INFANTRY = 'INFANTRY',
   SEEKER = 'SEEKER',
   RAIL = 'RAIL',
   GRENADE = 'GRENADE',
@@ -68,12 +70,6 @@ export enum DeviceKind {
   GRENADE = 'GRENADE',
   FLAK = 'FLAK',
   WELL = 'WELL',
-}
-
-// What a deployed infantry unit fights with (rolled per unit on deploy).
-export enum InfantryWeapon {
-  RIFLE = 'RIFLE',
-  GRENADE = 'GRENADE',
 }
 
 // The behavioural state of a deployed trooper, derived from its fields each tick (see stateOf in
@@ -226,7 +222,6 @@ export const BOT_DODGE_DIST = 220 // px gap to a terrain block that triggers an 
 export const SECONDARY_DEPLOY_DIST = 22 // px ahead of the nose where devices spawn
 export const SECONDARY_MAX_CHARGE = 100 // full energy bar
 export const SECONDARY_REGEN = 22 // energy/s the bar refills (full in ~4.5s)
-export const INFANTRY_PICKUP_REFUND = 22 // energy returned when the owner rescues a unit
 
 export type WeaponConfig = { name: string; cost: number; cooldown: number }
 
@@ -234,7 +229,6 @@ export const WEAPON_CONFIG: Record<WeaponKind, WeaponConfig> = {
   [WeaponKind.SCATTERGUN]: { name: 'Scattergun', cost: 22, cooldown: 0.5 },
   [WeaponKind.WATER_CANNON]: { name: 'Water Cannon', cost: 3, cooldown: 0.05 }, // cheap stream
   [WeaponKind.INCENDIARY]: { name: 'Incendiary', cost: 18, cooldown: 0.45 },
-  [WeaponKind.INFANTRY]: { name: 'Infantry Drop', cost: 14, cooldown: 0.3 }, // per trooper while held
   [WeaponKind.SEEKER]: { name: 'Seeker Missiles', cost: 55, cooldown: 0.8 },
   [WeaponKind.RAIL]: { name: 'Rail Lance', cost: 80, cooldown: 0.9 },
   [WeaponKind.GRENADE]: { name: 'Grenade Lob', cost: 32, cooldown: 0.7 },
@@ -244,12 +238,12 @@ export const WEAPON_CONFIG: Record<WeaponKind, WeaponConfig> = {
   [WeaponKind.SINGULARITY]: { name: 'Singularity', cost: 100, cooldown: 1.5 }, // a full bar
 }
 
-// Pool the random respawn assignment draws from (all eleven, equal odds).
+// Pool the random respawn assignment draws from (all ten, equal odds) — used for both
+// the ship's heavy weapon roll and the independent infantry squad-type roll.
 export const WEAPON_POOL: readonly WeaponKind[] = [
   WeaponKind.SCATTERGUN,
   WeaponKind.WATER_CANNON,
   WeaponKind.INCENDIARY,
-  WeaponKind.INFANTRY,
   WeaponKind.SEEKER,
   WeaponKind.RAIL,
   WeaponKind.GRENADE,
@@ -282,16 +276,21 @@ export const INCENDIARY_SPEED = 460
 export const INCENDIARY_LIFE = 0.4
 export const INCENDIARY_BURN_RADIUS = 22 // px radius of grass→earth scorch on a terrain hit
 
-// Infantry Drop — held to stream units out one at a time; they parachute from high
-// drops (swaying apart on the wind so a stream fans out instead of stacking), patrol the
-// block they land on, and plink the nearest enemy in range/LOS. A unit dies from any
-// single hit, splats if it hits the ground too fast, falls if the block under it is
-// destroyed, dies instantly if it ends up embedded in a block, and is splattered by any
-// ship that rams through it — except its *own* ship can't run it over during the deploy
-// lockout (`INFANTRY_PICKUP_DELAY`), so a fast drop doesn't instantly mince the trooper it
-// just released. It swims (no shooting) if it lands in water and drowns unless rescued. To
-// be rescued, a unit walks/swims toward its own owner's slow (landed) ship — reaching it
-// restores the Infantry slot.
+// ── Infantry (troop bay) ────────────────────────────────────────────────────
+// Every ship carries a troop bay: it loads troopers from its barracks, then the deploy key
+// streams them out one at a time. They parachute from high drops (swaying apart on the wind
+// so a stream fans out instead of stacking), patrol the block they land on, and plink the
+// nearest enemy in range/LOS. A unit dies from any single hit, splats if it hits the ground
+// too fast, falls if the block under it is destroyed, dies instantly if it ends up embedded
+// in a block, and is splattered by any ship that rams through it — except its *own* ship
+// can't run it over during the deploy lockout (`INFANTRY_PICKUP_DELAY`), so a fast drop
+// doesn't instantly mince the trooper it just released. It swims (no shooting) if it lands
+// in water and drowns unless rescued. To be rescued, a unit walks/swims toward its own
+// owner's slow (landed) ship — reaching it returns the trooper to the bay. A *slow* enemy
+// ship over a trooper recruits it instead (the trooper switches sides where it stands).
+export const TROOP_BAY_CAPACITY = 8 // troopers a ship can hold (float: barracks loading accrues fractionally)
+export const TROOP_DEPLOY_COOLDOWN = 0.3 // s between drops while the deploy key is held
+export const TROOP_SPECIALIST_CHANCE = 0.2 // 1 in 5 deployed units carries the squad's man-portable heavy weapon
 export const INFANTRY_RADIUS = 9 // bigger so Cannon-Fodder-style detail reads at the 1280×800 viewport
 export const INFANTRY_FIRE_INTERVAL = 1.1 // s between rifle shots (landed)
 export const INFANTRY_GRENADE_FIRE_INTERVAL = 2.6 // s between grenade lobs (slower; landed grenadier)
@@ -304,7 +303,6 @@ export const INFANTRY_PARACHUTE_FIRE_INTERVAL = 3.2 // s between shots while des
 export const INFANTRY_SHOT_DAMAGE = 6
 export const INFANTRY_SHOT_SPEED = 380
 export const INFANTRY_RANGE = 520
-export const INFANTRY_GRENADE_CHANCE = 0.2 // 1 in 5 units carries a grenade launcher
 export const INFANTRY_WALK_SPEED = 26 // px/s patrol speed on a surface
 export const INFANTRY_WALK_TURN_CHANCE = 0.012 // per-frame chance a patroller spontaneously reverses
 export const INFANTRY_PICKUP_DELAY = 2 // s after deploy before a unit can be picked up

@@ -35,6 +35,9 @@ const makeShip = (over: Partial<Ship>): Ship => ({
   charge: 100,
   altCooldown: 0,
   disabled: 0,
+  troops: 0,
+  squad: WeaponKind.GRENADE,
+  deployCooldown: 0,
   ...over,
 })
 
@@ -48,6 +51,7 @@ const makeWorld = (over?: Partial<World>): World => ({
   blocks: [],
   terrainVersion: 0,
   water: [],
+  bases: [],
   shake: 0,
   rng: createRng(1),
   ...over,
@@ -59,9 +63,10 @@ describe('assignWeapon', () => {
     for (let i = 0; i < 30; i += 1) expect(WEAPON_POOL).toContain(assignWeapon(rng))
   })
 
-  test('offers all eleven weapons, including the incendiary', () => {
-    expect(WEAPON_POOL).toHaveLength(11)
+  test('offers all ten heavy weapons and no infantry entry', () => {
+    expect(WEAPON_POOL).toHaveLength(10)
     expect(WEAPON_POOL).toContain(WeaponKind.INCENDIARY)
+    expect(WEAPON_POOL.some((k) => String(k) === 'INFANTRY')).toBe(false) // infantry is a ship system now
     expect(new Set(WEAPON_POOL).size).toBe(WEAPON_POOL.length) // no duplicates
   })
 })
@@ -159,10 +164,8 @@ describe('fireSecondary — device weapons', () => {
     }
   })
 
-  test('Mines drop the configured count; Infantry/Grenade/Flak/Singularity drop one each', () => {
+  test('Mines drop the configured count; Grenade/Flak/Singularity drop one each', () => {
     expect(fireWith(WeaponKind.MINES)).toHaveLength(MINE_COUNT)
-    expect(fireWith(WeaponKind.INFANTRY)).toHaveLength(1) // held-fire streams one trooper per cadence
-    expect(fireWith(WeaponKind.INFANTRY)[0].kind).toBe(DeviceKind.INFANTRY)
     expect(fireWith(WeaponKind.GRENADE)[0].kind).toBe(DeviceKind.GRENADE)
     expect(fireWith(WeaponKind.FLAK)[0].kind).toBe(DeviceKind.FLAK)
     expect(fireWith(WeaponKind.SINGULARITY)[0].kind).toBe(DeviceKind.WELL)

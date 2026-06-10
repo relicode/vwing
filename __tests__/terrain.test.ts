@@ -23,6 +23,9 @@ const makeShip = (over: Partial<Ship>): Ship => ({
   charge: 100,
   altCooldown: 0,
   disabled: 0,
+  troops: 0,
+  squad: WeaponKind.GRENADE,
+  deployCooldown: 0,
   ...over,
 })
 

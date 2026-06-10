@@ -11,7 +11,6 @@ import {
   INFANTRY_KNEEL_FIRE_AT,
   INFANTRY_SINK_TIME,
   InfantryState,
-  InfantryWeapon,
   SHAKE_FREQ,
   SHIP_MAX_HEALTH,
   SHIP_MAX_SHIELDS,
@@ -357,7 +356,7 @@ const drawStanding = (g: Graphics, d: InfantrySprite, kit: Kit, time: number, f:
     boot(g, d.x + f * r * 0.28, footY, f, r, a)
   }
   torso(g, d.x, cy - r * 0.55, r, kit, a)
-  if (d.weapon === InfantryWeapon.GRENADE) {
+  if (d.heavy !== undefined) {
     head(g, d.x, cy - r * 0.95, r, f, kit, a, walking ? Mood.SMILE : Mood.SMIRK)
     g.moveTo(d.x + f * r * 0.2, cy - r * 0.3)
       .lineTo(d.x + f * r * 0.35, cy - r * 0.45)

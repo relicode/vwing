@@ -32,6 +32,9 @@ export type ShipEnv = { water: WaterBody[] }
 // `forced` (a debug override) pins the weapon when set, bypassing the random roll.
 const DEFAULT_WEAPON = WeaponKind.SCATTERGUN
 const rollWeapon = (rng?: Rng, forced?: WeaponKind): WeaponKind => forced ?? (rng ? assignWeapon(rng) : DEFAULT_WEAPON)
+// The squad type is its own draw (never pinned by `forced`): rolled *after* the weapon, and
+// that order is load-bearing — both sides of the network must consume the rng identically.
+const rollSquad = (rng?: Rng): WeaponKind => (rng ? assignWeapon(rng) : DEFAULT_WEAPON)
 
 export const PLAYER_SPAWN_X = WORLD_WIDTH / 2
 export const PLAYER_SPAWN_Y = WORLD_HEIGHT * 0.4
@@ -48,6 +51,7 @@ export const createShip = (
   forced?: WeaponKind
 ): Ship => {
   const weapon = rollWeapon(rng, forced)
+  const squad = rollSquad(rng)
   return {
     id,
     kind,
@@ -66,6 +70,9 @@ export const createShip = (
     charge: SECONDARY_MAX_CHARGE,
     altCooldown: 0,
     disabled: 0,
+    troops: 0, // the sim fills the bay per mode (DEATHMATCH full, CAMPAIGN loads at the barracks)
+    squad,
+    deployCooldown: 0,
   }
 }
 
@@ -74,6 +81,7 @@ export const createShip = (
 // unless `forced` pins it).
 export const respawnShipAt = (ship: Ship, x: number, y: number, rng?: Rng, forced?: WeaponKind): void => {
   const weapon = rollWeapon(rng, forced)
+  const squad = rollSquad(rng)
   ship.x = x
   ship.y = y
   ship.vx = 0
@@ -88,6 +96,9 @@ export const respawnShipAt = (ship: Ship, x: number, y: number, rng?: Rng, force
   ship.charge = SECONDARY_MAX_CHARGE
   ship.altCooldown = 0
   ship.disabled = 0
+  ship.troops = 0 // the sim refills per mode (DEATHMATCH full, CAMPAIGN reloads at the barracks)
+  ship.squad = squad
+  ship.deployCooldown = 0
 }
 
 export const respawnShip = (ship: Ship, rng?: Rng, forced?: WeaponKind): void =>
@@ -120,6 +131,7 @@ export const updateShip = (ship: Ship, input: Input, dt: number, env?: ShipEnv):
   ship.y += ship.vy * dt
   if (ship.fireCooldown > 0) ship.fireCooldown -= dt
   if (ship.altCooldown > 0) ship.altCooldown -= dt
+  if (ship.deployCooldown > 0) ship.deployCooldown -= dt
   if (ship.invuln > 0) ship.invuln -= dt
   if (ship.disabled > 0) ship.disabled -= dt
   if (ship.shields < SHIP_MAX_SHIELDS) ship.shields = Math.min(SHIP_MAX_SHIELDS, ship.shields + SHIP_SHIELD_REGEN * dt)

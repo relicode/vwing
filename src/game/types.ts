@@ -1,12 +1,4 @@
-import type {
-  DeviceKind,
-  GamePhase,
-  InfantryWeapon,
-  ShipKind,
-  StructureType,
-  Surface,
-  WeaponKind,
-} from '$/game/constants'
+import type { DeviceKind, GamePhase, ShipKind, StructureType, Surface, WeaponKind } from '$/game/constants'
 
 export type Vec2 = { x: number; y: number }
 
@@ -32,6 +24,9 @@ export type Ship = {
   charge: number // secondary energy (0..SECONDARY_MAX_CHARGE); spent per use, regenerates
   altCooldown: number // s until the secondary can fire again
   disabled: number // s of EMP lockout remaining (no thrust/turn/fire)
+  troops: number // troopers aboard (0..TROOP_BAY_CAPACITY; float — barracks loading accrues fractionally, deploy needs >= 1)
+  squad: WeaponKind // the squad's specialist kind, rolled per (re)spawn independently of `weapon`
+  deployCooldown: number // s until the next trooper can be dropped
   lastHitBy?: number // id of the ship whose fire last damaged this one (kill attribution); cleared on respawn
 }
 
@@ -101,7 +96,7 @@ export type Device =
       vy: number
       owner: number
       radius: number
-      weapon: InfantryWeapon // RIFLE (straight shots) or GRENADE (lobbed) — rolled on deploy
+      heavy?: WeaponKind // undefined = rifleman; set = specialist carrying that man-portable heavy (rolled on deploy)
       attached: boolean // true once it lands on a surface (then it patrols + shoots)
       swim: number // s of floating left while in water (0 = on land / airborne); drowns at 0
       sinking: number // s of sinking left after drowning (> 0 = a corpse descending + fading)
@@ -179,6 +174,17 @@ export type WaterBody = {
   h: number // depth from the surface to the bottom
 }
 
+// A home barracks: it garrisons troopers for its owner ship to load aboard, and is the
+// side's lifeline — enemy troopers capturing it cut the owner's respawns (see bases.ts).
+export type Base = {
+  owner: number // ship id whose respawns this barracks sustains
+  x: number // pad center, world px
+  y: number // pad top surface, world px (the building sits on this line)
+  garrison: number // housed troopers (0..BASE_GARRISON_CAP; float accumulator)
+  capture: number // enemy capture progress 0..1; >= 1 = captured (respawns cut)
+  capturedBy?: number // capturing ship id while captured; undefined = the owner holds it
+}
+
 // The full mutable simulation. Owned by the engine closure (never module-level).
 // `ships` holds every combatant; ships[0] / kind PLAYER is the camera-followed human.
 export type World = {
@@ -191,6 +197,7 @@ export type World = {
   blocks: Block[] // collision/render terrain — rectangles greedily meshed from the voxel grid + debris
   terrainVersion: number // bumped whenever `blocks` changes (carve / falling debris); drives render caching
   water: WaterBody[] // bodies the ship can submerge into
+  bases: Base[] // home barracks (CAMPAIGN populates one per side; DEATHMATCH leaves it empty)
   shake: number // screen-shake amplitude (px); bumped by explosions, decays each frame
   rng: Rng
 }

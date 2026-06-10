@@ -27,7 +27,6 @@ import {
   INFANTRY_PANIC_DIST,
   INFANTRY_PARACHUTE_FIRE_INTERVAL,
   INFANTRY_PICKUP_RADIUS,
-  INFANTRY_PICKUP_REFUND,
   INFANTRY_PICKUP_SPEED,
   INFANTRY_RAM_SPEED,
   INFANTRY_RANGE,
@@ -51,18 +50,16 @@ import {
   INFANTRY_WALK_SPEED,
   INFANTRY_WALK_TURN_CHANCE,
   InfantryState,
-  InfantryWeapon,
   PARACHUTE_DEPLOY_SPEED,
   PARACHUTE_DRIFT,
   PARACHUTE_OPEN_TIME,
   PARACHUTE_SWAY,
   PARACHUTE_TERMINAL,
-  SECONDARY_MAX_CHARGE,
   Surface,
+  TROOP_BAY_CAPACITY,
   WALL_THICKNESS,
   WELL_MAX_ACCEL,
   WELL_MIN_DIST,
-  WeaponKind,
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from '$/game/constants'
@@ -240,7 +237,7 @@ const infantryFire = (
   const target = infantryTarget(world, device)
   if (!target) return
   const angle = Math.atan2(target.y - device.y, target.x - device.x) + randRange(world.rng, -spread, spread)
-  if (device.weapon === InfantryWeapon.GRENADE) {
+  if (device.heavy !== undefined) {
     lobGrenade(spawned, device, angle)
     muzzleFlash(world, device, angle, Color.GRENADE)
   } else {
@@ -546,10 +543,10 @@ const stepDevice = (
         return true
       }
       device.running = false
-      // A heavy weapon (grenadier) plants itself to shoot: it repositions freely until the cadence
-      // is up and a target is in sight, then drops to a knee and holds DEAD STILL — winds up, lets
-      // the round fly mid-crouch, holds through the recovery, then stands back up free to move.
-      if (device.weapon === InfantryWeapon.GRENADE) {
+      // A specialist plants itself to shoot its heavy weapon: it repositions freely until the
+      // cadence is up and a target is in sight, then drops to a knee and holds DEAD STILL — winds
+      // up, lets the round fly mid-crouch, holds through the recovery, then stands back up free.
+      if (device.heavy !== undefined) {
         if (device.kneel > 0) {
           const before = device.kneel
           device.kneel -= dt
@@ -654,8 +651,8 @@ export const updateDevices = (world: World, dt: number): Ship[] => {
   return [...dead]
 }
 
-// Resolve ship-vs-trooper overlaps: an owner drifting slowly over its own (re-armable) unit
-// scoops it up — refunding secondary energy and re-arming the Infantry slot — while any ship
+// Resolve ship-vs-trooper overlaps: an owner drifting slowly over its own unit scoops it
+// back into the troop bay (if there's room — a full bay leaves it fielded), while any ship
 // fast enough to ram (own or enemy) splatters the trooper it ploughs through, save for an
 // owner still inside its trooper's deploy lockout (so a fast drop can't instantly mince it).
 // Drowning is saveable: a sinking trooper can still be scooped for INFANTRY_DROWN_RESCUE_WINDOW
@@ -676,13 +673,12 @@ export const resolveInfantryContacts = (world: World): void => {
         slow &&
         d.owner === ship.id &&
         d.pickupLock <= 0 &&
+        ship.troops < TROOP_BAY_CAPACITY &&
         (d.attached || d.swim > 0 || rescuableDrowning) &&
         circlesOverlap(ship.x, ship.y, INFANTRY_PICKUP_RADIUS, d.x, d.y, d.radius)
       ) {
         world.devices.splice(i, 1)
-        ship.weapon = WeaponKind.INFANTRY
-        ship.charge = Math.min(SECONDARY_MAX_CHARGE, ship.charge + INFANTRY_PICKUP_REFUND)
-        ship.altCooldown = 0
+        ship.troops = Math.min(TROOP_BAY_CAPACITY, ship.troops + 1)
         continue
       }
       if (ramming && d.sinking <= 0 && circlesOverlap(ship.x, ship.y, ship.radius, d.x, d.y, d.radius)) {

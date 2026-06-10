@@ -34,6 +34,9 @@ const makeShip = (over: Partial<Ship>): Ship => ({
   charge: 0,
   altCooldown: 0,
   disabled: 0,
+  troops: 0,
+  squad: WeaponKind.GRENADE,
+  deployCooldown: 0,
   ...over,
 })
 
@@ -143,6 +146,7 @@ describe('decideBot', () => {
       blocks: [],
       terrainVersion: 0,
       water: [],
+      bases: [],
       shake: 0,
       rng: () => 0,
     }

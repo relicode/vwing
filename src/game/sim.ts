@@ -105,6 +105,7 @@ export const createWorld = (seed: number): World => {
     blocks,
     terrainVersion: 0,
     water,
+    bases: [],
     shake: 0,
     rng: createRng(seed),
   }
