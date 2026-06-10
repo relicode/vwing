@@ -23,9 +23,15 @@ import type { Block, Ship, World } from '$/game/types'
 const FACING_UP = -Math.PI / 2
 
 // The per-frame command the AI feeds through the shared `updateShip`/fire path.
-export type BotDecision = { turn: number; thrusting: boolean; firing: boolean; altFiring: boolean }
+export type BotDecision = {
+  turn: number
+  thrusting: boolean
+  firing: boolean
+  altFiring: boolean
+  deploying: boolean
+}
 
-const IDLE: BotDecision = { turn: 0, thrusting: false, firing: false, altFiring: false }
+const IDLE: BotDecision = { turn: 0, thrusting: false, firing: false, altFiring: false, deploying: false }
 
 const CENTER = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 } as const
 
@@ -101,7 +107,7 @@ export const decideBot = (self: Ship, target: Ship, blocks: Block[]): BotDecisio
 
   const error = wrapAngle(desired - self.angle)
   const turn = Math.abs(error) < BOT_AIM_DEADBAND ? 0 : Math.sign(error)
-  return { turn, thrusting, firing, altFiring }
+  return { turn, thrusting, firing, altFiring, deploying: false }
 }
 
 const nearestEnemy = (self: Ship, ships: Ship[]): Ship | undefined => {
@@ -148,6 +154,10 @@ export const createBotInput = (self: Ship, getWorld: () => World): Input => {
     altFiring: () => {
       refresh()
       return decision.altFiring
+    },
+    deploying: () => {
+      refresh()
+      return decision.deploying
     },
     destroy: () => {},
   }

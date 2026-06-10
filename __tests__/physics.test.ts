@@ -10,6 +10,7 @@ const makeInput = (turn: number, thrusting: boolean): Input => ({
   thrusting: () => thrusting,
   firing: () => false,
   altFiring: () => false,
+  deploying: () => false,
   destroy: () => {},
 })
 

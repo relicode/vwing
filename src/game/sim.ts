@@ -26,6 +26,8 @@ import {
   TERRAIN_SALT,
   THRUST_PARTICLE_LIFE,
   THRUST_PARTICLE_SPEED,
+  TROOP_BAY_CAPACITY,
+  TROOP_DEPLOY_COOLDOWN,
   WATER_CANNON_WET_RADIUS,
   type WeaponKind,
   WORLD_HEIGHT,
@@ -38,6 +40,7 @@ import { createRng } from '$/game/rng'
 import { respawnShipAt, type ShipEnv, updateShip } from '$/game/ship'
 import { resolveShipTerrain } from '$/game/terrain'
 import { createTerrain } from '$/game/terrain-map'
+import { spawnTrooper } from '$/game/troops'
 import type { Bullet, Ship, Vec2, World } from '$/game/types'
 import {
   burnSurface,
@@ -141,8 +144,15 @@ export const chooseSpawn = (world: World, occupants: readonly Ship[]): Vec2 => {
   return best
 }
 
+// DEATHMATCH ships carry a full bay per life (no barracks online yet); CAMPAIGN ships
+// spawn empty and load up at their home barracks — that round-trip IS the infantry loop.
+const refillBay = (ship: Ship, mode: SimMode): void => {
+  ship.troops = mode === SimMode.DEATHMATCH ? TROOP_BAY_CAPACITY : 0
+}
+
 export const createSim = (world: World, combatants: Combatant[], config: SimConfig): Sim => {
   world.ships = combatants.map((combatant) => combatant.ship)
+  for (const { ship } of combatants) refillBay(ship, config.mode)
   const submergedShips = new Set<number>() // ids currently underwater, for splash-on-crossing
   const eliminated = new Set<number>() // ids removed from play this run (CAMPAIGN, out of lives)
   // Read `water` live: pooling can replace world.water with a new array mid-run, so a one-time
@@ -201,6 +211,7 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     } else {
       const spawn = config.mode === SimMode.DEATHMATCH ? pickSpawn(victim.id) : vc.spawn
       respawnShipAt(victim, spawn.x, spawn.y, world.rng, config.forcedWeapon)
+      refillBay(victim, config.mode)
       victim.lastHitBy = undefined
       clearSpawnArea(victim.x, victim.y)
     }
@@ -337,6 +348,11 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
         ship.fireCooldown = SHIP_FIRE_INTERVAL
       }
       if (control.altFiring()) for (const killed of fireSecondary(world, ship)) reap(killed, events)
+      if (control.deploying() && ship.troops >= 1 && ship.deployCooldown <= 0 && ship.disabled <= 0) {
+        spawnTrooper(world, ship)
+        ship.troops -= 1
+        ship.deployCooldown = TROOP_DEPLOY_COOLDOWN
+      }
     }
     world.bullets = updateBullets(world.bullets, dt)
     for (const killed of updateDevices(world, dt)) reap(killed, events)
@@ -355,6 +371,7 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
   }
 
   const addCombatant = (combatant: Combatant): void => {
+    refillBay(combatant.ship, config.mode)
     combatants.push(combatant)
     world.ships.push(combatant.ship)
   }
