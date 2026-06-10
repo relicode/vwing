@@ -11,8 +11,8 @@ shows what's done.
 ## Status
 
 - [x] Phase 0 — Docs sync (README.md is stale, CLAUDE.md layout) — branch `feature/pixi-p0-docs-sync` (merged `cc2c6e3`)
-- [x] Phase 1 — Boundary guard test — branch `feature/pixi-p1-boundary-guard`
-- [ ] Phase 2 — Application lifecycle & loop hygiene
+- [x] Phase 1 — Boundary guard test — branch `feature/pixi-p1-boundary-guard` (merged `22de837`)
+- [x] Phase 2 — Application lifecycle & loop hygiene — branch `feature/pixi-p2-app-lifecycle`
 - [ ] Phase 3 — Mechanical split of renderer.ts
 - [ ] Phase 4 — Particles → ParticleContainer
 - [ ] Phase 5 — Bullets & flame gouts → particle atlas
