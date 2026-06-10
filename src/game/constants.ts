@@ -263,6 +263,12 @@ export const SHIP_START_LIVES = 3
 export const SHIP_FIRE_INTERVAL = 0.17 // s between shots
 export const SHIP_RESPAWN_INVULN = 2.5 // s of invulnerability after (re)spawn
 export const SHIP_SPAWN_CLEAR_RADIUS = 260 // rocks within this of a respawn are cleared
+// Dying costs time, and it compounds: the first death waits RESPAWN_DELAY_BASE before the
+// ship re-enters, and every death already suffered this run adds RESPAWN_DELAY_GROWTH (capped) —
+// a side being worn down reinforces slower and slower.
+export const RESPAWN_DELAY_BASE = 5 // s the first respawn waits
+export const RESPAWN_DELAY_GROWTH = 2.5 // s added per prior death
+export const RESPAWN_DELAY_MAX = 15 // ceiling on the wait
 
 // Projectiles fly straight (no gravity), inheriting the ship's velocity.
 export const BULLET_SPEED = 600 // muzzle speed
@@ -619,6 +625,10 @@ export const POOL_MAX_RISE = 30 // cells a basin rim may sit above the hit
 export const POOL_MAX_DEPTH = 40 // cells below the hit searched for the basin floor
 export const POOL_MIN_WIDTH = 2 // cells: ignore puddles narrower than this
 export const MAX_WATER_BODIES = 24 // cap on authored + dynamic water bodies
+// Pools fill GRADUALLY: each water-cannon droplet pours a fixed cross-section area into the
+// basin it lands in (the level climbs by area/width per hit, fast in a gully, slow in a wide
+// bowl), capped at the basin's spill level — never the whole basin from a single squirt.
+export const POOL_FILL_AREA = 700 // px² of water one droplet adds to its basin
 
 // ── Destructible terrain (voxel grid) ───────────────────────────────────────
 // Destructible materials (rock/grass/ice) are modeled as a grid of small cells. A shot

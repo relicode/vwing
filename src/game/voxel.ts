@@ -547,6 +547,27 @@ export const findPool = (vt: VoxelTerrain, x: number, y: number): WaterBody | un
   return ph > 0 ? { x: px, y: py, w: pw, h: ph } : undefined
 }
 
+// Slide a bedrock anchor vertically to `newY` (a floating landing slab riding a rising pool):
+// clears the anchor's old footprint from the grounding mask and rasterizes the new one. The
+// caller re-meshes (the anchor's rect is emitted verbatim into the derived blocks). Assumes the
+// anchor doesn't overlap other bedrock — true for the isolated pad slabs this exists for.
+export const moveBedrock = (vt: VoxelTerrain, block: Block, newY: number): void => {
+  const stamp = (b: Block, value: 0 | 1): void => {
+    const c0 = Math.max(0, Math.floor(b.x / vt.cell))
+    const c1 = Math.min(vt.cols - 1, Math.floor((b.x + b.w - 0.001) / vt.cell))
+    const r0 = Math.max(0, Math.floor(b.y / vt.cell))
+    const r1 = Math.min(vt.rows - 1, Math.floor((b.y + b.h - 0.001) / vt.cell))
+    for (let row = r0; row <= r1; row += 1) {
+      for (let col = c0; col <= c1; col += 1) {
+        if (pointInBlock(b, centerX(vt.cell, col), centerY(vt.cell, row))) vt.bedrockMask[row * vt.cols + col] = value
+      }
+    }
+  }
+  stamp(block, 0)
+  block.y = newY
+  stamp(block, 1)
+}
+
 // Advance falling debris one frame and tick wetted cells toward regrowing grass; lands chunks
 // back into the grid where they come to rest. Returns whether anything changed (so the caller
 // refreshes derived blocks). Both regrowth and debris settling mutate the static grid; mesh once.

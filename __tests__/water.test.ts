@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { ShipKind, WeaponKind } from '$/game/constants'
 import type { Ship, WaterBody } from '$/game/types'
-import { addPool, submersion, waterSurfaceAt } from '$/game/water'
+import { addPool, raisePool, submersion, waterSurfaceAt } from '$/game/water'
 
 const makeShip = (over: Partial<Ship>): Ship => ({
   id: 0,
@@ -66,6 +66,23 @@ describe('addPool', () => {
     const bodies = Array.from({ length: 24 }, (_, i) => ({ x: i * 100, y: 0, w: 10, h: 10 }))
     const lonely: WaterBody = { x: 5000, y: 0, w: 10, h: 10 }
     expect(addPool(bodies, lonely, 24)).toHaveLength(24) // skipped (no room, nothing to fuse)
+  })
+})
+
+describe('raisePool — basins fill gradually', () => {
+  const basin: WaterBody = { x: 0, y: 100, w: 100, h: 50 } // spill level 100, floor 150
+
+  test('each pour raises the level by area/width, capped at the spill level', () => {
+    let water: WaterBody[] = []
+    water = raisePool(water, basin, 700, 24)
+    expect(water).toHaveLength(1)
+    expect(water[0].y).toBeCloseTo(150 - 7, 5) // 700 px² across a 100 px basin = 7 px of water
+    const firstY = water[0].y
+    water = raisePool(water, basin, 700, 24)
+    expect(water[0].y).toBeLessThan(firstY) // climbing…
+    for (let i = 0; i < 50; i += 1) water = raisePool(water, basin, 700, 24)
+    expect(water[0].y).toBe(100) // …and pinned at the spill level, never past it
+    expect(raisePool(water, basin, 700, 24)).toBe(water) // a full basin takes no more
   })
 })
 

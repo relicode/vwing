@@ -103,6 +103,7 @@ export const createEngine = async (): Promise<Engine> => {
       squad: p.ship.squad,
       homeCapture: capturePct(PLAYER_ID),
       enemyCapture: capturePct(BOT_ID),
+      respawnIn: Math.ceil(sim.respawnIn(PLAYER_ID)),
     }
   }
   let status: EngineStatus = readStatus()
@@ -119,7 +120,8 @@ export const createEngine = async (): Promise<Engine> => {
       status.troops === next.troops &&
       status.squad === next.squad &&
       status.homeCapture === next.homeCapture &&
-      status.enemyCapture === next.enemyCapture
+      status.enemyCapture === next.enemyCapture &&
+      status.respawnIn === next.respawnIn
     ) {
       return
     }

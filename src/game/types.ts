@@ -227,4 +227,5 @@ export type EngineStatus = {
   squad: WeaponKind // the PLAYER squad's specialist kind
   homeCapture: number // enemy capture progress on the player's base, whole percent 0..100 (alarm)
   enemyCapture: number // the player's capture progress on the enemy base, whole percent 0..100
+  respawnIn: number // whole seconds until the player's ship re-enters; 0 = flying
 }

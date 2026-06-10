@@ -574,12 +574,14 @@ const clampToGround = (device: InfantryDevice, x: number): number => {
   return max <= min ? (device.groundLeft + device.groundRight) / 2 : clamp(x, min, max)
 }
 
-// March toward a target x along the supporting block (clamped to its edges, halted by a wall
-// face) to be picked up.
+// Double-time toward a target x along the supporting block (clamped to its edges, halted by a
+// wall face) to climb aboard — boarding is urgent, so the unit SPRINTS (the run pose reads the
+// dash to the hull; `running` resets at the top of every landed tick, so it clears on arrival).
 const walkToward = (world: World, device: InfantryDevice, targetX: number, dt: number): void => {
   device.walkDir = targetX >= device.x ? 1 : -1
+  device.running = true
   if (!wallAhead(world.blocks, device, device.walkDir)) {
-    device.x = clampToGround(device, device.x + device.walkDir * INFANTRY_WALK_SPEED * dt)
+    device.x = clampToGround(device, device.x + device.walkDir * INFANTRY_RUN_SPEED * dt)
   }
   device.facing = device.walkDir
 }

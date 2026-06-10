@@ -903,8 +903,14 @@ export const createRenderer = (rng: Rng): Renderer => {
   let lastTime = 0
 
   const draw = (world: RenderWorld, phase: GamePhase, selfId: number): void => {
-    const self = world.ships.find((ship) => ship.id === selfId) ?? world.ships[0]
-    const target = cameraOrigin(self ?? { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 })
+    // While the player's ship waits out its respawn it isn't in the world — hold the camera on
+    // the death spot (the eased position we already have) instead of snapping to another ship.
+    const self = world.ships.find((ship) => ship.id === selfId)
+    const target = self
+      ? cameraOrigin(self)
+      : camX !== undefined
+        ? { x: camX, y: camY }
+        : cameraOrigin({ x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 })
     if (camX === undefined || Math.hypot(target.x - camX, target.y - camY) > CAMERA_SNAP_DIST) {
       camX = target.x // first frame or a big jump (respawn): snap, don't drift across the arena
       camY = target.y
