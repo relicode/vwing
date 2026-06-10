@@ -8,21 +8,28 @@ export const updateBeams = (world: World, dt: number): void => {
   world.beams = world.beams.filter((beam) => beam.life > 0)
 }
 
-// Rail Lance hitscan: damage the nearest enemy ship lying along the ship's nose,
-// draw the transient beam to that ship (or to max range), and return the struck
-// ship so the caller can reap it if the hull is gone. Terrain does not block it.
-export const fireRail = (world: World, ship: Ship): Ship | undefined => {
-  const dirX = Math.cos(ship.angle)
-  const dirY = Math.sin(ship.angle)
-  const originX = ship.x + dirX * ship.radius
-  const originY = ship.y + dirY * ship.radius
+// Shared rail hitscan: damage the nearest enemy ship lying along the ray from (x, y), draw the
+// transient beam to that ship (or to max range), and return the struck ship so the caller can
+// reap it if the hull is gone. Terrain does not block it. Fired by ships (full power along the
+// nose) and by kneeling rail troopers (a scaled man-portable lance).
+export const castRail = (
+  world: World,
+  x: number,
+  y: number,
+  angle: number,
+  ownerId: number,
+  range: number,
+  damage: number
+): Ship | undefined => {
+  const dirX = Math.cos(angle)
+  const dirY = Math.sin(angle)
 
   let hit: Ship | undefined
-  let hitDist = RAIL_RANGE
+  let hitDist = range
   for (const other of world.ships) {
-    if (other.id === ship.id || other.invuln > 0) continue
-    const relX = other.x - originX
-    const relY = other.y - originY
+    if (other.id === ownerId || other.invuln > 0) continue
+    const relX = other.x - x
+    const relY = other.y - y
     const along = relX * dirX + relY * dirY // distance along the ray
     if (along < 0 || along > hitDist) continue
     const perp = Math.abs(relX * dirY - relY * dirX) // perpendicular offset from the ray
@@ -32,17 +39,29 @@ export const fireRail = (world: World, ship: Ship): Ship | undefined => {
   }
 
   world.beams.push({
-    x1: originX,
-    y1: originY,
-    x2: originX + dirX * hitDist,
-    y2: originY + dirY * hitDist,
+    x1: x,
+    y1: y,
+    x2: x + dirX * hitDist,
+    y2: y + dirY * hitDist,
     life: RAIL_BEAM_LIFE,
     maxLife: RAIL_BEAM_LIFE,
     color: Color.RAIL,
   })
   if (hit) {
-    applyDamage(hit, RAIL_DAMAGE)
-    hit.lastHitBy = ship.id
+    applyDamage(hit, damage)
+    hit.lastHitBy = ownerId
   }
   return hit
 }
+
+// The ship's Rail Lance: full-power hitscan from the nose.
+export const fireRail = (world: World, ship: Ship): Ship | undefined =>
+  castRail(
+    world,
+    ship.x + Math.cos(ship.angle) * ship.radius,
+    ship.y + Math.sin(ship.angle) * ship.radius,
+    ship.angle,
+    ship.id,
+    RAIL_RANGE,
+    RAIL_DAMAGE
+  )

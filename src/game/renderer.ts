@@ -18,6 +18,7 @@ import {
   Surface,
   VIEW_HEIGHT,
   VIEW_WIDTH,
+  WeaponKind,
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from '$/game/constants'
@@ -278,17 +279,42 @@ const head = (
   }
 }
 
-// The shoulder-fired bazooka (GRENADE weapon): green tube + flared muzzle + grey venturi, with a
+// The shoulder-fired heavy tube (any specialist kind): tinted tube + flared muzzle + grey venturi, with a
 // forward puff and the signature rear backblast while firing.
-const bazooka = (g: Graphics, sx: number, sy: number, f: number, r: number, alpha: number, flashT: number): void => {
+// Tube tint per specialist kind, so a kneeling rail sniper / EMP trooper / sapper reads at a
+// glance (each borrows its ship weapon's signature colour).
+const HEAVY_TUBE: Record<WeaponKind, number> = {
+  [WeaponKind.SCATTERGUN]: Color.SHRAPNEL,
+  [WeaponKind.WATER_CANNON]: Color.WATER_EDGE,
+  [WeaponKind.INCENDIARY]: Color.THRUST,
+  [WeaponKind.SEEKER]: Color.MISSILE,
+  [WeaponKind.RAIL]: Color.RAIL,
+  [WeaponKind.GRENADE]: Color.GRENADE,
+  [WeaponKind.MINES]: Color.MINE_ARMED,
+  [WeaponKind.FLAK]: Color.FLAK,
+  [WeaponKind.EMP]: Color.EMP,
+  [WeaponKind.SINGULARITY]: Color.WELL,
+}
+const tubeColor = (d: InfantrySprite): number => HEAVY_TUBE[d.heavy ?? WeaponKind.GRENADE]
+
+const bazooka = (
+  g: Graphics,
+  sx: number,
+  sy: number,
+  f: number,
+  r: number,
+  alpha: number,
+  flashT: number,
+  tube: number
+): void => {
   const rearX = sx - f * r * 1.0
   const rearY = sy + r * 0.12
   const muzX = sx + f * r * 2.3
   const muzY = sy - r * 0.7
   g.moveTo(rearX, rearY)
     .lineTo(muzX, muzY)
-    .stroke({ width: r * 0.4, color: Color.GRENADE, alpha }) // tube
-  g.circle(muzX, muzY, r * 0.5).fill({ color: Color.GRENADE, alpha }) // muzzle
+    .stroke({ width: r * 0.4, color: tube, alpha }) // tube
+  g.circle(muzX, muzY, r * 0.5).fill({ color: tube, alpha }) // muzzle
   g.circle(rearX, rearY, r * 0.32).fill({ color: Color.SMOKE, alpha }) // venturi
   if (flashT > 0) {
     g.circle(muzX + f * r * 0.5, muzY, r * 0.5 * flashT).fill({ color: Color.EXPLOSION, alpha: 0.85 * flashT })
@@ -361,7 +387,7 @@ const drawStanding = (g: Graphics, d: InfantrySprite, kit: Kit, time: number, f:
     g.moveTo(d.x + f * r * 0.2, cy - r * 0.3)
       .lineTo(d.x + f * r * 0.35, cy - r * 0.45)
       .stroke({ width: r * 0.3, color: kit.body, alpha: a }) // grip arm
-    bazooka(g, d.x + f * r * 0.1, cy - r * 0.5, f, r, a, 0) // a standing grenadier kneels before firing — no flash
+    bazooka(g, d.x + f * r * 0.1, cy - r * 0.5, f, r, a, 0, tubeColor(d)) // a standing specialist kneels before firing — no flash
   } else {
     const flashT = clamp((d.fireCooldown - (INFANTRY_FIRE_INTERVAL - FLASH_WINDOW)) / FLASH_WINDOW, 0, 1)
     head(g, d.x, cy - r * 0.95, r, f, kit, a, flashT > 0 ? Mood.GRIT : walking ? Mood.SMILE : Mood.SMIRK)
@@ -448,7 +474,7 @@ const drawKneeling = (g: Graphics, d: InfantrySprite, kit: Kit, f: number): void
   g.ellipse(d.x - f * r * 0.7, footY, r * 0.3, r * 0.22).fill({ color: BOOT_COLOR, alpha: a })
   torso(g, d.x + f * r * 0.1 + shove, d.y - r * 0.25, r, kit, a)
   head(g, d.x + shove, d.y - r * 0.55, r, f, kit, a, Mood.GRIT, 0.85)
-  bazooka(g, d.x + f * r * 0.3 + shove, d.y - r * 0.05, f, r, a, flashT)
+  bazooka(g, d.x + f * r * 0.3 + shove, d.y - r * 0.05, f, r, a, flashT, tubeColor(d))
   if (d.kneel > INFANTRY_KNEEL_FIRE_AT)
     g.circle(d.x - f * r * 0.3, d.y - r * 0.7, r * 0.1).fill({ color: Color.WATER_EDGE, alpha: 0.85 }) // sweat
 }

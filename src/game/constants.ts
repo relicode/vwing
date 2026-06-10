@@ -363,6 +363,75 @@ export const INFANTRY_SLIP_STOP_SPEED = 4 // px/s below which a slide ends (snap
 // Drowning is saveable: the owner can still scoop a sinking trooper this soon after it goes under.
 export const INFANTRY_DROWN_RESCUE_WINDOW = 0.8 // s of the sink during which a rescue still works
 
+// ── Man-portable heavy weapons (squad specialists) ──────────────────────────
+// One trooper in TROOP_SPECIALIST_CHANCE carries the squad's heavy kind — a scaled-down,
+// shoulder-fired cousin of the ship weapon. Most plant themselves with the grenadier's
+// kneel-brace-fire cycle; the mine sapper instead seeds its patrol path (no kneel, no target).
+// Airborne/swimming specialists fall back to the rifle sidearm — the heavy only comes out landed.
+export type InfantryHeavySpec = { interval: number; kneel: boolean }
+export const INFANTRY_HEAVY: Record<WeaponKind, InfantryHeavySpec> = {
+  [WeaponKind.SCATTERGUN]: { interval: 2.2, kneel: true },
+  [WeaponKind.WATER_CANNON]: { interval: 2.0, kneel: true },
+  [WeaponKind.INCENDIARY]: { interval: 2.6, kneel: true },
+  [WeaponKind.SEEKER]: { interval: 4.5, kneel: true },
+  [WeaponKind.RAIL]: { interval: 3.5, kneel: true },
+  [WeaponKind.GRENADE]: { interval: 2.6, kneel: true }, // the original grenadier cadence
+  [WeaponKind.MINES]: { interval: 8.0, kneel: false }, // plants along the patrol
+  [WeaponKind.FLAK]: { interval: 4.0, kneel: true },
+  [WeaponKind.EMP]: { interval: 5.0, kneel: true },
+  [WeaponKind.SINGULARITY]: { interval: 10.0, kneel: true }, // rare, absurd, wonderful
+}
+// Scattergun trooper — a hand cannon's pellet cone.
+export const INFANTRY_SCATTER_PELLETS = 4
+export const INFANTRY_SCATTER_SPREAD = 0.3
+export const INFANTRY_SCATTER_DAMAGE = 5
+export const INFANTRY_SCATTER_SPEED = 420
+export const INFANTRY_SCATTER_LIFE = 0.35
+// Water-cannon trooper — a knockback squirt that wets terrain like the ship stream.
+export const INFANTRY_WATER_SHOTS = 3
+export const INFANTRY_WATER_SPREAD = 0.08
+export const INFANTRY_WATER_PUSH = 60
+export const INFANTRY_WATER_SPEED = 400
+export const INFANTRY_WATER_DAMAGE = 1
+export const INFANTRY_WATER_LIFE = 0.5
+// Incendiary trooper — a short flame fan that scorches grass.
+export const INFANTRY_FIRE_PELLETS = 3
+export const INFANTRY_FIRE_SPREAD = 0.2
+export const INFANTRY_FIRE_DAMAGE = 4
+export const INFANTRY_FIRE_SPEED = 380
+export const INFANTRY_FIRE_LIFE = 0.4
+// Seeker trooper — one shoulder-launched homing missile per brace.
+export const INFANTRY_SEEKER_SPEED = 300
+export const INFANTRY_SEEKER_TURN = 2.2
+export const INFANTRY_SEEKER_LIFE = 3
+export const INFANTRY_SEEKER_RADIUS = 4
+export const INFANTRY_SEEKER_DAMAGE = 18
+export const INFANTRY_SEEKER_BLAST = 50
+export const INFANTRY_SEEKER_BLAST_DAMAGE = 10
+// Rail sniper — a scaled hitscan lance from the kneel.
+export const INFANTRY_RAIL_RANGE = 700
+export const INFANTRY_RAIL_DAMAGE = 30
+// Mine sapper — area denial seeded at its feet while patrolling.
+export const INFANTRY_MINE_RADIUS = 4
+export const INFANTRY_MINE_ARM = 1.2
+export const INFANTRY_MINE_TRIGGER = 50
+export const INFANTRY_MINE_BLAST = 70
+export const INFANTRY_MINE_DAMAGE = 25
+// Flak trooper — a slow shell that airbursts into the standard shard ring.
+export const INFANTRY_FLAK_SPEED = 320
+// EMP trooper — base defense: a slow orb that locks a strafing ship's controls.
+export const INFANTRY_EMP_SPEED = 240
+export const INFANTRY_EMP_LIFE = 2
+export const INFANTRY_EMP_RADIUS = 5
+export const INFANTRY_EMP_DISABLE = 1.2
+export const INFANTRY_EMP_DRAIN = 20
+// Singularity trooper — a pocket gravity well lobbed a short way toward the target.
+export const INFANTRY_WELL_DIST = 140
+export const INFANTRY_WELL_LIFE = 2.5
+export const INFANTRY_WELL_RADIUS = 5
+export const INFANTRY_WELL_PULL = 200
+export const INFANTRY_WELL_STRENGTH = 40000
+
 // Parachute: deploys on a fast fall and opens over PARACHUTE_OPEN_TIME. The brake is
 // all-or-nothing — until the canopy is *fully* open it does nothing (the unit keeps
 // accelerating), then it snaps the descent to a slow terminal. So a high drop blooms in

@@ -1,3 +1,4 @@
+import { castRail } from '$/game/beams'
 import { pushBullet } from '$/game/bullets'
 import { circleRectContact, circlesOverlap, segmentIntersectsRect } from '$/game/collision'
 import { applyDamage, applyDisable, isDead } from '$/game/combat'
@@ -5,6 +6,7 @@ import {
   BLAST_SHAKE,
   Color,
   DeviceKind,
+  FLAK_FUSE,
   FLAK_SHARD_DAMAGE,
   FLAK_SHARD_LIFE,
   FLAK_SHARD_SPEED,
@@ -18,21 +20,51 @@ import {
   GRENADE_SHARDS,
   GRENADE_SPEED,
   INFANTRY_DROWN_RESCUE_WINDOW,
+  INFANTRY_EMP_DISABLE,
+  INFANTRY_EMP_DRAIN,
+  INFANTRY_EMP_LIFE,
+  INFANTRY_EMP_RADIUS,
+  INFANTRY_EMP_SPEED,
   INFANTRY_FALL_LETHAL,
+  INFANTRY_FIRE_DAMAGE,
   INFANTRY_FIRE_INTERVAL,
-  INFANTRY_GRENADE_FIRE_INTERVAL,
+  INFANTRY_FIRE_LIFE,
+  INFANTRY_FIRE_PELLETS,
+  INFANTRY_FIRE_SPEED,
+  INFANTRY_FIRE_SPREAD,
+  INFANTRY_FLAK_SPEED,
+  INFANTRY_HEAVY,
   INFANTRY_ICE_SLIP_CHANCE,
   INFANTRY_KNEEL_FIRE_AT,
   INFANTRY_KNEEL_TIME,
+  INFANTRY_MINE_ARM,
+  INFANTRY_MINE_BLAST,
+  INFANTRY_MINE_DAMAGE,
+  INFANTRY_MINE_RADIUS,
+  INFANTRY_MINE_TRIGGER,
   INFANTRY_PANIC_DIST,
   INFANTRY_PARACHUTE_FIRE_INTERVAL,
   INFANTRY_PICKUP_DELAY,
   INFANTRY_PICKUP_RADIUS,
   INFANTRY_PICKUP_SPEED,
+  INFANTRY_RAIL_DAMAGE,
+  INFANTRY_RAIL_RANGE,
   INFANTRY_RAM_SPEED,
   INFANTRY_RANGE,
   INFANTRY_RESCUE_RANGE,
   INFANTRY_RUN_SPEED,
+  INFANTRY_SCATTER_DAMAGE,
+  INFANTRY_SCATTER_LIFE,
+  INFANTRY_SCATTER_PELLETS,
+  INFANTRY_SCATTER_SPEED,
+  INFANTRY_SCATTER_SPREAD,
+  INFANTRY_SEEKER_BLAST,
+  INFANTRY_SEEKER_BLAST_DAMAGE,
+  INFANTRY_SEEKER_DAMAGE,
+  INFANTRY_SEEKER_LIFE,
+  INFANTRY_SEEKER_RADIUS,
+  INFANTRY_SEEKER_SPEED,
+  INFANTRY_SEEKER_TURN,
   INFANTRY_SHOT_DAMAGE,
   INFANTRY_SHOT_SPEED,
   INFANTRY_SINK_SPEED,
@@ -50,7 +82,19 @@ import {
   INFANTRY_SWIM_TIME,
   INFANTRY_WALK_SPEED,
   INFANTRY_WALK_TURN_CHANCE,
+  INFANTRY_WATER_DAMAGE,
+  INFANTRY_WATER_LIFE,
+  INFANTRY_WATER_PUSH,
+  INFANTRY_WATER_SHOTS,
+  INFANTRY_WATER_SPEED,
+  INFANTRY_WATER_SPREAD,
+  INFANTRY_WELL_DIST,
+  INFANTRY_WELL_LIFE,
+  INFANTRY_WELL_PULL,
+  INFANTRY_WELL_RADIUS,
+  INFANTRY_WELL_STRENGTH,
   InfantryState,
+  MINE_LIFE,
   PARACHUTE_DEPLOY_SPEED,
   PARACHUTE_DRIFT,
   PARACHUTE_OPEN_TIME,
@@ -61,6 +105,7 @@ import {
   WALL_THICKNESS,
   WELL_MAX_ACCEL,
   WELL_MIN_DIST,
+  WeaponKind,
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from '$/game/constants'
@@ -238,36 +283,182 @@ const infantryFire = (
   const target = infantryTarget(world, device)
   if (!target) return
   const angle = Math.atan2(target.y - device.y, target.x - device.x) + randRange(world.rng, -spread, spread)
-  if (device.heavy !== undefined) {
-    lobGrenade(spawned, device, angle)
-    muzzleFlash(world, device, angle, Color.GRENADE)
-  } else {
-    pushBullet(
-      world.bullets,
-      device.x,
-      device.y,
-      Math.cos(angle) * INFANTRY_SHOT_SPEED,
-      Math.sin(angle) * INFANTRY_SHOT_SPEED,
-      {
-        owner: device.owner,
-        damage: INFANTRY_SHOT_DAMAGE,
-        life: INFANTRY_RANGE / INFANTRY_SHOT_SPEED,
-        color: Color.INFANTRY,
-      }
-    )
-    muzzleFlash(world, device, angle, Color.SPARK)
-  }
+  pushBullet(
+    world.bullets,
+    device.x,
+    device.y,
+    Math.cos(angle) * INFANTRY_SHOT_SPEED,
+    Math.sin(angle) * INFANTRY_SHOT_SPEED,
+    {
+      owner: device.owner,
+      damage: INFANTRY_SHOT_DAMAGE,
+      life: INFANTRY_RANGE / INFANTRY_SHOT_SPEED,
+      color: Color.INFANTRY,
+    }
+  )
+  muzzleFlash(world, device, angle, Color.SPARK)
   device.fireCooldown = interval
 }
 
-// A crouched grenadier lets one round fly at the current target (if still in sight). Driven by
-// the landed kneel-fire cycle — no cooldown of its own; the crouch timing sets the cadence.
-const grenadierLob = (world: World, device: InfantryDevice, spawned: Device[], spread: number): void => {
+// A short burst of aimed specialist bullets (scatter pellets / water squirt / flame fan).
+const heavyBurst = (
+  world: World,
+  device: InfantryDevice,
+  angle: number,
+  count: number,
+  spread: number,
+  speed: number,
+  opts: { damage: number; life: number; color: number; push?: number; wet?: boolean; burn?: boolean }
+): void => {
+  for (let i = 0; i < count; i += 1) {
+    const jittered = angle + randRange(world.rng, -spread, spread)
+    pushBullet(
+      world.bullets,
+      device.x,
+      device.y - device.radius * 0.5,
+      Math.cos(jittered) * speed,
+      Math.sin(jittered) * speed,
+      { owner: device.owner, ...opts }
+    )
+  }
+}
+
+// The sapper's plant: a small proximity mine seeded at the trooper's feet (queued in `spawned`).
+const plantMine = (spawned: Device[], device: InfantryDevice): void => {
+  spawned.push({
+    kind: DeviceKind.MINE,
+    x: device.x,
+    y: device.y + device.radius - INFANTRY_MINE_RADIUS,
+    owner: device.owner,
+    radius: INFANTRY_MINE_RADIUS,
+    armTime: INFANTRY_MINE_ARM,
+    life: MINE_LIFE,
+    triggerRadius: INFANTRY_MINE_TRIGGER,
+    blastRadius: INFANTRY_MINE_BLAST,
+    damage: INFANTRY_MINE_DAMAGE,
+  })
+}
+
+// A braced specialist lets its man-portable heavy fly at the current target (if still in sight —
+// otherwise a dry click). Driven by the landed kneel-fire cycle, so there's no cooldown here; the
+// crouch timing sets the cadence. Rail kills land in `dead` (hitscan resolves immediately).
+const fireHeavy = (world: World, device: InfantryDevice, spawned: Device[], dead: Set<Ship>): void => {
+  const heavy = device.heavy
+  if (heavy === undefined) return
   const target = infantryTarget(world, device)
   if (!target) return // target slipped out of sight during the wind-up — dry click
-  const angle = Math.atan2(target.y - device.y, target.x - device.x) + randRange(world.rng, -spread, spread)
-  lobGrenade(spawned, device, angle)
-  muzzleFlash(world, device, angle, Color.GRENADE)
+  const angle = Math.atan2(target.y - device.y, target.x - device.x)
+  const shoulderY = device.y - device.radius * 0.5
+  switch (heavy) {
+    case WeaponKind.SCATTERGUN:
+      heavyBurst(world, device, angle, INFANTRY_SCATTER_PELLETS, INFANTRY_SCATTER_SPREAD, INFANTRY_SCATTER_SPEED, {
+        damage: INFANTRY_SCATTER_DAMAGE,
+        life: INFANTRY_SCATTER_LIFE,
+        color: Color.SHRAPNEL,
+      })
+      muzzleFlash(world, device, angle, Color.SHRAPNEL)
+      return
+    case WeaponKind.WATER_CANNON:
+      heavyBurst(world, device, angle, INFANTRY_WATER_SHOTS, INFANTRY_WATER_SPREAD, INFANTRY_WATER_SPEED, {
+        damage: INFANTRY_WATER_DAMAGE,
+        life: INFANTRY_WATER_LIFE,
+        color: Color.WATER_EDGE,
+        push: INFANTRY_WATER_PUSH,
+        wet: true,
+      })
+      muzzleFlash(world, device, angle, Color.WATER_EDGE)
+      return
+    case WeaponKind.INCENDIARY:
+      heavyBurst(world, device, angle, INFANTRY_FIRE_PELLETS, INFANTRY_FIRE_SPREAD, INFANTRY_FIRE_SPEED, {
+        damage: INFANTRY_FIRE_DAMAGE,
+        life: INFANTRY_FIRE_LIFE,
+        color: Color.THRUST,
+        burn: true,
+      })
+      muzzleFlash(world, device, angle, Color.THRUST)
+      return
+    case WeaponKind.SEEKER:
+      spawned.push({
+        kind: DeviceKind.MISSILE,
+        x: device.x,
+        y: shoulderY,
+        vx: Math.cos(angle) * INFANTRY_SEEKER_SPEED,
+        vy: Math.sin(angle) * INFANTRY_SEEKER_SPEED,
+        life: INFANTRY_SEEKER_LIFE,
+        owner: device.owner,
+        radius: INFANTRY_SEEKER_RADIUS,
+        turnRate: INFANTRY_SEEKER_TURN,
+        speed: INFANTRY_SEEKER_SPEED,
+        damage: INFANTRY_SEEKER_DAMAGE,
+        blastRadius: INFANTRY_SEEKER_BLAST,
+        blastDamage: INFANTRY_SEEKER_BLAST_DAMAGE,
+        disableTime: 0,
+        shieldDrain: 0,
+        color: Color.MISSILE,
+      })
+      muzzleFlash(world, device, angle, Color.MISSILE)
+      return
+    case WeaponKind.RAIL: {
+      const hit = castRail(world, device.x, shoulderY, angle, device.owner, INFANTRY_RAIL_RANGE, INFANTRY_RAIL_DAMAGE)
+      if (hit && isDead(hit)) dead.add(hit)
+      muzzleFlash(world, device, angle, Color.RAIL)
+      return
+    }
+    case WeaponKind.GRENADE:
+      lobGrenade(spawned, device, angle)
+      muzzleFlash(world, device, angle, Color.GRENADE)
+      return
+    case WeaponKind.MINES:
+      plantMine(spawned, device) // sappers normally plant on patrol, but stay exhaustive here
+      return
+    case WeaponKind.FLAK:
+      spawned.push({
+        kind: DeviceKind.FLAK,
+        x: device.x,
+        y: shoulderY,
+        vx: Math.cos(angle) * INFANTRY_FLAK_SPEED,
+        vy: Math.sin(angle) * INFANTRY_FLAK_SPEED,
+        owner: device.owner,
+        radius: 4,
+        fuse: FLAK_FUSE,
+      })
+      muzzleFlash(world, device, angle, Color.FLAK)
+      return
+    case WeaponKind.EMP:
+      spawned.push({
+        kind: DeviceKind.MISSILE,
+        x: device.x,
+        y: shoulderY,
+        vx: Math.cos(angle) * INFANTRY_EMP_SPEED,
+        vy: Math.sin(angle) * INFANTRY_EMP_SPEED,
+        life: INFANTRY_EMP_LIFE,
+        owner: device.owner,
+        radius: INFANTRY_EMP_RADIUS,
+        turnRate: 0,
+        speed: INFANTRY_EMP_SPEED,
+        damage: 0,
+        blastRadius: 0,
+        blastDamage: 0,
+        disableTime: INFANTRY_EMP_DISABLE,
+        shieldDrain: INFANTRY_EMP_DRAIN,
+        color: Color.EMP,
+      })
+      muzzleFlash(world, device, angle, Color.EMP)
+      return
+    case WeaponKind.SINGULARITY:
+      spawned.push({
+        kind: DeviceKind.WELL,
+        x: device.x + Math.cos(angle) * INFANTRY_WELL_DIST,
+        y: shoulderY + Math.sin(angle) * INFANTRY_WELL_DIST,
+        owner: device.owner,
+        radius: INFANTRY_WELL_RADIUS,
+        life: INFANTRY_WELL_LIFE,
+        strength: INFANTRY_WELL_STRENGTH,
+        pullRadius: INFANTRY_WELL_PULL,
+      })
+      muzzleFlash(world, device, angle, Color.WELL)
+      return
+  }
 }
 
 // The unit's own owner ship when it's a viable rescuer: present and drifting slowly enough
@@ -547,12 +738,23 @@ const stepDevice = (
       // A specialist plants itself to shoot its heavy weapon: it repositions freely until the
       // cadence is up and a target is in sight, then drops to a knee and holds DEAD STILL — winds
       // up, lets the round fly mid-crouch, holds through the recovery, then stands back up free.
+      // The mine sapper is the no-kneel exception: it seeds its patrol path, no target needed.
       if (device.heavy !== undefined) {
+        const spec = INFANTRY_HEAVY[device.heavy]
+        if (!spec.kneel) {
+          device.fireCooldown -= dt
+          repositionLanded(world, device, dt)
+          if (device.fireCooldown <= 0) {
+            plantMine(spawned, device)
+            device.fireCooldown = spec.interval
+          }
+          return true
+        }
         if (device.kneel > 0) {
           const before = device.kneel
           device.kneel -= dt
           if (before > INFANTRY_KNEEL_FIRE_AT && device.kneel <= INFANTRY_KNEEL_FIRE_AT) {
-            grenadierLob(world, device, spawned, INFANTRY_SPREAD_STANDING) // the round flies at the wind-up's end
+            fireHeavy(world, device, spawned, dead) // the round flies at the wind-up's end
           }
           return true // crouched: stay perfectly still (no patrol/walk)
         }
@@ -563,7 +765,7 @@ const stepDevice = (
           if (target) {
             device.facing = target.x >= device.x ? 1 : -1 // square up to the target
             device.kneel = INFANTRY_KNEEL_TIME // drop to a knee; fires once the wind-up elapses
-            device.fireCooldown = INFANTRY_GRENADE_FIRE_INTERVAL
+            device.fireCooldown = spec.interval
           }
         }
         return true
