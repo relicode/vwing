@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   BOT_KILL_SCORE,
   DEATHMATCH_FRAG_SCORE,
+  DeviceKind,
   SHIP_MAX_HEALTH,
   ShipKind,
   SimMode,
@@ -12,7 +13,7 @@ import {
 import { inputFromSnapshot, NEUTRAL_INPUT } from '$/game/input'
 import { createShip } from '$/game/ship'
 import { type Combatant, createSim, createWorld } from '$/game/sim'
-import type { Block, Bullet } from '$/game/types'
+import type { Block, Bullet, Device } from '$/game/types'
 
 // Total pixel area of destructible (earth, non-metal) terrain — shrinks as earth is shot away.
 const destructibleArea = (blocks: Block[]): number =>
@@ -164,7 +165,8 @@ describe('createSim — troop bay + deploy', () => {
     empty.input = deployInput
     const sim = createSim(world, [empty], { mode: SimMode.CAMPAIGN })
     for (let i = 0; i < 10; i += 1) sim.step(1 / 60)
-    expect(world.devices).toHaveLength(0)
+    // The barracks field their own guards in CAMPAIGN — only ship-deployed troopers count here.
+    expect(world.devices.filter((d) => d.kind === DeviceKind.INFANTRY && !d.guard)).toHaveLength(0)
   })
 
   test('a DEATHMATCH respawn refills the bay', () => {
@@ -239,5 +241,60 @@ describe('createSim — membership', () => {
     expect(world.ships).toHaveLength(1)
     expect(world.ships[0].id).toBe(1)
     expect(sim.getCombatant(0)).toBeUndefined()
+  })
+})
+
+describe('createSim — flame and water vs infantry', () => {
+  const airborneTrooper = (x: number, y: number, owner: number): Extract<Device, { kind: DeviceKind.INFANTRY }> => ({
+    kind: DeviceKind.INFANTRY,
+    x,
+    y,
+    vx: 0,
+    vy: 0,
+    owner,
+    radius: 9,
+    guard: false,
+    attached: false,
+    swim: 0,
+    sinking: 0,
+    chute: -1,
+    pickupLock: 0,
+    walkDir: 1,
+    facing: 1,
+    groundLeft: 0,
+    groundRight: 0,
+    fireCooldown: 99,
+    kneel: 0,
+    running: false,
+    slide: 0,
+    burning: 0,
+    stun: 0,
+  })
+
+  test('a flame gout ignites a trooper (no instant kill); a water squirt douses and shoves it', () => {
+    const world = createWorld(21)
+    const sim = createSim(world, [combatant(0, 500, 400, Number.POSITIVE_INFINITY)], { mode: SimMode.DEATHMATCH })
+    const victim = airborneTrooper(700, 300, 1)
+    world.devices.push(victim)
+    world.bullets.push({ x: 700, y: 300, vx: 0, vy: 0, radius: 3, life: 0.3, owner: 0, damage: 3, burn: true })
+    sim.step(1 / 60)
+    expect(world.devices).toContain(victim) // alight, not splattered
+    expect(victim.burning).toBeGreaterThan(0)
+    world.bullets.push({
+      x: victim.x,
+      y: victim.y,
+      vx: 50,
+      vy: 0,
+      radius: 3,
+      life: 0.3,
+      owner: 0,
+      damage: 2,
+      push: 120,
+      wet: true,
+    })
+    sim.step(1 / 60)
+    expect(world.devices).toContain(victim) // the jet never kills
+    expect(victim.burning).toBe(0) // doused
+    expect(victim.vx).toBeGreaterThan(0) // and shoved along the jet
   })
 })

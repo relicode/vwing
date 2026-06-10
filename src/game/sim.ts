@@ -10,7 +10,9 @@ import {
   Color,
   DEATHMATCH_FRAG_SCORE,
   DeviceKind,
-  INCENDIARY_BURN_RADIUS,
+  FLAMETHROWER_BURN_RADIUS,
+  INFANTRY_BURN_TIME,
+  INFANTRY_WASH_PUSH_MAX,
   MAX_WATER_BODIES,
   SHAKE_DECAY,
   SHIP_DEATH_SHAKE,
@@ -38,6 +40,7 @@ import {
 } from '$/game/constants'
 import { resolveInfantryContacts, updateDevices } from '$/game/devices'
 import type { Input } from '$/game/input'
+import { clamp } from '$/game/math'
 import { spawnExplosion, spawnPuff, updateParticles } from '$/game/particles'
 import { createRng } from '$/game/rng'
 import { respawnShipAt, type ShipEnv, updateShip } from '$/game/ship'
@@ -273,8 +276,27 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
       )
       if (unit >= 0) {
         const inf = world.devices[unit]
-        spawnExplosion(world.particles, inf.x, inf.y, Color.BLOOD, world.rng, 6)
-        world.devices.splice(unit, 1)
+        if (inf.kind === DeviceKind.INFANTRY && bullet.wet) {
+          // The water jet doesn't kill a trooper — it douses any fire on it and washes it off
+          // its feet into a skid (airborne/swimming units just get shoved).
+          inf.burning = 0
+          const dir = bullet.vx >= 0 ? 1 : -1
+          if (inf.attached) {
+            inf.slide = clamp(inf.slide + dir * (bullet.push ?? 0), -INFANTRY_WASH_PUSH_MAX, INFANTRY_WASH_PUSH_MAX)
+            inf.kneel = 0 // knocked out of any brace
+          } else {
+            inf.vx += dir * (bullet.push ?? 0) * 0.5
+          }
+          spawnExplosion(world.particles, inf.x, inf.y, Color.WATER_EDGE, world.rng, 5)
+        } else if (inf.kind === DeviceKind.INFANTRY && bullet.burn) {
+          // A flame gout sets the trooper alight rather than killing outright — the burn
+          // timer (and the panicked flailing) takes it from here. Wet units can't catch.
+          if (inf.swim <= 0 && inf.sinking <= 0) inf.burning = INFANTRY_BURN_TIME
+          spawnExplosion(world.particles, inf.x, inf.y, Color.THRUST, world.rng, 5)
+        } else {
+          spawnExplosion(world.particles, inf.x, inf.y, Color.BLOOD, world.rng, 6)
+          world.devices.splice(unit, 1)
+        }
         continue
       }
       const hit = world.blocks.findIndex((b) =>
@@ -283,8 +305,8 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
       if (hit >= 0) {
         const block = world.blocks[hit]
         if (bullet.burn) {
-          // Incendiary: scorch grass → bare earth (surface only, no carve), with a lick of flame.
-          if (burnSurface(voxel, bullet.x, bullet.y, INCENDIARY_BURN_RADIUS)) terrainDirty = true
+          // Flamethrower: scorch grass → bare earth (surface only, no carve), with a lick of flame.
+          if (burnSurface(voxel, bullet.x, bullet.y, FLAMETHROWER_BURN_RADIUS)) terrainDirty = true
           spawnExplosion(world.particles, bullet.x, bullet.y, Color.THRUST, world.rng, 7)
         } else if (bullet.wet) {
           // Water cannon: wet bare earth → grass (regrows over time, no carve), and if the impact

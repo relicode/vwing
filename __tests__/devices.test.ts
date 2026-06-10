@@ -206,6 +206,7 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     vy: 0,
     owner: 0,
     radius: 6,
+    guard: false,
     attached: false,
     swim: 0,
     sinking: 0,
@@ -219,6 +220,8 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     kneel: 0,
     running: false,
     slide: 0,
+    burning: 0,
+    stun: 0,
     ...over,
   })
 
@@ -605,6 +608,173 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     const late = makeWorld([ownerLate], [infantry({ owner: 0, x: 100, y: 205, sinking: 0.5, pickupLock: 0 })])
     resolveInfantryContacts(late)
     expect(late.devices.length).toBe(1) // too deep to save
+  })
+
+  test('a base guard is never scooped — the watch stays on post', () => {
+    const owner = makeShip({ id: 0, x: 100, y: 100, vx: 10, vy: 0, troops: 0 })
+    const world = makeWorld([owner], [infantry({ owner: 0, x: 100, y: 100, attached: true, guard: true })])
+    resolveInfantryContacts(world)
+    expect(world.devices.length).toBe(1) // still on watch
+    expect(owner.troops).toBe(0)
+  })
+
+  test('recruiting a guard strips it of its post', () => {
+    const raider = makeShip({ id: 1, kind: ShipKind.BOT, x: 100, y: 100, vx: 10, vy: 0 })
+    const turned = infantry({ owner: 0, x: 100, y: 100, attached: true, guard: true })
+    const world = makeWorld([raider], [turned])
+    resolveInfantryContacts(world)
+    if (turned.kind === DeviceKind.INFANTRY) {
+      expect(turned.owner).toBe(1)
+      expect(turned.guard).toBe(false) // a regular trooper for its new master
+    }
+  })
+})
+
+describe('updateDevices — fire, stun, and the heavier ordnance vs infantry', () => {
+  const infantry = (over: Partial<Extract<Device, { kind: DeviceKind.INFANTRY }>>): Device => ({
+    kind: DeviceKind.INFANTRY,
+    x: 100,
+    y: 193,
+    vx: 0,
+    vy: 0,
+    owner: 0,
+    radius: 6,
+    guard: false,
+    attached: false,
+    swim: 0,
+    sinking: 0,
+    chute: -1,
+    pickupLock: 0,
+    walkDir: 1,
+    facing: 1,
+    groundLeft: 0,
+    groundRight: 0,
+    fireCooldown: 0,
+    kneel: 0,
+    running: false,
+    slide: 0,
+    burning: 0,
+    stun: 0,
+    ...over,
+  })
+  const ground = { x: 0, y: 200, w: 600, h: 60, structure: StructureType.EARTH, surface: Surface.EARTH }
+
+  test('a burning trooper collapses when the timer runs out, never getting a shot off', () => {
+    const enemy = makeShip({ id: 1, kind: ShipKind.BOT, x: 260, y: 150 }) // in range — a calm unit would fire
+    const world = makeWorld([enemy], [infantry({ attached: true, burning: 0.04, groundLeft: 0, groundRight: 600 })])
+    world.blocks = [ground]
+    updateDevices(world, 0.05)
+    expect(world.devices).toHaveLength(0) // burned down
+    expect(world.bullets).toHaveLength(0) // flailing, not aiming
+  })
+
+  test('water extinguishes: a burning trooper that ends up swimming stops burning', () => {
+    const world = makeWorld([], [infantry({ burning: 3, swim: 4 })])
+    updateDevices(world, 0.016)
+    const doused = world.devices[0]
+    expect(doused?.kind).toBe(DeviceKind.INFANTRY)
+    if (doused?.kind === DeviceKind.INFANTRY) expect(doused.burning).toBe(0)
+  })
+
+  test('fire jumps to a trooper in near-contact', () => {
+    // Both pinned on too-narrow footing so neither can run clear of the contagion radius.
+    const burner = infantry({ x: 200, y: 193, attached: true, burning: 3, groundLeft: 195, groundRight: 205 })
+    const buddy = infantry({ x: 210, y: 193, attached: true, groundLeft: 205, groundRight: 215, fireCooldown: 99 })
+    const world = makeWorld([], [burner, buddy])
+    world.blocks = [ground]
+    let caught = false
+    for (let i = 0; i < 150 && !caught; i += 1) {
+      updateDevices(world, 1 / 60)
+      caught = world.devices.some((d) => d.kind === DeviceKind.INFANTRY && d !== burner && d.burning > 0)
+    }
+    expect(caught).toBe(true)
+  })
+
+  test('troopers flee a burning man — even one of their own', () => {
+    const burner = infantry({ x: 200, y: 193, attached: true, burning: 3, groundLeft: 195, groundRight: 205 })
+    const friend = infantry({ x: 260, y: 193, attached: true, groundLeft: 140, groundRight: 460, fireCooldown: 99 })
+    const world = makeWorld([], [burner, friend])
+    world.blocks = [ground]
+    updateDevices(world, 1 / 60)
+    if (friend.kind === DeviceKind.INFANTRY) {
+      expect(friend.running).toBe(true) // a same-side neighbour never used to spook anyone
+      expect(friend.x).toBeGreaterThan(260) // bolting away from the flames
+    }
+  })
+
+  test('an EMP pop seizes nearby troopers instead of killing them, and a seized unit holds fire', () => {
+    const orb = missile({
+      x: 120,
+      y: 193,
+      vx: 0,
+      vy: 0,
+      turnRate: 0,
+      damage: 0,
+      blastRadius: 0,
+      disableTime: 2,
+      owner: 1,
+    })
+    const near = infantry({ x: 120, y: 193, attached: true, groundLeft: 0, groundRight: 600 })
+    const beside = infantry({ x: 170, y: 193, attached: true, groundLeft: 0, groundRight: 600 })
+    const world = makeWorld([], [orb, near, beside])
+    world.blocks = [ground]
+    updateDevices(world, 0.016)
+    const seized = world.devices.filter((d) => d.kind === DeviceKind.INFANTRY)
+    expect(seized).toHaveLength(2) // alive, not splattered
+    expect(seized.every((d) => d.kind === DeviceKind.INFANTRY && d.stun > 0)).toBe(true)
+    world.ships.push(makeShip({ id: 1, kind: ShipKind.BOT, x: 200, y: 150 })) // a target in plain sight
+    updateDevices(world, 0.016)
+    expect(world.bullets).toHaveLength(0) // both still seized up
+  })
+
+  test('an armed mine is tripped by an enemy trooper and the blast splatters it', () => {
+    const mineDev: Device = {
+      kind: DeviceKind.MINE,
+      x: 100,
+      y: 196,
+      owner: 1,
+      radius: 6,
+      armTime: 0,
+      life: 10,
+      triggerRadius: 50,
+      blastRadius: 70,
+      damage: 25,
+    }
+    const world = makeWorld([], [mineDev, infantry({ x: 130, y: 193, attached: true })])
+    updateDevices(world, 0.016)
+    expect(world.devices).toHaveLength(0) // mine spent, trooper gone
+  })
+
+  test('a warhead contact-detonates on a trooper mid-flight (no fly-through)', () => {
+    const world = makeWorld(
+      [],
+      [missile({ x: 130, y: 193, vx: 0, vy: 0, turnRate: 0, owner: 1 }), infantry({ x: 130, y: 193 })]
+    )
+    updateDevices(world, 0.016)
+    expect(world.devices).toHaveLength(0)
+  })
+
+  test('a gravity well plucks a landed enemy trooper off its feet', () => {
+    const well: Device = {
+      kind: DeviceKind.WELL,
+      x: 300,
+      y: 100,
+      owner: 1,
+      radius: 8,
+      life: 2,
+      strength: 90000,
+      pullRadius: 320,
+    }
+    const u = infantry({ x: 200, y: 193, attached: true, groundLeft: 140, groundRight: 460, fireCooldown: 99 })
+    const world = makeWorld([], [well, u])
+    world.blocks = [{ x: 140, y: 200, w: 320, h: 40, structure: StructureType.EARTH, surface: Surface.EARTH }]
+    updateDevices(world, 0.016)
+    const yanked = world.devices.find((d) => d.kind === DeviceKind.INFANTRY)
+    expect(yanked).toBeDefined()
+    if (yanked?.kind === DeviceKind.INFANTRY) {
+      expect(yanked.attached).toBe(false) // off its feet
+      expect(yanked.vx).toBeGreaterThan(0) // dragged toward the well
+    }
   })
 })
 

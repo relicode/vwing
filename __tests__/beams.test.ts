@@ -1,9 +1,18 @@
 import { describe, expect, test } from 'bun:test'
 
 import { fireRail } from '$/game/beams'
-import { RAIL_DAMAGE, ShipKind, StructureType, Surface, WeaponKind, WORLD_HEIGHT, WORLD_WIDTH } from '$/game/constants'
+import {
+  DeviceKind,
+  RAIL_DAMAGE,
+  ShipKind,
+  StructureType,
+  Surface,
+  WeaponKind,
+  WORLD_HEIGHT,
+  WORLD_WIDTH,
+} from '$/game/constants'
 import { createRng } from '$/game/rng'
-import type { Ship, World } from '$/game/types'
+import type { Device, Ship, World } from '$/game/types'
 
 const makeShip = (over: Partial<Ship>): Ship => ({
   id: 0,
@@ -93,5 +102,46 @@ describe('fireRail', () => {
     world.blocks = [{ x: 300, y: -200, w: 80, h: 400, structure: StructureType.EARTH, surface: Surface.EARTH }]
     expect(fireRail(world, shooter)).toBe(exposed)
     expect(exposed.health).toBe(100 - RAIL_DAMAGE)
+  })
+
+  test('the lance pierces every enemy trooper along the beam — but not past terrain', () => {
+    const trooper = (x: number, owner: number): Device => ({
+      kind: DeviceKind.INFANTRY,
+      x,
+      y: 0,
+      vx: 0,
+      vy: 0,
+      owner,
+      radius: 9,
+      guard: false,
+      attached: true,
+      swim: 0,
+      sinking: 0,
+      chute: -1,
+      pickupLock: 0,
+      walkDir: 1,
+      facing: 1,
+      groundLeft: 0,
+      groundRight: 0,
+      fireCooldown: 99,
+      kneel: 0,
+      running: false,
+      slide: 0,
+      burning: 0,
+      stun: 0,
+    })
+    const shooter = makeShip({ id: 0, x: 0, y: 0, angle: 0 }) // facing +x
+    const world = makeWorld([shooter])
+    world.devices = [
+      trooper(100, 1), // skewered
+      trooper(200, 1), // skewered too — flesh doesn't stop the lance
+      trooper(150, 0), // the firer's own man: untouched
+      trooper(500, 1), // behind the wall: safe
+    ]
+    world.blocks = [{ x: 300, y: -200, w: 80, h: 400, structure: StructureType.EARTH, surface: Surface.EARTH }]
+    fireRail(world, shooter)
+    const survivors = world.devices.filter((d) => d.kind === DeviceKind.INFANTRY)
+    expect(survivors).toHaveLength(2)
+    expect(survivors.map((d) => d.x).sort((a, b) => a - b)).toEqual([150, 500])
   })
 })

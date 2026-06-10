@@ -1,5 +1,6 @@
 import { closestPointOnRect } from '$/game/collision'
 import {
+  BaseAlarm,
   BOT_AIM_DEADBAND,
   BOT_ARRIVAL_RADIUS,
   BOT_ASSAULT_MIN_TROOPS,
@@ -185,8 +186,12 @@ export const nextGoal = (prev: BotGoal, self: Ship, world: World, target: Ship |
   if (!home || !enemyBase) return BotGoal.DOGFIGHT
   // 1. A nearby enemy ship always wins attention — never stop being a dogfighter when pressed.
   if (target && Math.hypot(target.x - self.x, target.y - self.y) < BOT_THREAT_RANGE) return BotGoal.DOGFIGHT
-  // 2. The home barracks under capture: get back and drop defenders into the zone.
+  // 2. The home barracks under threat — capture progress, or the garrison already sortied
+  // against landed raiders (capture stays 0 while they storm the building, so the sortie is
+  // the early warning). Flying home empty-handed helps nobody, so the sortie response needs
+  // troops aboard to drop.
   if (home.capture > 0) return BotGoal.DEFEND
+  if (home.alarm === BaseAlarm.SORTIE && self.troops >= 1) return BotGoal.DEFEND
   // 3. Sticky rearm: keep loading until topped up (or the garrison runs dry / the base falls).
   const canLoad = home.capture < 1 && home.garrison >= 1
   if (prev === BotGoal.REARM && self.troops < BOT_REARM_DONE_TROOPS && canLoad) return BotGoal.REARM

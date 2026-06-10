@@ -3,9 +3,13 @@ import { pushBullet } from '$/game/bullets'
 import { circleRectContact, circlesOverlap, segmentIntersectsRect } from '$/game/collision'
 import { applyDamage, applyDisable, isDead } from '$/game/combat'
 import {
+  BASE_DOOR_RADIUS,
+  BASE_GARRISON_CAP,
+  BaseAlarm,
   BLAST_SHAKE,
   Color,
   DeviceKind,
+  EMP_STUN_RADIUS,
   FLAK_FUSE,
   FLAK_RADIUS,
   FLAK_SHARD_DAMAGE,
@@ -20,6 +24,9 @@ import {
   GRENADE_SHARD_SPEED,
   GRENADE_SHARDS,
   GRENADE_SPEED,
+  INFANTRY_BURN_RUN_SPEED,
+  INFANTRY_BURN_TIME,
+  INFANTRY_BURN_TURN_CHANCE,
   INFANTRY_DROWN_RESCUE_WINDOW,
   INFANTRY_EMP_DISABLE,
   INFANTRY_EMP_DRAIN,
@@ -27,13 +34,16 @@ import {
   INFANTRY_EMP_RADIUS,
   INFANTRY_EMP_SPEED,
   INFANTRY_FALL_LETHAL,
-  INFANTRY_FIRE_DAMAGE,
+  INFANTRY_FIRE_CATCH_CHANCE,
+  INFANTRY_FIRE_CATCH_RADIUS,
   INFANTRY_FIRE_INTERVAL,
-  INFANTRY_FIRE_LIFE,
-  INFANTRY_FIRE_PELLETS,
-  INFANTRY_FIRE_SPEED,
-  INFANTRY_FIRE_SPREAD,
+  INFANTRY_FIRE_PANIC_DIST,
   INFANTRY_FLAK_SPEED,
+  INFANTRY_FLAME_DAMAGE,
+  INFANTRY_FLAME_LIFE,
+  INFANTRY_FLAME_PELLETS,
+  INFANTRY_FLAME_SPEED,
+  INFANTRY_FLAME_SPREAD,
   INFANTRY_HEAVY,
   INFANTRY_ICE_SLIP_CHANCE,
   INFANTRY_KNEEL_FIRE_AT,
@@ -111,7 +121,7 @@ import {
   WORLD_WIDTH,
 } from '$/game/constants'
 import { clamp, TWO_PI, wrapAngle } from '$/game/math'
-import { spawnExplosion } from '$/game/particles'
+import { spawnExplosion, spawnPuff } from '$/game/particles'
 import { randRange } from '$/game/rng'
 import type { Block, Device, Ship, Vec2, World } from '$/game/types'
 import { waterSurfaceAt } from '$/game/water'
@@ -254,6 +264,22 @@ const nearestEnemyInfantry = (ownerId: number, x: number, y: number, devices: De
   return best
 }
 
+// The nearest trooper that's alight — EITHER side's: fire doesn't care whose uniform it eats,
+// so everyone gives a burning man room (it's how the contagion is dodged).
+const nearestBurningInfantry = (self: InfantryDevice, devices: Device[]): InfantryDevice | undefined => {
+  let best: InfantryDevice | undefined
+  let bestDist = Number.POSITIVE_INFINITY
+  for (const d of devices) {
+    if (d.kind !== DeviceKind.INFANTRY || d === self || d.burning <= 0 || d.sinking > 0) continue
+    const dist = Math.hypot(d.x - self.x, d.y - self.y)
+    if (dist < bestDist) {
+      bestDist = dist
+      best = d
+    }
+  }
+  return best
+}
+
 const inSightInRange = (world: World, device: InfantryDevice, tx: number, ty: number): boolean =>
   Math.hypot(tx - device.x, ty - device.y) <= INFANTRY_RANGE && hasLineOfSight(device.x, device.y, tx, ty, world.blocks)
 
@@ -340,8 +366,15 @@ const plantMine = (spawned: Device[], device: InfantryDevice): void => {
 
 // A braced specialist lets its man-portable heavy fly at the current target (if still in sight —
 // otherwise a dry click). Driven by the landed kneel-fire cycle, so there's no cooldown here; the
-// crouch timing sets the cadence. Rail kills land in `dead` (hitscan resolves immediately).
-const fireHeavy = (world: World, device: InfantryDevice, spawned: Device[], dead: Set<Ship>): void => {
+// crouch timing sets the cadence. Rail kills land in `dead` (ships) and `deadDevices` (troopers
+// pierced along the lance) — hitscan resolves immediately, mid-device-iteration.
+const fireHeavy = (
+  world: World,
+  device: InfantryDevice,
+  spawned: Device[],
+  dead: Set<Ship>,
+  deadDevices: Set<Device>
+): void => {
   const heavy = device.heavy
   if (heavy === undefined) return
   const target = infantryTarget(world, device)
@@ -367,10 +400,10 @@ const fireHeavy = (world: World, device: InfantryDevice, spawned: Device[], dead
       })
       muzzleFlash(world, device, angle, Color.WATER_EDGE)
       return
-    case WeaponKind.INCENDIARY:
-      heavyBurst(world, device, angle, INFANTRY_FIRE_PELLETS, INFANTRY_FIRE_SPREAD, INFANTRY_FIRE_SPEED, {
-        damage: INFANTRY_FIRE_DAMAGE,
-        life: INFANTRY_FIRE_LIFE,
+    case WeaponKind.FLAMETHROWER:
+      heavyBurst(world, device, angle, INFANTRY_FLAME_PELLETS, INFANTRY_FLAME_SPREAD, INFANTRY_FLAME_SPEED, {
+        damage: INFANTRY_FLAME_DAMAGE,
+        life: INFANTRY_FLAME_LIFE,
         color: Color.THRUST,
         burn: true,
       })
@@ -398,7 +431,16 @@ const fireHeavy = (world: World, device: InfantryDevice, spawned: Device[], dead
       muzzleFlash(world, device, angle, Color.MISSILE)
       return
     case WeaponKind.RAIL: {
-      const hit = castRail(world, device.x, shoulderY, angle, device.owner, INFANTRY_RAIL_RANGE, INFANTRY_RAIL_DAMAGE)
+      const hit = castRail(
+        world,
+        device.x,
+        shoulderY,
+        angle,
+        device.owner,
+        INFANTRY_RAIL_RANGE,
+        INFANTRY_RAIL_DAMAGE,
+        deadDevices
+      )
       if (hit && isDead(hit)) dead.add(hit)
       muzzleFlash(world, device, angle, Color.RAIL)
       return
@@ -463,9 +505,10 @@ const fireHeavy = (world: World, device: InfantryDevice, spawned: Device[], dead
 // The unit's own owner ship when it's a viable rescuer: present, with room in the bay, and
 // drifting slowly enough to scoop the unit up (so a fast fly-by isn't a rescue — it's a ram).
 // undefined otherwise. The bay-room gate keeps troopers patrolling instead of bunching under
-// a parked ship that can't actually take them aboard.
+// a parked ship that can't actually take them aboard. Base guards never board — the bay loads
+// from the barracks' housed count, the watch stays on post.
 const rescuingOwner = (world: World, device: InfantryDevice): Ship | undefined => {
-  if (device.pickupLock > 0) return undefined
+  if (device.pickupLock > 0 || device.guard) return undefined
   const owner = world.ships.find((s) => s.id === device.owner)
   if (!owner || owner.troops >= TROOP_BAY_CAPACITY) return undefined
   return Math.hypot(owner.vx, owner.vy) <= INFANTRY_PICKUP_SPEED ? owner : undefined
@@ -577,6 +620,38 @@ const stepDevice = (
         spawnExplosion(world.particles, device.x, device.y, device.color, world.rng, 16)
         return false
       }
+      // Flesh stops it too: a warhead contact-detonates on an enemy trooper (splattering it and
+      // splashing the blast), while an EMP orb pops and seizes every trooper around the burst.
+      for (const d of world.devices) {
+        if (d.kind !== DeviceKind.INFANTRY || d.owner === device.owner || d.sinking > 0 || deadDevices.has(d)) continue
+        if (!circlesOverlap(device.x, device.y, device.radius, d.x, d.y, d.radius)) continue
+        if (device.disableTime > 0) {
+          for (const t of world.devices) {
+            if (t.kind !== DeviceKind.INFANTRY || t.owner === device.owner || t.sinking > 0) continue
+            if (Math.hypot(t.x - device.x, t.y - device.y) > EMP_STUN_RADIUS) continue
+            t.stun = Math.max(t.stun, device.disableTime)
+            t.kneel = 0
+            t.running = false
+          }
+        } else {
+          spawnExplosion(world.particles, d.x, d.y, Color.BLOOD, world.rng, 6)
+          deadDevices.add(d)
+          if (device.blastRadius > 0) {
+            areaDamage(
+              world,
+              device.x,
+              device.y,
+              device.blastRadius,
+              device.blastDamage,
+              device.owner,
+              dead,
+              deadDevices
+            )
+          }
+        }
+        spawnExplosion(world.particles, device.x, device.y, device.color, world.rng, 14)
+        return false
+      }
       // Terrain stops it: a blast warhead (seeker) detonates against the rock — splashing any
       // ship or trooper hugging the wall — while a bare orb (EMP) just fizzles out.
       if (touchingBlock(world.blocks, device.x, device.y, device.radius)) {
@@ -601,17 +676,59 @@ const stepDevice = (
           spawnExplosion(world.particles, device.x, device.y, Color.MINE_ARMED, world.rng, 22)
           return false
         }
+        // Enemy infantry trip it too — the sapper's patrol-seeded field is area denial
+        // against the capture disc, not just against strafing hulls.
+        for (const d of world.devices) {
+          if (d.kind !== DeviceKind.INFANTRY || d.owner === device.owner || d.sinking > 0) continue
+          if (Math.hypot(d.x - device.x, d.y - device.y) > device.triggerRadius) continue
+          areaDamage(world, device.x, device.y, device.blastRadius, device.damage, device.owner, dead, deadDevices)
+          spawnExplosion(world.particles, device.x, device.y, Color.MINE_ARMED, world.rng, 22)
+          return false
+        }
       }
       return device.life > 0
     }
 
     case DeviceKind.INFANTRY: {
       if (device.pickupLock > 0) device.pickupLock -= dt
+      if (device.stun > 0) device.stun = Math.max(0, device.stun - dt)
       // Drowned corpse: sink and fade for a moment, then vanish (no explosion).
       if (device.sinking > 0) {
         device.sinking -= dt
         device.y += INFANTRY_SINK_SPEED * dt
         return device.sinking > 0
+      }
+      // On fire: water douses it instantly; otherwise the timer burns down, flames shed embers,
+      // and the fire JUMPS to any trooper (either side) in near-contact. At zero it collapses.
+      if (device.burning > 0) {
+        if (device.swim > 0) {
+          device.burning = 0
+        } else {
+          device.burning -= dt
+          if (world.rng() < 0.5) {
+            spawnPuff(
+              world.particles,
+              device.x + randRange(world.rng, -4, 4),
+              device.y - device.radius,
+              0,
+              -randRange(world.rng, 30, 80),
+              world.rng() < 0.5 ? Color.THRUST : Color.EXPLOSION,
+              world.rng,
+              0.45
+            )
+          }
+          for (const other of world.devices) {
+            if (other === device || other.kind !== DeviceKind.INFANTRY) continue
+            if (other.burning > 0 || other.swim > 0 || other.sinking > 0) continue
+            if (Math.hypot(other.x - device.x, other.y - device.y) > INFANTRY_FIRE_CATCH_RADIUS) continue
+            if (world.rng() < INFANTRY_FIRE_CATCH_CHANCE) other.burning = INFANTRY_BURN_TIME
+          }
+          if (device.burning <= 0) {
+            spawnExplosion(world.particles, device.x, device.y, Color.THRUST, world.rng, 10)
+            spawnExplosion(world.particles, device.x, device.y, Color.BLOOD, world.rng, 4)
+            return false
+          }
+        }
       }
       // Swimming: bob at the surface and either paddle toward a nearby rescuing owner (directed —
       // both hands busy, holds fire) or drift to a stop (standby — looses the odd poor shot).
@@ -720,8 +837,22 @@ const stepDevice = (
         device.slide = 0
         return true
       }
+      // Alight: a burning trooper has no discipline left — it flails blindly along its block
+      // at a dead sprint (reversing on a whim), shedding the fire onto anyone it brushes.
+      if (device.burning > 0) {
+        device.slide = 0
+        device.kneel = 0
+        device.running = true
+        if (world.rng() < INFANTRY_BURN_TURN_CHANCE) device.walkDir = -device.walkDir
+        if (device.x <= device.groundLeft + device.radius) device.walkDir = 1
+        else if (device.x >= device.groundRight - device.radius) device.walkDir = -1
+        device.facing = device.walkDir
+        device.x = clampToGround(device, device.x + device.walkDir * INFANTRY_BURN_RUN_SPEED * dt)
+        return true
+      }
       // Ice slip: footing on an icy surface occasionally gives way into a decaying slide. Once
       // sliding, the trooper glides (clamped to its block) and can't shoot until it stops.
+      // A water-cannon wash lands a unit in the same skid (see resolveBulletHits).
       if (device.slide !== 0 || (ground.surface === Surface.ICE && world.rng() < INFANTRY_ICE_SLIP_CHANCE)) {
         if (device.slide === 0) device.slide = device.walkDir * INFANTRY_SLIP_SPEED // a fresh slip
         device.x = clampToGround(device, device.x + device.slide * dt)
@@ -732,11 +863,34 @@ const stepDevice = (
         device.kneel = 0 // a slip breaks any brace
         return true // sliding: no shooting
       }
-      // Bolt from a point-blank enemy trooper: infantry shoot each other at range but back off when
-      // crowded, sprinting along the block (no fire). Enemy ships are stood up to, not fled.
+      // EMP-seized: the unit locks up where it stands — no walking, no firing — until it shakes
+      // the jolt off. (The timer ticks down at the top of the case, airborne or not.)
+      if (device.stun > 0) {
+        device.running = false
+        device.kneel = 0
+        return true
+      }
+      // Bolt from a point-blank threat: a crowding enemy trooper, or ANYONE alight (friend or
+      // foe — fire jumps, so a burning man clears a circle). Infantry shoot each other at range
+      // but back off when crowded, sprinting along the block (no fire). Enemy ships are stood
+      // up to, not fled — the garrison's hide-indoors rule lives with the guards instead.
       const foe = nearestEnemyInfantry(device.owner, device.x, device.y, world.devices)
-      if (foe && Math.hypot(foe.x - device.x, foe.y - device.y) < INFANTRY_PANIC_DIST) {
-        const away = device.x >= foe.x ? 1 : -1
+      let threatX: number | undefined
+      let threatDist = Number.POSITIVE_INFINITY
+      if (foe) {
+        const dist = Math.hypot(foe.x - device.x, foe.y - device.y)
+        if (dist < INFANTRY_PANIC_DIST) {
+          threatX = foe.x
+          threatDist = dist
+        }
+      }
+      const burner = nearestBurningInfantry(device, world.devices)
+      if (burner) {
+        const dist = Math.hypot(burner.x - device.x, burner.y - device.y)
+        if (dist < INFANTRY_FIRE_PANIC_DIST && dist < threatDist) threatX = burner.x
+      }
+      if (threatX !== undefined) {
+        const away = device.x >= threatX ? 1 : -1
         device.running = true
         device.walkDir = away
         device.facing = away
@@ -745,6 +899,27 @@ const stepDevice = (
         return true
       }
       device.running = false
+      // A garrison guard answers its barracks' alarm: while the post stands and HIDE is up, it
+      // double-times to the door and slips back inside (despawning into the housed count, where
+      // no strafing run can touch it). A fallen post releases it to fight as a regular trooper.
+      if (device.guard) {
+        const post = world.bases.find((b) => b.owner === device.owner)
+        if (!post || post.capture >= 1) {
+          device.guard = false
+        } else if (post.alarm === BaseAlarm.HIDE) {
+          if (Math.abs(device.x - post.x) <= BASE_DOOR_RADIUS) {
+            post.garrison = Math.min(BASE_GARRISON_CAP, post.garrison + 1)
+            return false // through the door
+          }
+          const dir = post.x >= device.x ? 1 : -1
+          device.running = true
+          device.walkDir = dir
+          device.facing = dir
+          device.kneel = 0
+          device.x = clampToGround(device, device.x + dir * INFANTRY_RUN_SPEED * dt)
+          return true
+        }
+      }
       // A specialist plants itself to shoot its heavy weapon: it repositions freely until the
       // cadence is up and a target is in sight, then drops to a knee and holds DEAD STILL — winds
       // up, lets the round fly mid-crouch, holds through the recovery, then stands back up free.
@@ -764,7 +939,7 @@ const stepDevice = (
           const before = device.kneel
           device.kneel -= dt
           if (before > INFANTRY_KNEEL_FIRE_AT && device.kneel <= INFANTRY_KNEEL_FIRE_AT) {
-            fireHeavy(world, device, spawned, dead) // the round flies at the wind-up's end
+            fireHeavy(world, device, spawned, dead, deadDevices) // the round flies at the wind-up's end
           }
           return true // crouched: stay perfectly still (no patrol/walk)
         }
@@ -855,6 +1030,25 @@ const stepDevice = (
         ship.vx += dx * inv * accel * dt
         ship.vy += dy * inv * accel * dt
       }
+      // Enemy troopers are gripped too: a landed unit is plucked clean off its feet and rides
+      // the pull airborne (gravity, chute, and the splat-on-landing rules take over from there).
+      for (const d of world.devices) {
+        if (d.kind !== DeviceKind.INFANTRY || d.owner === device.owner || d.sinking > 0 || d.swim > 0) continue
+        const dx = device.x - d.x
+        const dy = device.y - d.y
+        const dist = Math.hypot(dx, dy)
+        if (dist > device.pullRadius) continue
+        if (d.attached) {
+          d.attached = false
+          d.chute = -1
+          d.running = false
+          d.kneel = 0
+        }
+        const accel = Math.min(WELL_MAX_ACCEL, device.strength / Math.max(dist, WELL_MIN_DIST))
+        const inv = 1 / (dist || 1)
+        d.vx += dx * inv * accel * dt
+        d.vy += dy * inv * accel * dt
+      }
       return device.life > 0
     }
   }
@@ -899,6 +1093,7 @@ export const resolveInfantryContacts = (world: World): void => {
       if (
         slow &&
         d.owner === ship.id &&
+        !d.guard && // the watch stays on post — the bay loads from the barracks' housed count
         d.pickupLock <= 0 &&
         ship.troops < TROOP_BAY_CAPACITY &&
         (d.attached || d.swim > 0 || rescuableDrowning) &&
@@ -918,7 +1113,9 @@ export const resolveInfantryContacts = (world: World): void => {
       ) {
         // Recruited: same side-switch sparkle for both teams; the renderer's owner tint flips.
         // The lockout blocks an instant re-flip/scoop, and the reset cooldown denies a free shot.
+        // A turned guard abandons its post — it's a regular trooper for its new master.
         d.owner = ship.id
+        d.guard = false
         d.pickupLock = INFANTRY_PICKUP_DELAY
         d.fireCooldown = INFANTRY_FIRE_INTERVAL
         d.kneel = 0
