@@ -3,9 +3,10 @@ import { Container, Graphics, type Renderer as PixiRenderer } from 'pixi.js'
 import { GamePhase, MINIMAP_MARGIN, MINIMAP_WIDTH, VIEW_HEIGHT, VIEW_WIDTH } from '$/game/constants'
 import { createBulletsView } from '$/game/render/bullets-view'
 import { createFollowCamera, shakeOffset } from '$/game/render/camera-view'
-import { drawBase, drawBeams, drawDevice, drawShip } from '$/game/render/entities'
+import { drawBars, drawBase, drawBeams, drawDevice } from '$/game/render/entities'
 import { drawMapMarkers, drawMapTerrain, MINIMAP_HEIGHT } from '$/game/render/minimap'
 import { createParticlesView } from '$/game/render/particles-view'
+import { createShipsView, shipBlinkHidden } from '$/game/render/ships-view'
 import { createStars, drawStars } from '$/game/render/stars'
 import { drawBlocks, drawWaterBodies } from '$/game/render/terrain'
 import type { RenderWorld, Rng } from '$/game/types'
@@ -24,10 +25,11 @@ export const createRenderer = (rng: Rng, pixiRenderer: PixiRenderer): Renderer =
   const dynGfx = new Graphics()
   const bulletsView = createBulletsView(pixiRenderer)
   const particlesView = createParticlesView(pixiRenderer)
-  // shipGfx sits above the fx passes: the sim draws ships after particles, so hulls read
-  // over thrust puffs and explosion debris exactly as before the ParticleContainer move.
-  const shipGfx = new Graphics()
-  worldLayer.addChild(terrainGfx, dynGfx, bulletsView.container, particlesView.container, shipGfx)
+  // Ships sit above the fx passes: the sim draws ships after particles, so hulls read over
+  // thrust puffs and explosion debris. The bars overlay stays immediate-mode and unrotated.
+  const shipsView = createShipsView()
+  const barsGfx = new Graphics()
+  worldLayer.addChild(terrainGfx, dynGfx, bulletsView.container, particlesView.container, shipsView.layer, barsGfx)
   const mapLayer = new Container()
   const mapTerrainGfx = new Graphics()
   const mapDynGfx = new Graphics()
@@ -63,9 +65,14 @@ export const createRenderer = (rng: Rng, pixiRenderer: PixiRenderer): Renderer =
     particlesView.draw(world.particles)
     // Ships are drawn only in-play: in TITLE/GAME_OVER updateShip never runs, so their
     // spawn invulnerability never ticks down and they'd blink forever over the backdrop.
-    shipGfx.clear()
-    if (phase === GamePhase.PLAYING)
-      for (const ship of world.ships) drawShip(shipGfx, ship, world.time, ship.id === selfId)
+    shipsView.layer.visible = phase === GamePhase.PLAYING
+    barsGfx.clear()
+    if (phase === GamePhase.PLAYING) {
+      shipsView.draw(world.ships, world.time, selfId)
+      for (const ship of world.ships) {
+        if (!shipBlinkHidden(ship, world.time)) drawBars(barsGfx, ship)
+      }
+    }
     // Minimap: in-play only (it's HUD furniture). Counter-shifted by the shake so the map
     // holds still while the battle view rattles.
     mapLayer.visible = phase === GamePhase.PLAYING
@@ -82,6 +89,7 @@ export const createRenderer = (rng: Rng, pixiRenderer: PixiRenderer): Renderer =
   const destroy = (): void => {
     bulletsView.destroy()
     particlesView.destroy()
+    shipsView.destroy()
     view.destroy({ children: true })
   }
 

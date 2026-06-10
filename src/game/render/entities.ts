@@ -5,8 +5,6 @@ import { clamp } from '$/game/math'
 import { drawInfantry } from '$/game/render/infantry'
 import type { Base, Beam, Device, Ship } from '$/game/types'
 
-const WING_SPREAD = 2.4 // radians from nose to each tail corner
-
 export const drawDevice = (g: Graphics, d: Device, time: number, selfId: number): void => {
   switch (d.kind) {
     case DeviceKind.MISSILE: {
@@ -50,7 +48,8 @@ export const drawBeams = (g: Graphics, beams: Beam[]): void => {
 }
 
 // Floating hull (bottom) + shield (top) gauges above a ship, so combat reads at a glance.
-const drawBars = (g: Graphics, ship: Ship): void => {
+// Immediate-mode on purpose: the bars never rotate with the hull (ships-view owns the hull).
+export const drawBars = (g: Graphics, ship: Ship): void => {
   const w = ship.radius * 2.6
   const x = ship.x - w / 2
   const y = ship.y - ship.radius - 12
@@ -58,52 +57,6 @@ const drawBars = (g: Graphics, ship: Ship): void => {
   g.rect(x, y, w * clamp(ship.health / SHIP_MAX_HEALTH, 0, 1), 3).fill({ color: Color.HEALTH })
   g.rect(x, y - 4, w, 2).fill({ color: Color.BAR_BACK })
   g.rect(x, y - 4, w * clamp(ship.shields / SHIP_MAX_SHIELDS, 0, 1), 2).fill({ color: Color.SHIELD })
-}
-
-export const drawShip = (g: Graphics, ship: Ship, time: number, isSelf: boolean): void => {
-  if (ship.invuln > 0 && Math.floor(time * 12) % 2 === 0) return
-  const a = ship.angle
-  const r = ship.radius
-  const hull = isSelf ? Color.SHIP : Color.ENEMY
-  if (ship.thrusting) {
-    const flick = 0.6 + (Math.floor(time * 40) % 3) * 0.28
-    g.poly([
-      ship.x + Math.cos(a + WING_SPREAD) * r * 0.7,
-      ship.y + Math.sin(a + WING_SPREAD) * r * 0.7,
-      ship.x + Math.cos(a - WING_SPREAD) * r * 0.7,
-      ship.y + Math.sin(a - WING_SPREAD) * r * 0.7,
-      ship.x - Math.cos(a) * r * (1.1 + flick),
-      ship.y - Math.sin(a) * r * (1.1 + flick),
-    ]).fill({ color: Color.THRUST, alpha: 0.9 })
-  }
-  if (ship.reversing) {
-    // The two smaller retro plumes: short tongues licking FORWARD past the nose's flanks.
-    const flick = 0.5 + (Math.floor(time * 40 + 1) % 3) * 0.25
-    const nx = Math.cos(a)
-    const ny = Math.sin(a)
-    for (const side of [1, -1]) {
-      const bx = ship.x + nx * r * 0.9 - side * ny * r * 0.55
-      const by = ship.y + ny * r * 0.9 + side * nx * r * 0.55
-      g.poly([
-        bx - ny * side * r * 0.2,
-        by + nx * side * r * 0.2,
-        bx + ny * side * r * 0.2,
-        by - nx * side * r * 0.2,
-        bx + nx * r * (0.5 + flick * 0.6),
-        by + ny * r * (0.5 + flick * 0.6),
-      ]).fill({ color: Color.THRUST, alpha: 0.85 })
-    }
-  }
-  g.poly([
-    ship.x + Math.cos(a) * r * 1.5,
-    ship.y + Math.sin(a) * r * 1.5,
-    ship.x + Math.cos(a + WING_SPREAD) * r,
-    ship.y + Math.sin(a + WING_SPREAD) * r,
-    ship.x + Math.cos(a - WING_SPREAD) * r,
-    ship.y + Math.sin(a - WING_SPREAD) * r,
-  ]).fill({ color: hull })
-  g.circle(ship.x, ship.y, r * 0.34).fill({ color: Color.SHIP_CORE })
-  drawBars(g, ship)
 }
 
 // A home barracks: a bunker squatting on its pad, tinted by whoever holds it (the tint flips to
