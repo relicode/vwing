@@ -243,7 +243,9 @@ export const createTerrain = (rng: Rng): { blocks: Block[]; water: WaterBody[] }
   // ── A couple of perched pools: dig a basin into an UNCLAIMED land span, lips on both sides. ──
   const addPoolBasin = (pc0: number, pc1: number): void => {
     if (water.length >= MAX_AUTHORED_WATER || pc1 - pc0 < 6) return
-    for (let c = pc0; c < pc1; c += 1) if (claimed[c]) return // never overlap the sea / cave / another pool
+    for (let c = pc0; c < pc1; c += 1) {
+      if (claimed[c] || padApron[c]) return // never overlap the sea / cave / another pool / a pad approach
+    }
     const rim = Math.max(top[pc0], top[pc1 - 1]) // lower lip (larger y) = where water would spill
     const poolFloor = snap(rim + randInt(rng, 3, 6) * cell)
     if (poolFloor >= maxTop) return

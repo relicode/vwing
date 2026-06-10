@@ -7,6 +7,7 @@ import {
   Color,
   DeviceKind,
   FLAK_FUSE,
+  FLAK_RADIUS,
   FLAK_SHARD_DAMAGE,
   FLAK_SHARD_LIFE,
   FLAK_SHARD_SPEED,
@@ -270,14 +271,7 @@ const muzzleFlash = (world: World, device: InfantryDevice, angle: number, color:
 
 // Fire at the current target at the given cadence, with `spread` rad of aim jitter (drawn from
 // world.rng so it stays deterministic). Used by rifles (landed), descending, and drifting swimmers.
-const infantryFire = (
-  world: World,
-  device: InfantryDevice,
-  spawned: Device[],
-  interval: number,
-  spread: number,
-  dt: number
-): void => {
+const infantryFire = (world: World, device: InfantryDevice, interval: number, spread: number, dt: number): void => {
   device.fireCooldown -= dt
   if (device.fireCooldown > 0) return
   const target = infantryTarget(world, device)
@@ -419,7 +413,7 @@ const fireHeavy = (world: World, device: InfantryDevice, spawned: Device[], dead
         vx: Math.cos(angle) * INFANTRY_FLAK_SPEED,
         vy: Math.sin(angle) * INFANTRY_FLAK_SPEED,
         owner: device.owner,
-        radius: 4,
+        radius: FLAK_RADIUS,
         fuse: FLAK_FUSE,
       })
       muzzleFlash(world, device, angle, Color.FLAK)
@@ -620,7 +614,7 @@ const stepDevice = (
           device.vx = device.facing * INFANTRY_SWIM_SPEED
         } else {
           device.vx *= Math.exp(-INFANTRY_SWIM_DRAG * dt)
-          infantryFire(world, device, spawned, INFANTRY_SWIM_FIRE_INTERVAL, INFANTRY_SPREAD_SWIM, dt)
+          infantryFire(world, device, INFANTRY_SWIM_FIRE_INTERVAL, INFANTRY_SPREAD_SWIM, dt)
         }
         device.x += device.vx * dt
         if (device.swim <= 0) {
@@ -650,7 +644,7 @@ const stepDevice = (
           )
           if (device.chute >= 1 && device.vy > PARACHUTE_TERMINAL) device.vy = PARACHUTE_TERMINAL
           // Fire slowly and inaccurately while swinging under the canopy.
-          infantryFire(world, device, spawned, INFANTRY_PARACHUTE_FIRE_INTERVAL, INFANTRY_SPREAD_PARACHUTE, dt)
+          infantryFire(world, device, INFANTRY_PARACHUTE_FIRE_INTERVAL, INFANTRY_SPREAD_PARACHUTE, dt)
         }
         device.x += device.vx * dt
         device.y += device.vy * dt
@@ -776,7 +770,7 @@ const stepDevice = (
       // looser on the move (WALKING).
       repositionLanded(world, device, dt)
       const spread = stateOf(device) === InfantryState.STANDING ? INFANTRY_SPREAD_STANDING : INFANTRY_SPREAD_WALKING
-      infantryFire(world, device, spawned, INFANTRY_FIRE_INTERVAL, spread, dt)
+      infantryFire(world, device, INFANTRY_FIRE_INTERVAL, spread, dt)
       return true // landed unit persists until it's killed or picked up
     }
 
