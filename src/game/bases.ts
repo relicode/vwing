@@ -10,7 +10,6 @@ import {
   BASE_GUARD_PATROL,
   BASE_GUARD_RESERVE,
   BASE_LOAD_RADIUS,
-  BASE_LOAD_RATE,
   BASE_REVERT_TIME,
   BASE_SORTIE_RANGE,
   BaseAlarm,
@@ -52,12 +51,14 @@ export const createCampaignBases = (): Base[] => {
   ]
 }
 
-// Advance every barracks one frame: threat posture + guard fielding, garrison regen, owner
-// loading, and the capture war. The garrison is the base's hitpoints — it walks its own pad
-// as live guards (who hide indoors from ships and sortie against infantry), and attackers who
-// clear the fielded defenders storm the building, killing the housed count down to zero before
-// the capture timer can start. Drop placement is still the whole skill — troopers only count
-// while landed inside the disc, and they never pathfind toward it.
+// Advance every barracks one frame: threat posture + guard fielding (including throwing the
+// doors open for a boarding owner), garrison regen, and the capture war. The garrison is the
+// base's hitpoints — it walks its own pad as live guards (who hide indoors from ships and sortie
+// against infantry), and attackers who clear the fielded defenders storm the building, killing
+// the housed count down to zero before the capture timer can start. Loading is embodied: there
+// is no counter transfer — the men step out, run to the landed ship, and board by touch (see
+// devices.ts). Drop placement is still the whole skill — troopers only count while landed inside
+// the disc, and they never pathfind toward it.
 export const stepBases = (world: World, dt: number): void => {
   for (const base of world.bases) {
     const captured = base.capture >= 1
@@ -88,35 +89,32 @@ export const stepBases = (world: World, dt: number): void => {
       base.garrison = Math.min(BASE_GARRISON_CAP - fielded, base.garrison + BASE_GARRISON_REGEN * dt)
     }
 
-    // The door: guards step out on a cadence — a small standing patrol in peacetime, everyone
-    // but the reserve when enemy infantry close in, nobody while hiding from a ship (the
-    // recall back through the door lives in devices.ts with the rest of the guard behaviour).
+    // A boarding call: the owner ship landed (or barely drifting) by the pad with room in the
+    // bay throws the doors open. Loading is embodied — the men run to the hull and board by
+    // touch (devices.ts) — so emptying the WHOLE garrison is the owner's call to make; only
+    // the defensive sortie is bound by the reserve.
+    const owner = world.ships.find((s) => s.id === base.owner)
+    const loading =
+      owner !== undefined &&
+      !captured &&
+      owner.troops < TROOP_BAY_CAPACITY &&
+      Math.hypot(owner.vx, owner.vy) <= INFANTRY_PICKUP_SPEED &&
+      Math.hypot(owner.x - base.x, owner.y - (base.y - 40)) <= BASE_LOAD_RADIUS
+
+    // The door: guards step out on a cadence — a small standing patrol in peacetime (everyone,
+    // down to an empty house, while the owner is boarding), everyone but the reserve when enemy
+    // infantry close in, nobody while hiding from a ship (the recall back through the door lives
+    // in devices.ts with the rest of the guard behaviour).
     base.door = Math.max(0, base.door - dt)
     if (!captured && base.door <= 0) {
       const wantsOut =
         base.alarm === BaseAlarm.SORTIE
           ? base.garrison >= BASE_GUARD_RESERVE + 1
-          : base.alarm === BaseAlarm.PATROL && fielded < BASE_GUARD_PATROL && base.garrison >= 1
+          : base.alarm === BaseAlarm.PATROL && base.garrison >= 1 && (loading || fielded < BASE_GUARD_PATROL)
       if (wantsOut) {
         spawnGuard(world, base, world.ships.find((s) => s.id === base.owner)?.squad)
         base.garrison -= 1
         base.door = BASE_DOOR_INTERVAL
-      }
-    }
-
-    // Loading: the owner ship hovering/landed slow by the pad (the same gentle-approach verb as
-    // the trooper rescue) streams the HOUSED garrison into its bay — the fielded watch stays out.
-    const owner = world.ships.find((s) => s.id === base.owner)
-    if (
-      owner &&
-      !captured &&
-      Math.hypot(owner.vx, owner.vy) <= INFANTRY_PICKUP_SPEED &&
-      Math.hypot(owner.x - base.x, owner.y - (base.y - 40)) <= BASE_LOAD_RADIUS
-    ) {
-      const moved = Math.min(BASE_LOAD_RATE * dt, base.garrison, TROOP_BAY_CAPACITY - owner.troops)
-      if (moved > 0) {
-        base.garrison -= moved
-        owner.troops += moved
       }
     }
 

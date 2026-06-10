@@ -271,6 +271,16 @@ describe('createSim — flame and water vs infantry', () => {
     stun: 0,
   })
 
+  test('friendly fire is real: a stray same-side bullet splatters a trooper', () => {
+    const world = createWorld(31)
+    const sim = createSim(world, [combatant(0, 500, 400, Number.POSITIVE_INFINITY)], { mode: SimMode.DEATHMATCH })
+    const ownMan = airborneTrooper(700, 300, 0) // same side as the bullet below
+    world.devices.push(ownMan)
+    world.bullets.push({ x: 700, y: 300, vx: 0, vy: 0, radius: 3, life: 0.3, owner: 0, damage: 22 })
+    sim.step(1 / 60)
+    expect(world.devices).not.toContain(ownMan)
+  })
+
   test('a flame gout ignites a trooper (no instant kill); a water squirt douses and shoves it', () => {
     const world = createWorld(21)
     const sim = createSim(world, [combatant(0, 500, 400, Number.POSITIVE_INFINITY)], { mode: SimMode.DEATHMATCH })

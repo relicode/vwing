@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 
 import { updateBeams } from '$/game/beams'
-import { DeviceKind, InfantryState, ShipKind, StructureType, Surface, WeaponKind } from '$/game/constants'
+import { BaseAlarm, DeviceKind, InfantryState, ShipKind, StructureType, Surface, WeaponKind } from '$/game/constants'
 import { resolveInfantryContacts, stateOf, updateDevices } from '$/game/devices'
 import { createRng } from '$/game/rng'
-import type { Device, Ship, World } from '$/game/types'
+import type { Base, Device, Ship, World } from '$/game/types'
 
 const makeShip = (over: Partial<Ship>): Ship => ({
   id: 0,
@@ -610,12 +610,58 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     expect(late.devices.length).toBe(1) // too deep to save
   })
 
-  test('a base guard is never scooped — the watch stays on post', () => {
-    const owner = makeShip({ id: 0, x: 100, y: 100, vx: 10, vy: 0, troops: 0 })
+  test('a guard boards at ease, but an alarmed watch stays on post', () => {
+    const post: Base = { owner: 0, x: 100, y: 109, garrison: 0, capture: 0, alarm: BaseAlarm.SORTIE, door: 0 }
+    const owner = makeShip({ id: 0, x: 100, y: 100, vx: 0, vy: 0, troops: 0 })
     const world = makeWorld([owner], [infantry({ owner: 0, x: 100, y: 100, attached: true, guard: true })])
+    world.bases = [post]
     resolveInfantryContacts(world)
-    expect(world.devices.length).toBe(1) // still on watch
+    expect(world.devices.length).toBe(1) // SORTIE: defense keeps its men
     expect(owner.troops).toBe(0)
+    post.alarm = BaseAlarm.PATROL
+    resolveInfantryContacts(world)
+    expect(world.devices.length).toBe(0) // at ease: boarding IS the loading
+    expect(owner.troops).toBe(1)
+  })
+
+  test('"near" is not aboard: only touching hulls board', () => {
+    const owner = makeShip({ id: 0, x: 130, y: 100, vx: 0, vy: 0, troops: 0 })
+    const world = makeWorld([owner], [infantry({ owner: 0, x: 100, y: 100, attached: true })])
+    resolveInfantryContacts(world)
+    expect(world.devices.length).toBe(1) // 30 px away: near, but the hulls (12 + 6) don't meet
+    owner.x = 115 // contact
+    resolveInfantryContacts(world)
+    expect(world.devices.length).toBe(0)
+    expect(owner.troops).toBe(1)
+  })
+
+  test("a thrusting ship's exhaust plume sets troopers alight — its own included", () => {
+    const pilot = makeShip({ id: 0, x: 100, y: 100, vx: 200, vy: 0, angle: 0, thrusting: true }) // nose +x → plume −x
+    const ownMan = infantry({ owner: 0, x: 70, y: 100, attached: true }) // standing in the plume
+    const world = makeWorld([pilot], [ownMan])
+    resolveInfantryContacts(world)
+    expect(world.devices.length).toBe(1) // not rammed (no hull contact) — but alight
+    if (ownMan.kind === DeviceKind.INFANTRY) expect(ownMan.burning).toBeGreaterThan(0)
+  })
+
+  test('landed troopers give a hot engine room (flee a thrusting ship)', () => {
+    const hot = makeShip({ id: 1, kind: ShipKind.BOT, x: 260, y: 120, vx: 0, vy: 0, thrusting: true })
+    const u = infantry({
+      owner: 0,
+      x: 200,
+      y: 120,
+      attached: true,
+      groundLeft: 140,
+      groundRight: 460,
+      fireCooldown: 99,
+    })
+    const world = makeWorld([hot], [u])
+    world.blocks = [{ x: 140, y: 128, w: 320, h: 40, structure: StructureType.EARTH, surface: Surface.EARTH }]
+    updateDevices(world, 1 / 60)
+    if (u.kind === DeviceKind.INFANTRY) {
+      expect(u.running).toBe(true)
+      expect(u.x).toBeLessThan(200) // bolting away from the burner
+    }
   })
 
   test('recruiting a guard strips it of its post', () => {
@@ -750,6 +796,36 @@ describe('updateDevices — fire, stun, and the heavier ordnance vs infantry', (
       [],
       [missile({ x: 130, y: 193, vx: 0, vy: 0, turnRate: 0, owner: 1 }), infantry({ x: 130, y: 193 })]
     )
+    updateDevices(world, 0.016)
+    expect(world.devices).toHaveLength(0)
+  })
+
+  test('a rifleman holds fire while a friend stands in the lane', () => {
+    const enemyShip = makeShip({ id: 1, kind: ShipKind.BOT, x: 400, y: 120 })
+    const shooter = infantry({ x: 200, y: 120, attached: true, fireCooldown: 0 })
+    const buddy = infantry({ x: 300, y: 120, attached: true, fireCooldown: 99 })
+    const world = makeWorld([enemyShip], [shooter, buddy])
+    world.blocks = [{ x: 140, y: 128, w: 460, h: 40, structure: StructureType.EARTH, surface: Surface.EARTH }]
+    updateDevices(world, 0.016)
+    expect(world.bullets.filter((b) => b.owner === 0)).toHaveLength(0) // trigger discipline
+  })
+
+  test('a blast is indiscriminate: a tripped mine splatters the planting side too', () => {
+    const mineDev: Device = {
+      kind: DeviceKind.MINE,
+      x: 100,
+      y: 196,
+      owner: 0,
+      radius: 6,
+      armTime: 0,
+      life: 10,
+      triggerRadius: 50,
+      blastRadius: 70,
+      damage: 25,
+    }
+    const tripper = infantry({ owner: 1, x: 130, y: 193, attached: true }) // the enemy springs it…
+    const bystander = infantry({ owner: 0, x: 80, y: 193, attached: true }) // …their own man eats it too
+    const world = makeWorld([], [mineDev, tripper, bystander])
     updateDevices(world, 0.016)
     expect(world.devices).toHaveLength(0)
   })

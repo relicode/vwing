@@ -268,11 +268,11 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     const surviving: Bullet[] = []
     for (const bullet of world.bullets) {
       if (bulletHitShip(bullet, events)) continue
+      // Friendly fire is real: a bullet hits whatever trooper it meets, whoever fired it
+      // (infantry fire from the muzzle, clear of their own bodies, and hold the trigger when a
+      // friend stands in the lane — see devices.ts).
       const unit = world.devices.findIndex(
-        (d) =>
-          d.kind === DeviceKind.INFANTRY &&
-          d.owner !== bullet.owner &&
-          circlesOverlap(bullet.x, bullet.y, bullet.radius, d.x, d.y, d.radius)
+        (d) => d.kind === DeviceKind.INFANTRY && circlesOverlap(bullet.x, bullet.y, bullet.radius, d.x, d.y, d.radius)
       )
       if (unit >= 0) {
         const inf = world.devices[unit]

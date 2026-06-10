@@ -5,11 +5,9 @@ import {
   BASE_CAPTURE_RADIUS,
   BASE_CAPTURE_TIME,
   BASE_GARRISON_CAP,
-  BASE_GARRISON_REGEN,
   BASE_GARRISON_START,
   BASE_GUARD_PATROL,
   BASE_GUARD_RESERVE,
-  BASE_LOAD_RATE,
   BaseAlarm,
   BOT_ID,
   DeviceKind,
@@ -20,7 +18,7 @@ import {
   TROOP_BAY_CAPACITY,
   WeaponKind,
 } from '$/game/constants'
-import { updateDevices } from '$/game/devices'
+import { resolveInfantryContacts, updateDevices } from '$/game/devices'
 import { createRng } from '$/game/rng'
 import type { Base, Device, Ship, World } from '$/game/types'
 
@@ -127,34 +125,53 @@ describe('stepBases — garrison + loading', () => {
     expect(guardsOf(world, base)).toBe(BASE_GUARD_PATROL) // the watch is out, the rest housed
   })
 
-  test('a slow owner ship by the pad loads the HOUSED garrison into its bay at the load rate', () => {
-    const base = makeBase({})
-    const owner = makeShip({ id: PLAYER_ID, x: base.x, y: base.y - 40, vx: 10, vy: 0, troops: 0 })
+  test('a landed owner by the pad opens the doors: the men stream out, run over, and board by touch — down to an empty house', () => {
+    const base = makeBase({ garrison: 5 })
+    const owner = makeShip({ id: PLAYER_ID, x: base.x + 40, y: base.y - 12, vx: 0, vy: 0, troops: 0 }) // resting on the pad
     const world = makeWorld([owner], [], [base])
-    stepBases(world, 1)
-    expect(owner.troops).toBeCloseTo(BASE_LOAD_RATE, 5)
-    // Regen ticked, one guard stepped out the door, and the load left the bay.
-    expect(base.garrison).toBeCloseTo(BASE_GARRISON_START + BASE_GARRISON_REGEN - 1 - BASE_LOAD_RATE, 5)
-    expect(guardsOf(world, base)).toBe(1)
+    world.blocks = [
+      { x: base.x - 400, y: base.y, w: 800, h: 60, structure: StructureType.METAL, surface: Surface.EARTH },
+    ]
+    for (let i = 0; i < 900; i += 1) {
+      // 30 s: the door cadence + each man's walk to the hull
+      stepBases(world, 1 / 30)
+      updateDevices(world, 1 / 30)
+      resolveInfantryContacts(world)
+    }
+    expect(owner.troops).toBeGreaterThanOrEqual(5) // the whole house came aboard (plus any regen trickle)
+    expect(base.garrison).toBeLessThan(1)
+    expect(guardsOf(world, base)).toBeLessThanOrEqual(1) // at most the freshest walker still en route
   })
 
-  test('loading stops at the bay cap and never goes negative on the garrison', () => {
-    const base = makeBase({ garrison: 3 })
-    const owner = makeShip({ id: PLAYER_ID, x: base.x, y: base.y - 40, troops: TROOP_BAY_CAPACITY - 0.5 })
+  test('boarding respects the bay cap: a full ship takes nobody else aboard', () => {
+    const base = makeBase({ garrison: 4 })
+    const owner = makeShip({ id: PLAYER_ID, x: base.x, y: base.y - 12, vx: 0, vy: 0, troops: TROOP_BAY_CAPACITY })
     const world = makeWorld([owner], [], [base])
-    for (let i = 0; i < 10; i += 1) stepBases(world, 1)
+    world.blocks = [
+      { x: base.x - 400, y: base.y, w: 800, h: 60, structure: StructureType.METAL, surface: Surface.EARTH },
+    ]
+    for (let i = 0; i < 300; i += 1) {
+      stepBases(world, 1 / 30)
+      updateDevices(world, 1 / 30)
+      resolveInfantryContacts(world)
+    }
     expect(owner.troops).toBe(TROOP_BAY_CAPACITY)
-    expect(base.garrison).toBeGreaterThanOrEqual(0)
+    expect(base.garrison + guardsOf(world, base)).toBeGreaterThanOrEqual(4) // nobody vanished into a full bay
   })
 
-  test('a fast fly-by, a far ship, or an enemy ship loads nothing', () => {
+  test('a fast fly-by, a far ship, or an enemy ship boards nothing', () => {
     const base = makeBase({})
     const fast = makeShip({ id: PLAYER_ID, x: base.x, y: base.y - 40, vx: 500 })
     const far = makeShip({ id: PLAYER_ID, x: base.x + 4000, y: base.y - 40 })
     const enemy = makeShip({ id: BOT_ID, x: base.x, y: base.y - 40 })
     for (const ship of [fast, far, enemy]) {
       const world = makeWorld([ship], [], [makeBase({})])
-      for (let i = 0; i < 10; i += 1) stepBases(world, 1)
+      world.blocks = [{ x: 600, y: 3000, w: 800, h: 60, structure: StructureType.METAL, surface: Surface.EARTH }]
+      for (let i = 0; i < 150; i += 1) {
+        stepBases(world, 1 / 30)
+        updateDevices(world, 1 / 30)
+        resolveInfantryContacts(world)
+      }
       expect(ship.troops).toBe(0)
     }
   })

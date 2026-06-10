@@ -33,10 +33,12 @@ const rayRectEntry = (x: number, y: number, dirX: number, dirY: number, b: Block
 // Shared rail hitscan: damage the nearest enemy ship lying along the ray from (x, y), draw the
 // transient beam to that ship (or to the first terrain face, or to max range), and return the
 // struck ship so the caller can reap it if the hull is gone. Terrain blocks the lance — it
-// burns into the first wall it meets, never through a mountain — but flesh doesn't: every
-// enemy trooper along the beam is killed (marked into `deadTroopers`; the caller removes them,
-// because the device array may be mid-iteration). Fired by ships (full power along the nose)
-// and by kneeling rail troopers (a scaled man-portable lance).
+// burns into the first wall it meets, never through a mountain — but flesh doesn't: EVERY
+// trooper along the beam dies, either side's (friendly fire is real; `self` exempts only the
+// kneeling sniper's own body from its own lance). Killed troopers are marked into
+// `deadTroopers` — the caller removes them, because the device array may be mid-iteration.
+// Fired by ships (full power along the nose) and by kneeling rail troopers (a scaled
+// man-portable lance).
 export const castRail = (
   world: World,
   x: number,
@@ -45,7 +47,8 @@ export const castRail = (
   ownerId: number,
   range: number,
   damage: number,
-  deadTroopers: Set<Device>
+  deadTroopers: Set<Device>,
+  self?: Device
 ): Ship | undefined => {
   const dirX = Math.cos(angle)
   const dirY = Math.sin(angle)
@@ -67,10 +70,10 @@ export const castRail = (
     hit = other
     hitDist = along
   }
-  // The lance pierces infantry: every enemy trooper lying on the beam (up to whatever stopped
-  // it — terrain face or struck ship) dies where it stands.
+  // The lance pierces infantry: every trooper lying on the beam (up to whatever stopped it —
+  // terrain face or struck ship) dies where it stands, whichever side it fights for.
   for (const d of world.devices) {
-    if (d.kind !== DeviceKind.INFANTRY || d.owner === ownerId || d.sinking > 0) continue
+    if (d.kind !== DeviceKind.INFANTRY || d === self || d.sinking > 0) continue
     const relX = d.x - x
     const relY = d.y - y
     const along = relX * dirX + relY * dirY

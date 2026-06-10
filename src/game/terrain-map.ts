@@ -3,6 +3,7 @@ import {
   BASE_APRON_CELLS,
   BASE_BOT_X_FRAC,
   BASE_PAD_CELLS,
+  BASE_PAD_METAL_CELLS,
   BASE_PAD_Y_FRAC,
   BASE_PLAYER_X_FRAC,
   CAVE_MOUTH_CELLS,
@@ -174,10 +175,12 @@ export const createTerrain = (rng: Rng): { blocks: Block[]; water: WaterBody[] }
   // pad reserves its span here first.
   const claimed = new Uint8Array(cols)
   const padApron = new Uint8Array(cols) // pad + apron columns: discretionary mass (massifs/shelves) keeps out
+  const padCol = new Uint8Array(cols) // strict pad columns: emitted as an indestructible metal slab
 
-  // ── Home-base pads: a flat grass shelf per side at the shared pad level, with aprons either side
-  // where land is clamped DOWN to pad level — so the approach (and the spawn perch 320 px up) is
-  // open by construction even though the pad sits inside the terrain band. ──
+  // ── Home-base pads: a flat metal landing slab per side at the shared pad level (the barracks
+  // always stands on indestructible ground — no carving the floor out from under a base), with
+  // aprons either side where land is clamped DOWN to pad level — so the approach (and the spawn
+  // perch 320 px up) is open by construction even though the pad sits inside the terrain band. ──
   const padY = snap(H * BASE_PAD_Y_FRAC)
   for (const pad of basePadCenters()) {
     const center = Math.round((pad.x - x0) / cell)
@@ -190,8 +193,9 @@ export const createTerrain = (rng: Rng): { blocks: Block[]; water: WaterBody[] }
       padApron[k] = 1
       if (k >= center - half && k < center + half) {
         top[k] = padY
-        surf[k] = Surface.GRASS
+        surf[k] = Surface.EARTH
         claimed[k] = 1
+        padCol[k] = 1
       } else if (top[k] < padY) {
         top[k] = padY // apron: nothing rises above the pad (clamp toward the floor = larger y)
       }
@@ -286,9 +290,17 @@ export const createTerrain = (rng: Rng): { blocks: Block[]; water: WaterBody[] }
       continue
     }
     let e = c
-    while (e < cols && !isCave[e] && top[e] === top[c] && surf[e] === surf[c]) e += 1
+    while (e < cols && !isCave[e] && top[e] === top[c] && surf[e] === surf[c] && padCol[e] === padCol[c]) e += 1
     const x = colX(c)
     const w = (e - c) * cell
+    if (padCol[c]) {
+      // A home pad: an indestructible metal slab (a bedrock anchor — it can never be carved and
+      // never falls, even if the pier of earth beneath it is shot away) over a grounded earth pier.
+      metal(x, top[c], w, BASE_PAD_METAL_CELLS * cell)
+      earth(x, top[c] + BASE_PAD_METAL_CELLS * cell, w, floorY - top[c] - BASE_PAD_METAL_CELLS * cell)
+      c = e
+      continue
+    }
     earth(x, top[c], w, floorY - top[c]) // solid body to the floor → grounded
     if (surf[c] !== Surface.EARTH) cap(x, top[c], w, surf[c]) // grass/ice cap (last write wins over the body)
     c = e

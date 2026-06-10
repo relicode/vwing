@@ -3,10 +3,13 @@ import { pushBullet } from '$/game/bullets'
 import { circleRectContact, circlesOverlap, segmentIntersectsRect } from '$/game/collision'
 import { applyDamage, applyDisable, isDead } from '$/game/combat'
 import {
+  AFTERBURNER_IGNITE_LEN,
+  AFTERBURNER_IGNITE_RADIUS,
   BASE_DOOR_RADIUS,
   BASE_GARRISON_CAP,
   BaseAlarm,
   BLAST_SHAKE,
+  BULLET_RADIUS,
   Color,
   DeviceKind,
   EMP_STUN_RADIUS,
@@ -91,6 +94,7 @@ import {
   INFANTRY_SWIM_FIRE_INTERVAL,
   INFANTRY_SWIM_SPEED,
   INFANTRY_SWIM_TIME,
+  INFANTRY_THRUST_PANIC_DIST,
   INFANTRY_WALK_SPEED,
   INFANTRY_WALK_TURN_CHANCE,
   INFANTRY_WATER_DAMAGE,
@@ -183,7 +187,8 @@ const nearestEnemyOf = (ownerId: number, x: number, y: number, ships: Ship[]): S
 
 // Damage every enemy ship within `radius`, collecting any that die. `exclude` skips
 // a ship already damaged directly (so a missile's splash never double-hits its target).
-// Enemy infantry caught in the radius are splattered (added to `deadDevices`).
+// Infantry caught in the radius are splattered (added to `deadDevices`) regardless of side —
+// a blast is indiscriminate; only the TRIGGERS (mine trip, missile contact) read uniforms.
 const areaDamage = (
   world: World,
   x: number,
@@ -204,7 +209,7 @@ const areaDamage = (
     if (isDead(ship)) dead.add(ship)
   }
   for (const device of world.devices) {
-    if (device.kind !== DeviceKind.INFANTRY || device.owner === ownerId || deadDevices.has(device)) continue
+    if (device.kind !== DeviceKind.INFANTRY || deadDevices.has(device)) continue
     if (Math.hypot(device.x - x, device.y - y) > radius) continue
     spawnExplosion(world.particles, device.x, device.y, Color.BLOOD, world.rng, 6)
     deadDevices.add(device)
@@ -283,6 +288,28 @@ const nearestBurningInfantry = (self: InfantryDevice, devices: Device[]): Infant
 const inSightInRange = (world: World, device: InfantryDevice, tx: number, ty: number): boolean =>
   Math.hypot(tx - device.x, ty - device.y) <= INFANTRY_RANGE && hasLineOfSight(device.x, device.y, tx, ty, world.blocks)
 
+// True when a same-side trooper stands in the firing lane to (tx, ty) — the trigger discipline
+// that keeps friendly fire (which is real: bullets don't read uniforms) from turning every
+// firefight into fratricide. Checked at the moment of firing, so the shot flies as soon as the
+// buddy steps clear.
+const friendlyInLine = (world: World, device: InfantryDevice, tx: number, ty: number): boolean => {
+  const dx = tx - device.x
+  const dy = ty - device.y
+  const len = Math.hypot(dx, dy) || 1
+  const ux = dx / len
+  const uy = dy / len
+  for (const d of world.devices) {
+    if (d.kind !== DeviceKind.INFANTRY || d === device || d.owner !== device.owner || d.sinking > 0) continue
+    const relX = d.x - device.x
+    const relY = d.y - device.y
+    const along = relX * ux + relY * uy
+    if (along <= 0 || along >= len) continue
+    if (Math.abs(relX * uy - relY * ux) > d.radius + BULLET_RADIUS) continue
+    return true
+  }
+  return false
+}
+
 // A trooper's aim point: the nearest enemy *infantry* in range + line of sight if there is one
 // (infantry hate infantry), otherwise the nearest enemy ship. undefined when nothing is engageable.
 const infantryTarget = (world: World, device: InfantryDevice): Vec2 | undefined => {
@@ -302,16 +329,20 @@ const muzzleFlash = (world: World, device: InfantryDevice, angle: number, color:
 
 // Fire at the current target at the given cadence, with `spread` rad of aim jitter (drawn from
 // world.rng so it stays deterministic). Used by rifles (landed), descending, and drifting swimmers.
+// The round leaves from the MUZZLE (clear of the firer's own body — friendly fire is real and a
+// center-spawned bullet would clip its own shooter) and holds when a friend stands in the lane.
 const infantryFire = (world: World, device: InfantryDevice, interval: number, spread: number, dt: number): void => {
   device.fireCooldown -= dt
   if (device.fireCooldown > 0) return
   const target = infantryTarget(world, device)
   if (!target) return
+  if (friendlyInLine(world, device, target.x, target.y)) return // trigger discipline — retry once clear
   const angle = Math.atan2(target.y - device.y, target.x - device.x) + randRange(world.rng, -spread, spread)
+  const muzzle = device.radius * 1.8
   pushBullet(
     world.bullets,
-    device.x,
-    device.y,
+    device.x + Math.cos(angle) * muzzle,
+    device.y + Math.sin(angle) * muzzle,
     Math.cos(angle) * INFANTRY_SHOT_SPEED,
     Math.sin(angle) * INFANTRY_SHOT_SPEED,
     {
@@ -325,7 +356,8 @@ const infantryFire = (world: World, device: InfantryDevice, interval: number, sp
   device.fireCooldown = interval
 }
 
-// A short burst of aimed specialist bullets (scatter pellets / water squirt / flame fan).
+// A short burst of aimed specialist bullets (scatter pellets / water squirt / flame fan),
+// leaving from the tube's muzzle so the burst can't clip the firer's own body.
 const heavyBurst = (
   world: World,
   device: InfantryDevice,
@@ -335,16 +367,14 @@ const heavyBurst = (
   speed: number,
   opts: { damage: number; life: number; color: number; push?: number; wet?: boolean; burn?: boolean }
 ): void => {
+  const mx = device.x + Math.cos(angle) * device.radius * 1.8
+  const my = device.y - device.radius * 0.5 + Math.sin(angle) * device.radius * 1.8
   for (let i = 0; i < count; i += 1) {
     const jittered = angle + randRange(world.rng, -spread, spread)
-    pushBullet(
-      world.bullets,
-      device.x,
-      device.y - device.radius * 0.5,
-      Math.cos(jittered) * speed,
-      Math.sin(jittered) * speed,
-      { owner: device.owner, ...opts }
-    )
+    pushBullet(world.bullets, mx, my, Math.cos(jittered) * speed, Math.sin(jittered) * speed, {
+      owner: device.owner,
+      ...opts,
+    })
   }
 }
 
@@ -379,6 +409,7 @@ const fireHeavy = (
   if (heavy === undefined) return
   const target = infantryTarget(world, device)
   if (!target) return // target slipped out of sight during the wind-up — dry click
+  if (friendlyInLine(world, device, target.x, target.y)) return // a friend in the lane — hold the round
   const angle = Math.atan2(target.y - device.y, target.x - device.x)
   const shoulderY = device.y - device.radius * 0.5
   switch (heavy) {
@@ -439,7 +470,8 @@ const fireHeavy = (
         device.owner,
         INFANTRY_RAIL_RANGE,
         INFANTRY_RAIL_DAMAGE,
-        deadDevices
+        deadDevices,
+        device // the lance pierces flesh on EITHER side — but never the sniper's own body
       )
       if (hit && isDead(hit)) dead.add(hit)
       muzzleFlash(world, device, angle, Color.RAIL)
@@ -502,13 +534,21 @@ const fireHeavy = (
   }
 }
 
-// The unit's own owner ship when it's a viable rescuer: present, with room in the bay, and
-// drifting slowly enough to scoop the unit up (so a fast fly-by isn't a rescue — it's a ram).
-// undefined otherwise. The bay-room gate keeps troopers patrolling instead of bunching under
-// a parked ship that can't actually take them aboard. Base guards never board — the bay loads
-// from the barracks' housed count, the watch stays on post.
+// A guard still bound to its post: while the barracks stands and the alarm is up (HIDE or
+// SORTIE), the watch stays on duty — it neither walks to nor boards a ship. At ease (PATROL),
+// guards are ordinary boarders: that IS how a base is loaded, all the way down to an empty house.
+const guardOnDuty = (world: World, device: InfantryDevice): boolean => {
+  if (!device.guard) return false
+  const post = world.bases.find((b) => b.owner === device.owner)
+  return post !== undefined && post.capture < 1 && post.alarm !== BaseAlarm.PATROL
+}
+
+// The unit's own owner ship when it's a viable boarder: present, with room in the bay, and
+// landed or barely drifting (so a fly-by isn't a rescue — it's a ram). undefined otherwise.
+// The bay-room gate keeps troopers patrolling instead of bunching under a parked ship that
+// can't actually take them aboard; a guard under alarm stays on post.
 const rescuingOwner = (world: World, device: InfantryDevice): Ship | undefined => {
-  if (device.pickupLock > 0 || device.guard) return undefined
+  if (device.pickupLock > 0 || guardOnDuty(world, device)) return undefined
   const owner = world.ships.find((s) => s.id === device.owner)
   if (!owner || owner.troops >= TROOP_BAY_CAPACITY) return undefined
   return Math.hypot(owner.vx, owner.vy) <= INFANTRY_PICKUP_SPEED ? owner : undefined
@@ -887,7 +927,21 @@ const stepDevice = (
       const burner = nearestBurningInfantry(device, world.devices)
       if (burner) {
         const dist = Math.hypot(burner.x - device.x, burner.y - device.y)
-        if (dist < INFANTRY_FIRE_PANIC_DIST && dist < threatDist) threatX = burner.x
+        if (dist < INFANTRY_FIRE_PANIC_DIST && dist < threatDist) {
+          threatX = burner.x
+          threatDist = dist
+        }
+      }
+      // A hot engine is an open flame: any THRUSTING ship this close (either side — your own
+      // pilot's exhaust burns just as hot) clears a circle. A ship that has cut thrust and
+      // landed is safe to approach and board.
+      for (const ship of world.ships) {
+        if (!ship.thrusting) continue
+        const dist = Math.hypot(ship.x - device.x, ship.y - device.y)
+        if (dist < INFANTRY_THRUST_PANIC_DIST && dist < threatDist) {
+          threatX = ship.x
+          threatDist = dist
+        }
       }
       if (threatX !== undefined) {
         const away = device.x >= threatX ? 1 : -1
@@ -1069,18 +1123,41 @@ export const updateDevices = (world: World, dt: number): Ship[] => {
   return [...dead]
 }
 
-// Resolve ship-vs-trooper overlaps. A *slow* ship over a trooper is a gentle hand: its own
-// unit is scooped back into the troop bay (if there's room — a full bay leaves it fielded),
-// while an ENEMY unit is recruited where it stands — it flips sides on the spot (the
-// Dungeon-Keeper conversion; hover it again after the lockout to bay it). Any ship fast
-// enough to ram (own or enemy) splatters the trooper it ploughs through instead, save for an
-// owner still inside its trooper's deploy lockout (so a fast drop can't instantly mince it).
-// Drowning is saveable by the trooper's OWN ship for INFANTRY_DROWN_RESCUE_WINDOW after it
-// goes under (enemies can't recruit the sinking — only swimmers and the landed); past the
-// window it's an unreachable corpse. Iterates from the tail so removals don't disturb
+// Set alight every trooper the exhaust plume of a thrusting ship washes over — the plume is a
+// segment reaching AFTERBURNER_IGNITE_LEN behind the hull along -nose. Fire doesn't read
+// uniforms: a pilot hovering on the burner over their own boarding queue torches it, which is
+// why a loading ship cuts thrust and LANDS (and why the men give a hot engine room).
+const igniteExhaust = (world: World, ship: Ship): void => {
+  const bx = -Math.cos(ship.angle)
+  const by = -Math.sin(ship.angle)
+  const x0 = ship.x + bx * ship.radius
+  const y0 = ship.y + by * ship.radius
+  for (const d of world.devices) {
+    if (d.kind !== DeviceKind.INFANTRY || d.sinking > 0 || d.swim > 0 || d.burning > 0) continue
+    // Closest point on the plume segment to the trooper ((bx, by) is unit length).
+    const t = clamp((d.x - x0) * bx + (d.y - y0) * by, 0, AFTERBURNER_IGNITE_LEN)
+    const px = x0 + bx * t
+    const py = y0 + by * t
+    if (Math.hypot(d.x - px, d.y - py) > AFTERBURNER_IGNITE_RADIUS + d.radius) continue
+    d.burning = INFANTRY_BURN_TIME
+    spawnExplosion(world.particles, d.x, d.y, Color.THRUST, world.rng, 4)
+  }
+}
+
+// Resolve ship-vs-trooper contacts. A LANDED (or barely drifting) ship TOUCHING a trooper is a
+// gentle hand: its own unit climbs aboard the troop bay (if there's room — a full bay leaves it
+// fielded), while an ENEMY unit is recruited where it stands — it flips sides on the spot (the
+// Dungeon-Keeper conversion; touch it again after the lockout to bay it). "Near" is not aboard:
+// the hulls must actually meet. Any ship fast enough to ram (own or enemy) splatters the trooper
+// it ploughs through instead, save for an owner still inside its trooper's deploy lockout (so a
+// fast drop can't instantly mince it). A thrusting ship's exhaust sets troopers alight whatever
+// its speed. Drowning is saveable by the trooper's OWN ship for INFANTRY_DROWN_RESCUE_WINDOW
+// after it goes under (enemies can't recruit the sinking — only swimmers and the landed); past
+// the window it's an unreachable corpse. Iterates from the tail so removals don't disturb
 // pending indices.
 export const resolveInfantryContacts = (world: World): void => {
   for (const ship of world.ships) {
+    if (ship.thrusting) igniteExhaust(world, ship)
     const speed = Math.hypot(ship.vx, ship.vy)
     const slow = speed <= INFANTRY_PICKUP_SPEED
     const ramming = speed > INFANTRY_RAM_SPEED
@@ -1093,11 +1170,11 @@ export const resolveInfantryContacts = (world: World): void => {
       if (
         slow &&
         d.owner === ship.id &&
-        !d.guard && // the watch stays on post — the bay loads from the barracks' housed count
+        !guardOnDuty(world, d) && // an alarmed watch stays on post; at ease, boarding IS the loading
         d.pickupLock <= 0 &&
         ship.troops < TROOP_BAY_CAPACITY &&
         (d.attached || d.swim > 0 || rescuableDrowning) &&
-        circlesOverlap(ship.x, ship.y, INFANTRY_PICKUP_RADIUS, d.x, d.y, d.radius)
+        circlesOverlap(ship.x, ship.y, ship.radius, d.x, d.y, d.radius)
       ) {
         world.devices.splice(i, 1)
         ship.troops = Math.min(TROOP_BAY_CAPACITY, ship.troops + 1)
@@ -1109,7 +1186,7 @@ export const resolveInfantryContacts = (world: World): void => {
         d.pickupLock <= 0 &&
         d.sinking <= 0 &&
         (d.attached || d.swim > 0) &&
-        circlesOverlap(ship.x, ship.y, INFANTRY_PICKUP_RADIUS, d.x, d.y, d.radius)
+        circlesOverlap(ship.x, ship.y, ship.radius, d.x, d.y, d.radius)
       ) {
         // Recruited: same side-switch sparkle for both teams; the renderer's owner tint flips.
         // The lockout blocks an instant re-flip/scoop, and the reset cooldown denies a free shot.

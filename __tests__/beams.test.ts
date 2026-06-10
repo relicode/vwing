@@ -104,7 +104,7 @@ describe('fireRail', () => {
     expect(exposed.health).toBe(100 - RAIL_DAMAGE)
   })
 
-  test('the lance pierces every enemy trooper along the beam — but not past terrain', () => {
+  test('the lance pierces every trooper along the beam — either side — but not past terrain', () => {
     const trooper = (x: number, owner: number): Device => ({
       kind: DeviceKind.INFANTRY,
       x,
@@ -135,13 +135,13 @@ describe('fireRail', () => {
     world.devices = [
       trooper(100, 1), // skewered
       trooper(200, 1), // skewered too — flesh doesn't stop the lance
-      trooper(150, 0), // the firer's own man: untouched
+      trooper(150, 0), // the firer's own man: friendly fire is real — skewered with them
       trooper(500, 1), // behind the wall: safe
     ]
     world.blocks = [{ x: 300, y: -200, w: 80, h: 400, structure: StructureType.EARTH, surface: Surface.EARTH }]
     fireRail(world, shooter)
     const survivors = world.devices.filter((d) => d.kind === DeviceKind.INFANTRY)
-    expect(survivors).toHaveLength(2)
-    expect(survivors.map((d) => d.x).sort((a, b) => a - b)).toEqual([150, 500])
+    expect(survivors).toHaveLength(1)
+    expect(survivors[0]?.x).toBe(500)
   })
 })

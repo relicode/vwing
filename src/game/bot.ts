@@ -1,5 +1,6 @@
 import { closestPointOnRect } from '$/game/collision'
 import {
+  BASE_GUARD_RESERVE,
   BaseAlarm,
   BOT_AIM_DEADBAND,
   BOT_ARRIVAL_RADIUS,
@@ -24,6 +25,7 @@ import {
   BOT_WALL_MARGIN,
   BotGoal,
   BULLET_SPEED,
+  DeviceKind,
   WALL_THICKNESS,
   WEAPON_CONFIG,
   WORLD_HEIGHT,
@@ -177,6 +179,16 @@ const nearestEnemy = (self: Ship, ships: Ship[]): Ship | undefined => {
   return best
 }
 
+// The fielded guards still answering to a side's barracks — boarding supply the housed count
+// doesn't show (loading is embodied now: the men walk out and climb aboard by touch).
+const guardCount = (world: World, ownerId: number): number => {
+  let n = 0
+  for (const d of world.devices) {
+    if (d.kind === DeviceKind.INFANTRY && d.guard && d.owner === ownerId) n += 1
+  }
+  return n
+}
+
 // The goal ladder, top priority first. Pure: the only memory is `prev` (REARM is sticky until
 // the bay is topped up, so the bot doesn't thrash at the load threshold). A world without bases
 // (DEATHMATCH) short-circuits straight to DOGFIGHT.
@@ -192,8 +204,10 @@ export const nextGoal = (prev: BotGoal, self: Ship, world: World, target: Ship |
   // troops aboard to drop.
   if (home.capture > 0) return BotGoal.DEFEND
   if (home.alarm === BaseAlarm.SORTIE && self.troops >= 1) return BotGoal.DEFEND
-  // 3. Sticky rearm: keep loading until topped up (or the garrison runs dry / the base falls).
-  const canLoad = home.capture < 1 && home.garrison >= 1
+  // 3. Sticky rearm: keep loading until topped up. Supply = housed + the fielded watch (loading
+  // boards both), but the bot never strips its base below the reserve — emptying the whole
+  // garrison is a gamble only the human is allowed to take.
+  const canLoad = home.capture < 1 && home.garrison + guardCount(world, self.id) > BASE_GUARD_RESERVE
   if (prev === BotGoal.REARM && self.troops < BOT_REARM_DONE_TROOPS && canLoad) return BotGoal.REARM
   // 4. Stocked: fly the assault. 5. Short on troops but the barracks can supply: go load.
   if (self.troops >= BOT_ASSAULT_MIN_TROOPS) return BotGoal.ASSAULT
@@ -243,8 +257,10 @@ const actOnGoal = (
       return target ? decideBot(self, target, world.blocks) : IDLE
     case BotGoal.REARM: {
       if (!home) return IDLE
-      // Park by the pad; stepBases does the actual loading once the bot is slow and near.
-      const leg = ferryLeg(self, home.x, home.y - 100)
+      // Set DOWN on the pad: loading is embodied now — the garrison walks out and boards by
+      // touch, so the bot must actually land (a resting hull also cuts the thrust that would
+      // otherwise torch its own boarding queue). The landing model handles the final contact.
+      const leg = ferryLeg(self, home.x, home.y - 20)
       return steerTo(self, leg.x, leg.y, world.blocks, leg.final)
     }
     case BotGoal.DEFEND:

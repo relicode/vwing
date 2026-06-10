@@ -176,16 +176,18 @@ export const SPAWN_ALTITUDE = 320 // px above its pad top where a campaign ship 
 // (see sim.ts).
 export const BASE_GARRISON_CAP = 12 // troopers a barracks can house (housed + fielded guards)
 export const BASE_GARRISON_START = 8 // housed at match start
-export const BASE_GARRISON_REGEN = 0.02 // troopers/s regrown while uncaptured (~50 s per man — the base's HP heals slowly)
-export const BASE_LOAD_RADIUS = 140 // px from the pad within which a slow owner ship loads troops
-export const BASE_LOAD_RATE = 1.5 // troopers/s transferred garrison → bay while loading
+export const BASE_GARRISON_REGEN = 1 / 15 // troopers/s regrown while uncaptured (one man every 15 s)
+export const BASE_LOAD_RADIUS = 140 // px from the pad within which a slow owner ship throws the doors open to board
+export const BASE_PAD_METAL_CELLS = 2 // thickness (cells) of the indestructible metal slab the barracks stands on
 export const BASE_CAPTURE_RADIUS = 460 // px disc around the pad center that counts capturers/defenders
 export const BASE_CAPTURE_TIME = 20 // s of uncontested enemy presence to capture (once the garrison is dead)
 export const BASE_REVERT_TIME = 12 // s for progress to bleed back once the zone is purged
 // The garrison in the flesh: guards step out the door on a cadence and patrol the pad. An enemy
 // ship in sight sends them running back indoors (despawned into the housed count — a bunkered
 // trooper can't be strafed); enemy infantry on the ground pull everyone but the reserve out to
-// fight. Guards never board their owner's ship — the bay loads from the housed count only.
+// fight. Loading is embodied too: a slow owner ship by the pad throws the doors open — the whole
+// garrison (down to zero; the reserve binds only the defensive sortie) streams out, runs to the
+// ship, and boards by touch. There is no abstract counter transfer.
 export const BASE_GUARD_PATROL = 4 // guards fielded on routine patrol
 export const BASE_GUARD_RESERVE = 2 // housed troopers a sortie never commits (the last-ditch HP)
 export const BASE_GUARD_RANGE = 200 // px patrol half-span around the pad center
@@ -405,8 +407,11 @@ export const INFANTRY_FALL_LETHAL = 300 // landing impact speed (px/s) above whi
 export const INFANTRY_SWIM_TIME = 6 // s a unit floats (can't shoot) in water before it drowns
 export const INFANTRY_SWIM_DRAG = 1.6 // horizontal damping coefficient while swimming (no rescuer near)
 export const INFANTRY_SWIM_SPEED = 34 // px/s a unit paddles toward a rescuing owner
-export const INFANTRY_PICKUP_RADIUS = 30 // px: a unit reaching this close to its slow owner is scooped up
-export const INFANTRY_PICKUP_SPEED = 90 // px/s: the owner must be slower than this to rescue a unit
+// Boarding is by TOUCH: the hulls must actually meet (ship radius + trooper radius) — "near" is
+// not aboard. The approach gate below is only how close a ship must hover for a unit to start
+// walking toward it; the scoop itself happens on contact with a landed / barely-drifting ship.
+export const INFANTRY_PICKUP_RADIUS = 30 // px vertical gate within which a landed unit walks toward its rescuer
+export const INFANTRY_PICKUP_SPEED = 60 // px/s: the ship must be landed or barely drifting to take a unit aboard
 export const INFANTRY_RAM_SPEED = 150 // px/s: a ship faster than this splatters any trooper it touches
 export const INFANTRY_RESCUE_RANGE = 260 // px: a unit only walks/swims toward an owner this near
 export const INFANTRY_SINK_TIME = 1.5 // s a drowned unit sinks and fades before vanishing
@@ -439,6 +444,12 @@ export const INFANTRY_BURN_TURN_CHANCE = 0.03 // per-frame chance the flail reve
 export const INFANTRY_FIRE_CATCH_RADIUS = 26 // px within which fire can jump trooper → trooper
 export const INFANTRY_FIRE_CATCH_CHANCE = 0.06 // per-frame chance of catching inside that radius
 export const INFANTRY_FIRE_PANIC_DIST = 110 // px: anyone alight (friend or foe) this close makes a trooper bolt
+// A burning engine is an open flame: the exhaust plume behind a thrusting ship's nozzle sets any
+// trooper it washes over alight (either side's — fire doesn't read uniforms), so infantry give a
+// hot engine room and a ship coming in to load must cut thrust and LAND before the men approach.
+export const AFTERBURNER_IGNITE_LEN = 30 // px the exhaust plume reaches behind the hull
+export const AFTERBURNER_IGNITE_RADIUS = 12 // px half-width of the plume's ignition zone
+export const INFANTRY_THRUST_PANIC_DIST = 100 // px: a THRUSTING ship this close makes a landed trooper bolt
 // EMP vs infantry: a popped orb seizes nearby troopers up — no walking, no firing — for the
 // orb's disable time (the man-portable EMP carries its own shorter time).
 export const EMP_STUN_RADIUS = 80 // px around the popped orb that stuns troopers

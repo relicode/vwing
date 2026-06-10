@@ -93,7 +93,7 @@ describe('createTerrain (procedural arena)', () => {
     }
   })
 
-  test('both home pads are flat grass at pad level with an open approach column above', () => {
+  test('both home pads are flat indestructible metal at pad level with an open approach column above', () => {
     const padY = Math.round((WORLD_HEIGHT * BASE_PAD_Y_FRAC) / VOXEL_CELL) * VOXEL_CELL
     const halfSpan = (BASE_PAD_CELLS / 2 - 1) * VOXEL_CELL // just inside the pad edges
     for (const seed of SEEDS) {
@@ -101,10 +101,10 @@ describe('createTerrain (procedural arena)', () => {
       for (const pad of basePadCenters()) {
         for (const dx of [-halfSpan, 0, halfSpan]) {
           const x = pad.x + dx
-          // The surface at pad level: a grass cap whose top is exactly padY (the cap is pushed
-          // after the body, so the last matching block is the visible surface).
+          // The surface at pad level: the metal landing slab (a bedrock anchor — the barracks
+          // always stands on ground no shot can carve out from under it).
           const surfaceBlock = blocks.filter((b) => x >= b.x && x < b.x + b.w && b.y === padY).at(-1)
-          expect(surfaceBlock?.surface).toBe(Surface.GRASS)
+          expect(surfaceBlock?.structure).toBe(StructureType.METAL)
           // Open air from the pad top up to the spawn perch (nothing overhangs the approach).
           const obstructed = blocks.some(
             (b) => x >= b.x && x < b.x + b.w && b.y + b.h > padY - SPAWN_ALTITUDE && b.y < padY
