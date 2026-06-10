@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   Color,
   DeviceKind,
-  INFANTRY_FIRE_PELLETS,
+  INFANTRY_FLAME_PELLETS,
   INFANTRY_KNEEL_FIRE_AT,
   INFANTRY_RAIL_DAMAGE,
   INFANTRY_SCATTER_PELLETS,
@@ -29,6 +29,7 @@ const makeShip = (over: Partial<Ship>): Ship => ({
   angle: 0,
   radius: 12,
   thrusting: false,
+  reversing: false,
   fireCooldown: 0,
   invuln: 0,
   health: 100,
@@ -74,6 +75,7 @@ const bracedSpecialist = (heavy: WeaponKind): World => {
         owner: 0,
         radius: 6,
         heavy,
+        guard: false,
         attached: true,
         swim: 0,
         sinking: 0,
@@ -87,6 +89,8 @@ const bracedSpecialist = (heavy: WeaponKind): World => {
         kneel: INFANTRY_KNEEL_FIRE_AT + 0.005, // the next 1/60 s step crosses the fire moment
         running: false,
         slide: 0,
+        burning: 0,
+        stun: 0,
       },
     ]
   )
@@ -109,10 +113,10 @@ describe('fireHeavy — every specialist kind produces its signature effect from
     expect(world.bullets.every((b) => b.wet === true && (b.push ?? 0) > 0)).toBe(true)
   })
 
-  test('INCENDIARY: a burning flame fan', () => {
-    const world = bracedSpecialist(WeaponKind.INCENDIARY)
+  test('FLAMETHROWER: a burning flame fan', () => {
+    const world = bracedSpecialist(WeaponKind.FLAMETHROWER)
     updateDevices(world, 1 / 60)
-    expect(world.bullets).toHaveLength(INFANTRY_FIRE_PELLETS)
+    expect(world.bullets).toHaveLength(INFANTRY_FLAME_PELLETS)
     expect(world.bullets.every((b) => b.burn === true)).toBe(true)
   })
 

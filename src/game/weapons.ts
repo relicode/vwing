@@ -11,14 +11,14 @@ import {
   FLAK_FUSE,
   FLAK_RADIUS,
   FLAK_SPEED,
+  FLAMETHROWER_DAMAGE,
+  FLAMETHROWER_LIFE,
+  FLAMETHROWER_PELLETS,
+  FLAMETHROWER_SPEED,
+  FLAMETHROWER_SPREAD,
   GRENADE_FUSE,
   GRENADE_RADIUS,
   GRENADE_SPEED,
-  INCENDIARY_DAMAGE,
-  INCENDIARY_LIFE,
-  INCENDIARY_PELLETS,
-  INCENDIARY_SPEED,
-  INCENDIARY_SPREAD,
   MINE_ARM_TIME,
   MINE_BLAST_RADIUS,
   MINE_COUNT,
@@ -205,14 +205,14 @@ export const fireSecondary = (world: World, ship: Ship): Ship[] => {
         color: Color.WATER_EDGE,
       })
       return []
-    case WeaponKind.INCENDIARY:
+    case WeaponKind.FLAMETHROWER:
       spawnBurst(world.bullets, ship, world.rng, {
-        count: INCENDIARY_PELLETS,
-        spread: INCENDIARY_SPREAD,
-        speed: INCENDIARY_SPEED,
-        life: INCENDIARY_LIFE,
-        damage: INCENDIARY_DAMAGE,
-        burn: true, // scorches grass → bare earth on a terrain hit
+        count: FLAMETHROWER_PELLETS,
+        spread: FLAMETHROWER_SPREAD,
+        speed: FLAMETHROWER_SPEED,
+        life: FLAMETHROWER_LIFE,
+        damage: FLAMETHROWER_DAMAGE,
+        burn: true, // scorches grass → bare earth on a terrain hit; sets a hit trooper alight
         color: Color.THRUST,
       })
       return []

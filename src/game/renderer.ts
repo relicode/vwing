@@ -6,6 +6,7 @@ import {
   CAMERA_SNAP_DIST,
   Color,
   DeviceKind,
+  FLAMETHROWER_LIFE,
   GamePhase,
   INFANTRY_FIRE_INTERVAL,
   INFANTRY_KNEEL_FIRE_AT,
@@ -288,7 +289,7 @@ const head = (
 const HEAVY_TUBE: Record<WeaponKind, number> = {
   [WeaponKind.SCATTERGUN]: Color.SHRAPNEL,
   [WeaponKind.WATER_CANNON]: Color.WATER_EDGE,
-  [WeaponKind.INCENDIARY]: Color.THRUST,
+  [WeaponKind.FLAMETHROWER]: Color.THRUST,
   [WeaponKind.SEEKER]: Color.MISSILE,
   [WeaponKind.RAIL]: Color.RAIL,
   [WeaponKind.GRENADE]: Color.GRENADE,
@@ -613,13 +614,44 @@ const drawDrowning = (g: Graphics, d: InfantrySprite, kit: Kit, time: number, f:
   g.circle(d.x + r * 0.3, by, r * 0.12).fill({ color: Color.WATER_EDGE, alpha: 0.5 * a }) // rising bubble
 }
 
-// Dispatch a trooper to its state pose. stateOf (devices.ts) is the single source of truth for the
-// behavioural state, so the pose ladder never drifts from the sim. The ice slide is a transient
-// stateOf intentionally doesn't model (it would otherwise read as WALKING/STANDING), so it's caught
+// Fire riding a burning trooper: a few flame tongues flickering up off the figure (taller core
+// tongue flanked by two smaller ones), with the flicker keyed to time + position so a crowd of
+// burning men doesn't pulse in unison. Drawn OVER the pose — burning is a field-keyed overlay
+// (like the ice slide), not a stateOf member, so every pose can burn.
+const drawBurning = (g: Graphics, d: InfantrySprite, time: number): void => {
+  const r = d.radius
+  for (const [i, off] of [-0.45, 0.05, 0.5].entries()) {
+    const flick = 0.7 + 0.3 * Math.sin(time * 13 + d.x * 0.31 + i * 2.1)
+    const baseY = d.y - r * 0.4
+    const h = r * (i === 1 ? 1.9 : 1.2) * flick
+    const w = r * 0.42 * flick
+    const cx = d.x + off * r + Math.sin(time * 9 + i * 1.7) * r * 0.12
+    g.moveTo(cx - w, baseY)
+      .quadraticCurveTo(cx - w * 0.4, baseY - h * 0.6, cx, baseY - h)
+      .quadraticCurveTo(cx + w * 0.4, baseY - h * 0.6, cx + w, baseY)
+      .fill({ color: Color.THRUST, alpha: 0.8 })
+    g.ellipse(cx, baseY - h * 0.25, w * 0.55, h * 0.3).fill({ color: Color.EXPLOSION, alpha: 0.85 })
+  }
+}
+
+// EMP seize-up: a pair of cyan sparks orbiting the helmet while the jolt lasts.
+const drawStunned = (g: Graphics, d: InfantrySprite, time: number): void => {
+  const r = d.radius
+  const angle = time * 9 + d.x * 0.2
+  for (const phase of [0, Math.PI]) {
+    g.circle(
+      d.x + Math.cos(angle + phase) * r * 0.95,
+      d.y - r * 1.5 + Math.sin(angle + phase) * r * 0.3,
+      r * 0.13
+    ).fill({ color: Color.EMP, alpha: 0.9 })
+  }
+}
+
+// A trooper's state pose. stateOf (devices.ts) is the single source of truth for the behavioural
+// state, so the pose ladder never drifts from the sim. The ice slide is a transient stateOf
+// intentionally doesn't model (it would otherwise read as WALKING/STANDING), so it's caught
 // first and routed to drawRunning's skid branch.
-const drawInfantry = (g: Graphics, d: InfantrySprite, time: number, selfId: number): void => {
-  const f = d.facing >= 0 ? 1 : -1
-  const kit = infantryKit(d, selfId)
+const drawInfantryPose = (g: Graphics, d: InfantrySprite, kit: Kit, time: number, f: number): void => {
   if (d.attached && d.slide !== 0 && !d.running) {
     drawRunning(g, d, kit, time, f)
     return
@@ -650,6 +682,16 @@ const drawInfantry = (g: Graphics, d: InfantrySprite, time: number, selfId: numb
       drawStanding(g, d, kit, time, f, false)
       break
   }
+}
+
+// Pose first, then the field-keyed overlays — burning and the EMP stun ride on top of whatever
+// pose the trooper holds (the precedent the ice slide set: transients never fork stateOf).
+const drawInfantry = (g: Graphics, d: InfantrySprite, time: number, selfId: number): void => {
+  const f = d.facing >= 0 ? 1 : -1
+  const kit = infantryKit(d, selfId)
+  drawInfantryPose(g, d, kit, time, f)
+  if (d.burning > 0) drawBurning(g, d, time)
+  if (d.stun > 0) drawStunned(g, d, time)
 }
 
 const drawDevice = (g: Graphics, d: Device, time: number, selfId: number): void => {
@@ -720,6 +762,24 @@ const drawShip = (g: Graphics, ship: Ship, time: number, isSelf: boolean): void 
       ship.x - Math.cos(a) * r * (1.1 + flick),
       ship.y - Math.sin(a) * r * (1.1 + flick),
     ]).fill({ color: Color.THRUST, alpha: 0.9 })
+  }
+  if (ship.reversing) {
+    // The two smaller retro plumes: short tongues licking FORWARD past the nose's flanks.
+    const flick = 0.5 + (Math.floor(time * 40 + 1) % 3) * 0.25
+    const nx = Math.cos(a)
+    const ny = Math.sin(a)
+    for (const side of [1, -1]) {
+      const bx = ship.x + nx * r * 0.9 - side * ny * r * 0.55
+      const by = ship.y + ny * r * 0.9 + side * nx * r * 0.55
+      g.poly([
+        bx - ny * side * r * 0.2,
+        by + nx * side * r * 0.2,
+        bx + ny * side * r * 0.2,
+        by - nx * side * r * 0.2,
+        bx + nx * r * (0.5 + flick * 0.6),
+        by + ny * r * (0.5 + flick * 0.6),
+      ]).fill({ color: Color.THRUST, alpha: 0.85 })
+    }
   }
   g.poly([
     ship.x + Math.cos(a) * r * 1.5,
@@ -843,8 +903,14 @@ export const createRenderer = (rng: Rng): Renderer => {
   let lastTime = 0
 
   const draw = (world: RenderWorld, phase: GamePhase, selfId: number): void => {
-    const self = world.ships.find((ship) => ship.id === selfId) ?? world.ships[0]
-    const target = cameraOrigin(self ?? { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 })
+    // While the player's ship waits out its respawn it isn't in the world — hold the camera on
+    // the death spot (the eased position we already have) instead of snapping to another ship.
+    const self = world.ships.find((ship) => ship.id === selfId)
+    const target = self
+      ? cameraOrigin(self)
+      : camX !== undefined
+        ? { x: camX, y: camY }
+        : cameraOrigin({ x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 })
     if (camX === undefined || Math.hypot(target.x - camX, target.y - camY) > CAMERA_SNAP_DIST) {
       camX = target.x // first frame or a big jump (respawn): snap, don't drift across the arena
       camY = target.y
@@ -872,6 +938,20 @@ export const createRenderer = (rng: Rng): Renderer => {
     for (const base of world.bases) drawBase(dynGfx, base, world.time, selfId)
     for (const device of world.devices) drawDevice(dynGfx, device, world.time, selfId)
     for (const bullet of world.bullets) {
+      if (bullet.burn) {
+        // A flame gout: it blooms as it ages — a swelling, dimming tongue around a white-hot
+        // core that cools out of existence (life runs FLAMETHROWER_LIFE → 0).
+        const age = clamp(1 - bullet.life / FLAMETHROWER_LIFE, 0, 1)
+        const r = bullet.radius * (1.6 + age * 2.8)
+        dynGfx.circle(bullet.x, bullet.y, r * 1.5).fill({ color: Color.THRUST, alpha: 0.14 })
+        dynGfx
+          .circle(bullet.x, bullet.y, r)
+          .fill({ color: age < 0.5 ? Color.EXPLOSION : Color.THRUST, alpha: 0.85 - age * 0.45 })
+        dynGfx
+          .circle(bullet.x, bullet.y, r * 0.45)
+          .fill({ color: Color.SHIP_CORE, alpha: Math.max(0, 0.9 - age * 1.5) })
+        continue
+      }
       const color = bullet.color ?? (bullet.owner === selfId ? Color.BULLET : Color.BULLET_ENEMY)
       dynGfx.circle(bullet.x, bullet.y, bullet.radius * 2.2).fill({ color, alpha: 0.18 }) // soft glow
       dynGfx.circle(bullet.x, bullet.y, bullet.radius).fill({ color })

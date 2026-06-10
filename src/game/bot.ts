@@ -1,5 +1,7 @@
 import { closestPointOnRect } from '$/game/collision'
 import {
+  BASE_GUARD_RESERVE,
+  BaseAlarm,
   BOT_AIM_DEADBAND,
   BOT_ARRIVAL_RADIUS,
   BOT_ASSAULT_MIN_TROOPS,
@@ -23,6 +25,7 @@ import {
   BOT_WALL_MARGIN,
   BotGoal,
   BULLET_SPEED,
+  DeviceKind,
   WALL_THICKNESS,
   WEAPON_CONFIG,
   WORLD_HEIGHT,
@@ -38,12 +41,20 @@ const FACING_UP = -Math.PI / 2
 export type BotDecision = {
   turn: number
   thrusting: boolean
+  reversing: boolean // retro-brake (the two smaller forward nozzles)
   firing: boolean
   altFiring: boolean
   deploying: boolean
 }
 
-const IDLE: BotDecision = { turn: 0, thrusting: false, firing: false, altFiring: false, deploying: false }
+const IDLE: BotDecision = {
+  turn: 0,
+  thrusting: false,
+  reversing: false,
+  firing: false,
+  altFiring: false,
+  deploying: false,
+}
 
 const CENTER = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 } as const
 
@@ -123,12 +134,13 @@ export const decideBot = (self: Ship, target: Ship, blocks: Block[]): BotDecisio
     }
   }
 
-  return { turn: turnCommand(self, desired), thrusting, firing, altFiring, deploying: false }
+  return { turn: turnCommand(self, desired), thrusting, reversing: false, firing, altFiring, deploying: false }
 }
 
 // Ferry flight: steer toward a world point with the survival reflexes still in charge, an
 // along-track speed cap so the bot stays controllable, and (when `arrive` is set) a braking
-// hover inside the arrival radius — retro-thrust until slow, then feather against gravity.
+// hover inside the arrival radius — the retro nozzles when the nose already points along the
+// velocity (no flip needed), else turn-and-burn, then feather against gravity.
 // Terrain dodging is suppressed close to the destination: a pad approach IS deliberate
 // terrain proximity, and the dodge would otherwise shove the bot off its own barracks.
 export const steerTo = (self: Ship, px: number, py: number, blocks: Block[], arrive: boolean): BotDecision => {
@@ -136,6 +148,7 @@ export const steerTo = (self: Ship, px: number, py: number, blocks: Block[], arr
   const speed = Math.hypot(self.vx, self.vy)
   let desired = Math.atan2(py - self.y, px - self.x)
   let thrusting = false
+  let reversing = false
 
   const escapeHeading =
     wallEscapeHeading(self) ?? (dist > BOT_ARRIVAL_RADIUS * 3 ? terrainEscapeHeading(self, blocks) : undefined)
@@ -144,8 +157,15 @@ export const steerTo = (self: Ship, px: number, py: number, blocks: Block[], arr
     thrusting = facingToward(self, desired)
   } else if (arrive && dist < BOT_ARRIVAL_RADIUS) {
     if (speed > BOT_HOVER_SLOW) {
-      desired = Math.atan2(-self.vy, -self.vx) // retro-burn the velocity away
-      thrusting = facingToward(self, desired)
+      const velocityHeading = Math.atan2(self.vy, self.vx)
+      if (facingToward(self, velocityHeading)) {
+        // Nose already along the velocity: ride the retros down — no flip, no main-burn wash.
+        desired = velocityHeading
+        reversing = true
+      } else {
+        desired = Math.atan2(-self.vy, -self.vx) // tail-first: turn and main-burn the speed away
+        thrusting = facingToward(self, desired)
+      }
     } else {
       desired = FACING_UP // feather against gravity to loiter
       thrusting = self.vy > 30 && facingToward(self, FACING_UP)
@@ -159,7 +179,7 @@ export const steerTo = (self: Ship, px: number, py: number, blocks: Block[], arr
     }
   }
 
-  return { turn: turnCommand(self, desired), thrusting, firing: false, altFiring: false, deploying: false }
+  return { turn: turnCommand(self, desired), thrusting, reversing, firing: false, altFiring: false, deploying: false }
 }
 
 const nearestEnemy = (self: Ship, ships: Ship[]): Ship | undefined => {
@@ -176,6 +196,16 @@ const nearestEnemy = (self: Ship, ships: Ship[]): Ship | undefined => {
   return best
 }
 
+// The fielded guards still answering to a side's barracks — boarding supply the housed count
+// doesn't show (loading is embodied now: the men walk out and climb aboard by touch).
+const guardCount = (world: World, ownerId: number): number => {
+  let n = 0
+  for (const d of world.devices) {
+    if (d.kind === DeviceKind.INFANTRY && d.guard && d.owner === ownerId) n += 1
+  }
+  return n
+}
+
 // The goal ladder, top priority first. Pure: the only memory is `prev` (REARM is sticky until
 // the bay is topped up, so the bot doesn't thrash at the load threshold). A world without bases
 // (DEATHMATCH) short-circuits straight to DOGFIGHT.
@@ -185,10 +215,16 @@ export const nextGoal = (prev: BotGoal, self: Ship, world: World, target: Ship |
   if (!home || !enemyBase) return BotGoal.DOGFIGHT
   // 1. A nearby enemy ship always wins attention — never stop being a dogfighter when pressed.
   if (target && Math.hypot(target.x - self.x, target.y - self.y) < BOT_THREAT_RANGE) return BotGoal.DOGFIGHT
-  // 2. The home barracks under capture: get back and drop defenders into the zone.
+  // 2. The home barracks under threat — capture progress, or the garrison already sortied
+  // against landed raiders (capture stays 0 while they storm the building, so the sortie is
+  // the early warning). Flying home empty-handed helps nobody, so the sortie response needs
+  // troops aboard to drop.
   if (home.capture > 0) return BotGoal.DEFEND
-  // 3. Sticky rearm: keep loading until topped up (or the garrison runs dry / the base falls).
-  const canLoad = home.capture < 1 && home.garrison >= 1
+  if (home.alarm === BaseAlarm.SORTIE && self.troops >= 1) return BotGoal.DEFEND
+  // 3. Sticky rearm: keep loading until topped up. Supply = housed + the fielded watch (loading
+  // boards both), but the bot never strips its base below the reserve — emptying the whole
+  // garrison is a gamble only the human is allowed to take.
+  const canLoad = home.capture < 1 && home.garrison + guardCount(world, self.id) > BASE_GUARD_RESERVE
   if (prev === BotGoal.REARM && self.troops < BOT_REARM_DONE_TROOPS && canLoad) return BotGoal.REARM
   // 4. Stocked: fly the assault. 5. Short on troops but the barracks can supply: go load.
   if (self.troops >= BOT_ASSAULT_MIN_TROOPS) return BotGoal.ASSAULT
@@ -238,8 +274,10 @@ const actOnGoal = (
       return target ? decideBot(self, target, world.blocks) : IDLE
     case BotGoal.REARM: {
       if (!home) return IDLE
-      // Park by the pad; stepBases does the actual loading once the bot is slow and near.
-      const leg = ferryLeg(self, home.x, home.y - 100)
+      // Set DOWN on the pad: loading is embodied now — the garrison walks out and boards by
+      // touch, so the bot must actually land (a resting hull also cuts the thrust that would
+      // otherwise torch its own boarding queue). The landing model handles the final contact.
+      const leg = ferryLeg(self, home.x, home.y - 20)
       return steerTo(self, leg.x, leg.y, world.blocks, leg.final)
     }
     case BotGoal.DEFEND:
@@ -276,6 +314,10 @@ export const createBotInput = (self: Ship, getWorld: () => World): Input => {
     thrusting: () => {
       refresh()
       return decision.thrusting
+    },
+    reversing: () => {
+      refresh()
+      return decision.reversing
     },
     firing: () => {
       refresh()

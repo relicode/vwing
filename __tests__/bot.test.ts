@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { createBotInput, decideBot, nextGoal } from '$/game/bot'
 import {
+  BaseAlarm,
   BOT_ID,
   BotGoal,
   PLAYER_ID,
@@ -27,6 +28,7 @@ const makeShip = (over: Partial<Ship>): Ship => ({
   angle: 0,
   radius: 12,
   thrusting: false,
+  reversing: false,
   fireCooldown: 0,
   invuln: 0,
   health: 100,
@@ -173,6 +175,8 @@ describe('nextGoal (the campaign goal ladder)', () => {
     y: WORLD_HEIGHT * 0.52,
     garrison: 8,
     capture: 0,
+    alarm: BaseAlarm.PATROL,
+    door: 0,
     ...over,
   })
   const enemyBase = (over: Partial<Base>): Base => ({
@@ -181,6 +185,8 @@ describe('nextGoal (the campaign goal ladder)', () => {
     y: WORLD_HEIGHT * 0.52,
     garrison: 8,
     capture: 0,
+    alarm: BaseAlarm.PATROL,
+    door: 0,
     ...over,
   })
   const baseWorld = (bases: Base[], ships: Ship[]): World => ({
@@ -215,6 +221,14 @@ describe('nextGoal (the campaign goal ladder)', () => {
     const self = makeShip({ troops: 8 })
     const world = baseWorld([homeBase({ capture: 0.2 }), enemyBase({})], [self])
     expect(nextGoal(BotGoal.ASSAULT, self, world, undefined)).toBe(BotGoal.DEFEND)
+  })
+
+  test('a home garrison already sortied is the early warning — DEFEND, but only with troops to drop', () => {
+    const stocked = makeShip({ troops: 4 })
+    const world = baseWorld([homeBase({ alarm: BaseAlarm.SORTIE }), enemyBase({})], [stocked])
+    expect(nextGoal(BotGoal.ASSAULT, stocked, world, undefined)).toBe(BotGoal.DEFEND)
+    const empty = makeShip({ troops: 0 }) // flying home empty-handed helps nobody
+    expect(nextGoal(BotGoal.DOGFIGHT, empty, world, undefined)).not.toBe(BotGoal.DEFEND)
   })
 
   test('a low bay sends the bot to REARM, which sticks until topped up', () => {

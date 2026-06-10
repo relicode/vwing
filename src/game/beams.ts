@@ -1,6 +1,7 @@
 import { applyDamage } from '$/game/combat'
-import { Color, RAIL_BEAM_LIFE, RAIL_DAMAGE, RAIL_RANGE } from '$/game/constants'
-import type { Block, Ship, World } from '$/game/types'
+import { Color, DeviceKind, RAIL_BEAM_LIFE, RAIL_DAMAGE, RAIL_RANGE } from '$/game/constants'
+import { spawnExplosion } from '$/game/particles'
+import type { Block, Device, Ship, World } from '$/game/types'
 
 // Age out spent rail beams (damage was applied when they were fired).
 export const updateBeams = (world: World, dt: number): void => {
@@ -32,8 +33,12 @@ const rayRectEntry = (x: number, y: number, dirX: number, dirY: number, b: Block
 // Shared rail hitscan: damage the nearest enemy ship lying along the ray from (x, y), draw the
 // transient beam to that ship (or to the first terrain face, or to max range), and return the
 // struck ship so the caller can reap it if the hull is gone. Terrain blocks the lance — it
-// burns into the first wall it meets, never through a mountain. Fired by ships (full power
-// along the nose) and by kneeling rail troopers (a scaled man-portable lance).
+// burns into the first wall it meets, never through a mountain — but flesh doesn't: EVERY
+// trooper along the beam dies, either side's (friendly fire is real; `self` exempts only the
+// kneeling sniper's own body from its own lance). Killed troopers are marked into
+// `deadTroopers` — the caller removes them, because the device array may be mid-iteration.
+// Fired by ships (full power along the nose) and by kneeling rail troopers (a scaled
+// man-portable lance).
 export const castRail = (
   world: World,
   x: number,
@@ -41,7 +46,9 @@ export const castRail = (
   angle: number,
   ownerId: number,
   range: number,
-  damage: number
+  damage: number,
+  deadTroopers: Set<Device>,
+  self?: Device
 ): Ship | undefined => {
   const dirX = Math.cos(angle)
   const dirY = Math.sin(angle)
@@ -63,6 +70,18 @@ export const castRail = (
     hit = other
     hitDist = along
   }
+  // The lance pierces infantry: every trooper lying on the beam (up to whatever stopped it —
+  // terrain face or struck ship) dies where it stands, whichever side it fights for.
+  for (const d of world.devices) {
+    if (d.kind !== DeviceKind.INFANTRY || d === self || d.sinking > 0) continue
+    const relX = d.x - x
+    const relY = d.y - y
+    const along = relX * dirX + relY * dirY
+    if (along < 0 || along > hitDist) continue
+    if (Math.abs(relX * dirY - relY * dirX) > d.radius) continue
+    spawnExplosion(world.particles, d.x, d.y, Color.BLOOD, world.rng, 6)
+    deadTroopers.add(d)
+  }
 
   world.beams.push({
     x1: x,
@@ -80,14 +99,20 @@ export const castRail = (
   return hit
 }
 
-// The ship's Rail Lance: full-power hitscan from the nose.
-export const fireRail = (world: World, ship: Ship): Ship | undefined =>
-  castRail(
+// The ship's Rail Lance: full-power hitscan from the nose. Fired from the ship-input pass
+// (never mid-device-iteration), so the pierced troopers can be removed on the spot.
+export const fireRail = (world: World, ship: Ship): Ship | undefined => {
+  const deadTroopers = new Set<Device>()
+  const hit = castRail(
     world,
     ship.x + Math.cos(ship.angle) * ship.radius,
     ship.y + Math.sin(ship.angle) * ship.radius,
     ship.angle,
     ship.id,
     RAIL_RANGE,
-    RAIL_DAMAGE
+    RAIL_DAMAGE,
+    deadTroopers
   )
+  if (deadTroopers.size > 0) world.devices = world.devices.filter((d) => !deadTroopers.has(d))
+  return hit
+}

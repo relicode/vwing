@@ -69,3 +69,24 @@ export const addPool = (water: WaterBody[], pool: WaterBody, maxBodies: number):
   if (!absorbedAny && rest.length >= maxBodies) return water // at cap and nothing to fuse: skip
   return [...rest, merged]
 }
+
+// Pour `area` px² of water into a basin: the level climbs by area/width per pour — fast in a
+// gully, slow in a wide bowl — capped at the basin's spill level (basin.y). A first pour seeds a
+// sliver at the basin floor; later pours raise the existing body, fusing into neighbours through
+// addPool. One squirt never conjures the whole basin. Returns a new array (or `water` unchanged
+// when the basin is already full / the body cap blocks a fresh seed).
+export const raisePool = (water: WaterBody[], basin: WaterBody, area: number, maxBodies: number): WaterBody[] => {
+  const existing = water.find((body) => overlaps(body, basin))
+  if (existing) {
+    if (existing.y <= basin.y) return water // already at (or past) the spill level — full
+    const newY = Math.max(basin.y, existing.y - area / existing.w)
+    const raised: WaterBody = { x: existing.x, y: newY, w: existing.w, h: existing.h + (existing.y - newY) }
+    return addPool(
+      water.filter((body) => body !== existing),
+      raised,
+      maxBodies
+    )
+  }
+  const h = Math.min(area / basin.w, basin.h)
+  return addPool(water, { x: basin.x, y: basin.y + basin.h - h, w: basin.w, h }, maxBodies)
+}

@@ -34,7 +34,7 @@ export const BOT_ID = 1
 export enum WeaponKind {
   SCATTERGUN = 'SCATTERGUN',
   WATER_CANNON = 'WATER_CANNON',
-  INCENDIARY = 'INCENDIARY',
+  FLAMETHROWER = 'FLAMETHROWER',
   SEEKER = 'SEEKER',
   RAIL = 'RAIL',
   GRENADE = 'GRENADE',
@@ -70,6 +70,16 @@ export enum DeviceKind {
   GRENADE = 'GRENADE',
   FLAK = 'FLAK',
   WELL = 'WELL',
+}
+
+// The garrison's posture, recomputed by stepBases each tick: PATROL keeps a small standing
+// watch outside, HIDE sends every guard indoors (an enemy ship in sight — they can't fight
+// it, so they deny it targets), SORTIE fields everyone but the reserve to repel enemy
+// infantry on the ground. SORTIE outranks HIDE: a landed assault must be met.
+export enum BaseAlarm {
+  PATROL = 'PATROL',
+  HIDE = 'HIDE',
+  SORTIE = 'SORTIE',
 }
 
 // The behavioural state of a deployed trooper, derived from its fields each tick (see stateOf in
@@ -157,18 +167,35 @@ export const BASE_PAD_CELLS = 24 // pad width in voxel cells (432 px of flat gra
 export const BASE_APRON_CELLS = 24 // span each side of the pad where land is clamped to pad level (open approach)
 export const SPAWN_ALTITUDE = 320 // px above its pad top where a campaign ship (re)spawns
 // The barracks itself: it houses a garrison the owner ship loads aboard (hover/land slow by the
-// pad, same learned verb as the trooper rescue), regrowing over time — so troops are a stream,
-// not a faucet. Enemy troopers landed inside the capture disc push capture progress; defenders
-// in the zone contest it; a purged zone bleeds progress back. A captured base stops garrison
-// regen, loading, AND the owner's respawns — death while captured is elimination (see sim.ts).
-export const BASE_GARRISON_CAP = 12 // troopers a barracks can house
+// pad, same learned verb as the trooper rescue). The garrison IS the base's hitpoints — it
+// fields live guard troopers around the pad (see BaseAlarm + stepBases), regrows only slowly,
+// and attackers who clear the fielded defenders chip the housed count down before the capture
+// timer can even start. Enemy troopers landed inside the capture disc push capture progress;
+// defenders in the zone contest it; a purged zone bleeds progress back. A captured base stops
+// garrison regen, loading, AND the owner's respawns — death while captured is elimination
+// (see sim.ts).
+export const BASE_GARRISON_CAP = 12 // troopers a barracks can house (housed + fielded guards)
 export const BASE_GARRISON_START = 8 // housed at match start
-export const BASE_GARRISON_REGEN = 0.15 // troopers/s regrown while uncaptured (~6.7 s per man)
-export const BASE_LOAD_RADIUS = 140 // px from the pad within which a slow owner ship loads troops
-export const BASE_LOAD_RATE = 1.5 // troopers/s transferred garrison → bay while loading
+export const BASE_GARRISON_REGEN = 1 / 15 // troopers/s regrown while uncaptured (one man every 15 s)
+export const BASE_LOAD_RADIUS = 140 // px from the pad within which a slow owner ship throws the doors open to board
+export const BASE_PAD_METAL_CELLS = 2 // thickness (cells) of the indestructible metal slab the barracks stands on
 export const BASE_CAPTURE_RADIUS = 460 // px disc around the pad center that counts capturers/defenders
-export const BASE_CAPTURE_TIME = 30 // s of uncontested enemy presence to capture
+export const BASE_CAPTURE_TIME = 20 // s of uncontested enemy presence to capture (once the garrison is dead)
 export const BASE_REVERT_TIME = 12 // s for progress to bleed back once the zone is purged
+// The garrison in the flesh: guards step out the door on a cadence and patrol the pad. An enemy
+// ship in sight sends them running back indoors (despawned into the housed count — a bunkered
+// trooper can't be strafed); enemy infantry on the ground pull everyone but the reserve out to
+// fight. Loading is embodied too: a slow owner ship by the pad throws the doors open — the whole
+// garrison (down to zero; the reserve binds only the defensive sortie) streams out, runs to the
+// ship, and boards by touch. There is no abstract counter transfer.
+export const BASE_GUARD_PATROL = 4 // guards fielded on routine patrol
+export const BASE_GUARD_RESERVE = 2 // housed troopers a sortie never commits (the last-ditch HP)
+export const BASE_GUARD_RANGE = 200 // px patrol half-span around the pad center
+export const BASE_ALERT_RANGE = 700 // px enemy-ship distance that sends the guards indoors
+export const BASE_SORTIE_RANGE = 600 // px enemy-infantry (landed) distance that triggers the sortie
+export const BASE_DOOR_INTERVAL = 0.7 // s between guards stepping out the door
+export const BASE_DOOR_RADIUS = 16 // px from the door within which a recalled guard slips inside
+export const BASE_ASSAULT_RATE = 0.12 // housed troopers/s each unopposed attacker kills storming the building
 
 // Neon-on-near-black palette, stored as 0xRRGGBB for PixiJS fills.
 export const Color = {
@@ -227,12 +254,21 @@ export const SMOKE_LIFE = 0.9 // s smoke puff lifetime
 // Ship flight model.
 export const SHIP_RADIUS = 12
 export const SHIP_THRUST = 580 // px/s^2 along the nose
+// Reverse-afterburners: a pair of smaller retro nozzles at the nose firing FORWARD to brake
+// without flipping the ship (↓ / S). Weaker than the main engine — a brake, not a second drive.
+export const SHIP_REVERSE_THRUST = 260 // px/s^2 opposite the nose while the retros burn
 export const SHIP_TURN_RATE = 3.6 // rad/s
 export const SHIP_DRAG = 0.22 // gentle velocity damping coefficient (per second)
 export const SHIP_START_LIVES = 3
 export const SHIP_FIRE_INTERVAL = 0.17 // s between shots
 export const SHIP_RESPAWN_INVULN = 2.5 // s of invulnerability after (re)spawn
 export const SHIP_SPAWN_CLEAR_RADIUS = 260 // rocks within this of a respawn are cleared
+// Dying costs time, and it compounds: the first death waits RESPAWN_DELAY_BASE before the
+// ship re-enters, and every death already suffered this run adds RESPAWN_DELAY_GROWTH (capped) —
+// a side being worn down reinforces slower and slower.
+export const RESPAWN_DELAY_BASE = 5 // s the first respawn waits
+export const RESPAWN_DELAY_GROWTH = 2.5 // s added per prior death
+export const RESPAWN_DELAY_MAX = 15 // ceiling on the wait
 
 // Projectiles fly straight (no gravity), inheriting the ship's velocity.
 export const BULLET_SPEED = 600 // muzzle speed
@@ -297,7 +333,7 @@ export type WeaponConfig = { name: string; cost: number; cooldown: number }
 export const WEAPON_CONFIG: Record<WeaponKind, WeaponConfig> = {
   [WeaponKind.SCATTERGUN]: { name: 'Scattergun', cost: 22, cooldown: 0.5 },
   [WeaponKind.WATER_CANNON]: { name: 'Water Cannon', cost: 3, cooldown: 0.05 }, // cheap stream
-  [WeaponKind.INCENDIARY]: { name: 'Incendiary', cost: 18, cooldown: 0.45 },
+  [WeaponKind.FLAMETHROWER]: { name: 'Flamethrower', cost: 4, cooldown: 0.07 }, // cheap stream (the water cannon's mirror)
   [WeaponKind.SEEKER]: { name: 'Seeker Missiles', cost: 55, cooldown: 0.8 },
   [WeaponKind.RAIL]: { name: 'Rail Lance', cost: 80, cooldown: 0.9 },
   [WeaponKind.GRENADE]: { name: 'Grenade Lob', cost: 32, cooldown: 0.7 },
@@ -312,7 +348,7 @@ export const WEAPON_CONFIG: Record<WeaponKind, WeaponConfig> = {
 export const WEAPON_POOL: readonly WeaponKind[] = [
   WeaponKind.SCATTERGUN,
   WeaponKind.WATER_CANNON,
-  WeaponKind.INCENDIARY,
+  WeaponKind.FLAMETHROWER,
   WeaponKind.SEEKER,
   WeaponKind.RAIL,
   WeaponKind.GRENADE,
@@ -337,13 +373,14 @@ export const WATER_CANNON_LIFE = 0.5
 export const WATER_CANNON_SPREAD = 0.05 // rad jitter
 export const WATER_CANNON_WET_RADIUS = 26 // px radius of earth→grass wetting on a terrain hit
 
-// Incendiary — a short cone of flame that scorches grass→earth and lightly burns ships.
-export const INCENDIARY_PELLETS = 5
-export const INCENDIARY_SPREAD = 0.22 // rad half-cone
-export const INCENDIARY_DAMAGE = 7
-export const INCENDIARY_SPEED = 460
-export const INCENDIARY_LIFE = 0.4
-export const INCENDIARY_BURN_RADIUS = 22 // px radius of grass→earth scorch on a terrain hit
+// Flamethrower — a held-down stream of short-lived flame gouts: scorches grass→earth, lightly
+// burns ships, and SETS INFANTRY ALIGHT (see INFANTRY_BURN_*). Short reach, murder up close.
+export const FLAMETHROWER_PELLETS = 2 // gouts per pulse (the stream is the cooldown cadence)
+export const FLAMETHROWER_SPREAD = 0.18 // rad half-cone
+export const FLAMETHROWER_DAMAGE = 3
+export const FLAMETHROWER_SPEED = 340
+export const FLAMETHROWER_LIFE = 0.5
+export const FLAMETHROWER_BURN_RADIUS = 22 // px radius of grass→earth scorch on a terrain hit
 
 // ── Infantry (troop bay) ────────────────────────────────────────────────────
 // Every ship carries a troop bay: it loads troopers from its barracks, then the deploy key
@@ -379,8 +416,11 @@ export const INFANTRY_FALL_LETHAL = 300 // landing impact speed (px/s) above whi
 export const INFANTRY_SWIM_TIME = 6 // s a unit floats (can't shoot) in water before it drowns
 export const INFANTRY_SWIM_DRAG = 1.6 // horizontal damping coefficient while swimming (no rescuer near)
 export const INFANTRY_SWIM_SPEED = 34 // px/s a unit paddles toward a rescuing owner
-export const INFANTRY_PICKUP_RADIUS = 30 // px: a unit reaching this close to its slow owner is scooped up
-export const INFANTRY_PICKUP_SPEED = 90 // px/s: the owner must be slower than this to rescue a unit
+// Boarding is by TOUCH: the hulls must actually meet (ship radius + trooper radius) — "near" is
+// not aboard. The approach gate below is only how close a ship must hover for a unit to start
+// walking toward it; the scoop itself happens on contact with a landed / barely-drifting ship.
+export const INFANTRY_PICKUP_RADIUS = 30 // px vertical gate within which a landed unit walks toward its rescuer
+export const INFANTRY_PICKUP_SPEED = 60 // px/s: the ship must be landed or barely drifting to take a unit aboard
 export const INFANTRY_RAM_SPEED = 150 // px/s: a ship faster than this splatters any trooper it touches
 export const INFANTRY_RESCUE_RANGE = 260 // px: a unit only walks/swims toward an owner this near
 export const INFANTRY_SINK_TIME = 1.5 // s a drowned unit sinks and fades before vanishing
@@ -403,6 +443,30 @@ export const INFANTRY_SLIP_FRICTION = 1.2 // s^-1 decay of the slide (low → it
 export const INFANTRY_SLIP_STOP_SPEED = 4 // px/s below which a slide ends (snaps back to firm footing)
 // Drowning is saveable: the owner can still scoop a sinking trooper this soon after it goes under.
 export const INFANTRY_DROWN_RESCUE_WINDOW = 0.8 // s of the sink during which a rescue still works
+// Fire: a flame-gout hit sets a trooper alight instead of killing outright. A burning trooper
+// flails blindly (no fire discipline at all) until the timer burns down and it collapses; water
+// douses it — a swim, or a friendly water-cannon squirt, saves the unit. Fire is contagious:
+// it jumps to any trooper (either side) in near-contact, so everyone gives a burning man room.
+export const INFANTRY_BURN_TIME = 3 // s a trooper burns before it collapses
+export const INFANTRY_BURN_RUN_SPEED = 85 // px/s burning flail (faster than the panic sprint)
+export const INFANTRY_BURN_TURN_CHANCE = 0.03 // per-frame chance the flail reverses direction
+export const INFANTRY_FIRE_CATCH_RADIUS = 26 // px within which fire can jump trooper → trooper
+export const INFANTRY_FIRE_CATCH_CHANCE = 0.06 // per-frame chance of catching inside that radius
+export const INFANTRY_FIRE_PANIC_DIST = 110 // px: anyone alight (friend or foe) this close makes a trooper bolt
+// A burning engine is an open flame: the exhaust plume behind a thrusting ship's nozzle sets any
+// trooper it washes over alight (either side's — fire doesn't read uniforms), so infantry give a
+// hot engine room and a ship coming in to load must cut thrust and LAND before the men approach.
+export const AFTERBURNER_IGNITE_LEN = 30 // px the exhaust plume reaches behind the hull
+export const AFTERBURNER_IGNITE_RADIUS = 12 // px half-width of the plume's ignition zone
+export const RETRO_IGNITE_LEN = 18 // px each of the two smaller retro plumes reaches ahead of the nose
+export const RETRO_IGNITE_RADIUS = 8 // px half-width of a retro plume's ignition zone
+export const INFANTRY_THRUST_PANIC_DIST = 100 // px: a ship burning ANY engine this close makes a landed trooper bolt
+// EMP vs infantry: a popped orb seizes nearby troopers up — no walking, no firing — for the
+// orb's disable time (the man-portable EMP carries its own shorter time).
+export const EMP_STUN_RADIUS = 80 // px around the popped orb that stuns troopers
+// Water cannon vs infantry: the jet doesn't kill — it knocks a unit off its feet into a skid
+// (the ice-slide mechanic) and douses any fire on it. The skid impulse is the bullet's push.
+export const INFANTRY_WASH_PUSH_MAX = 240 // px/s cap on the accumulated water-jet skid
 
 // ── Man-portable heavy weapons (squad specialists) ──────────────────────────
 // One trooper in TROOP_SPECIALIST_CHANCE carries the squad's heavy kind — a scaled-down,
@@ -413,7 +477,7 @@ export type InfantryHeavySpec = { interval: number; kneel: boolean }
 export const INFANTRY_HEAVY: Record<WeaponKind, InfantryHeavySpec> = {
   [WeaponKind.SCATTERGUN]: { interval: 2.2, kneel: true },
   [WeaponKind.WATER_CANNON]: { interval: 2.0, kneel: true },
-  [WeaponKind.INCENDIARY]: { interval: 2.6, kneel: true },
+  [WeaponKind.FLAMETHROWER]: { interval: 2.6, kneel: true },
   [WeaponKind.SEEKER]: { interval: 4.5, kneel: true },
   [WeaponKind.RAIL]: { interval: 3.5, kneel: true },
   [WeaponKind.GRENADE]: { interval: 2.6, kneel: true }, // the original grenadier cadence
@@ -435,12 +499,12 @@ export const INFANTRY_WATER_PUSH = 60
 export const INFANTRY_WATER_SPEED = 400
 export const INFANTRY_WATER_DAMAGE = 1
 export const INFANTRY_WATER_LIFE = 0.5
-// Incendiary trooper — a short flame fan that scorches grass.
-export const INFANTRY_FIRE_PELLETS = 3
-export const INFANTRY_FIRE_SPREAD = 0.2
-export const INFANTRY_FIRE_DAMAGE = 4
-export const INFANTRY_FIRE_SPEED = 380
-export const INFANTRY_FIRE_LIFE = 0.4
+// Flamethrower trooper — a short flame fan that scorches grass and sets infantry alight.
+export const INFANTRY_FLAME_PELLETS = 3
+export const INFANTRY_FLAME_SPREAD = 0.2
+export const INFANTRY_FLAME_DAMAGE = 2
+export const INFANTRY_FLAME_SPEED = 320
+export const INFANTRY_FLAME_LIFE = 0.45
 // Seeker trooper — one shoulder-launched homing missile per brace.
 export const INFANTRY_SEEKER_SPEED = 300
 export const INFANTRY_SEEKER_TURN = 2.2
@@ -561,6 +625,10 @@ export const POOL_MAX_RISE = 30 // cells a basin rim may sit above the hit
 export const POOL_MAX_DEPTH = 40 // cells below the hit searched for the basin floor
 export const POOL_MIN_WIDTH = 2 // cells: ignore puddles narrower than this
 export const MAX_WATER_BODIES = 24 // cap on authored + dynamic water bodies
+// Pools fill GRADUALLY: each water-cannon droplet pours a fixed cross-section area into the
+// basin it lands in (the level climbs by area/width per hit, fast in a gully, slow in a wide
+// bowl), capped at the basin's spill level — never the whole basin from a single squirt.
+export const POOL_FILL_AREA = 700 // px² of water one droplet adds to its basin
 
 // ── Destructible terrain (voxel grid) ───────────────────────────────────────
 // Destructible materials (rock/grass/ice) are modeled as a grid of small cells. A shot
@@ -574,7 +642,7 @@ export const CARVE_RADIUS_BASE = 5 // px crater radius floor (even a tiny pellet
 export const CARVE_RADIUS_SCALE = 2.4 // crater radius = projectile radius × this + base (bigger shot → bigger hole)
 export const DEBRIS_TERMINAL = 520 // px/s terminal fall speed of a loosed chunk
 export const DEBRIS_MAX_BODIES = 32 // safety cap on simultaneous falling chunks (excess is discarded)
-// Surfaces transform without touching structure: an incendiary scorches grass→bare earth on hit;
+// Surfaces transform without touching structure: a flamethrower scorches grass→bare earth on hit;
 // the water cannon wets bare earth, which regrows grass after SURFACE_REGROW_TIME of being wet.
 export const SURFACE_REGROW_TIME = 6 // s a wetted bare-earth cell takes to regrow grass
 

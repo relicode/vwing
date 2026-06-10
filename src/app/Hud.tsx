@@ -163,6 +163,25 @@ const Hud = ({ status }: HudProps) => {
           ENEMY BASE {status.enemyCapture}%
         </Typography>
       ) : null}
+      {status.respawnIn > 0 ? (
+        <Typography
+          sx={{
+            position: 'absolute',
+            top: '44%',
+            left: 0,
+            right: 0,
+            textAlign: 'center',
+            pointerEvents: 'none',
+            fontSize: 20,
+            fontWeight: 900,
+            letterSpacing: '0.24em',
+            color: 'primary.main',
+            textShadow: '0 0 16px currentColor',
+          }}
+        >
+          REINFORCEMENT IN {status.respawnIn}
+        </Typography>
+      ) : null}
     </>
   )
 }

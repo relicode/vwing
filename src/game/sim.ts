@@ -10,8 +10,14 @@ import {
   Color,
   DEATHMATCH_FRAG_SCORE,
   DeviceKind,
-  INCENDIARY_BURN_RADIUS,
+  FLAMETHROWER_BURN_RADIUS,
+  INFANTRY_BURN_TIME,
+  INFANTRY_WASH_PUSH_MAX,
   MAX_WATER_BODIES,
+  POOL_FILL_AREA,
+  RESPAWN_DELAY_BASE,
+  RESPAWN_DELAY_GROWTH,
+  RESPAWN_DELAY_MAX,
   SHAKE_DECAY,
   SHIP_DEATH_SHAKE,
   SHIP_FIRE_INTERVAL,
@@ -31,6 +37,7 @@ import {
   THRUST_PARTICLE_SPEED,
   TROOP_BAY_CAPACITY,
   TROOP_DEPLOY_COOLDOWN,
+  VOXEL_CELL,
   WATER_CANNON_WET_RADIUS,
   type WeaponKind,
   WORLD_HEIGHT,
@@ -38,23 +45,28 @@ import {
 } from '$/game/constants'
 import { resolveInfantryContacts, updateDevices } from '$/game/devices'
 import type { Input } from '$/game/input'
+import { clamp } from '$/game/math'
 import { spawnExplosion, spawnPuff, updateParticles } from '$/game/particles'
 import { createRng } from '$/game/rng'
 import { respawnShipAt, type ShipEnv, updateShip } from '$/game/ship'
 import { resolveShipTerrain } from '$/game/terrain'
 import { createTerrain } from '$/game/terrain-map'
 import { spawnTrooper } from '$/game/troops'
-import type { Bullet, Ship, Vec2, World } from '$/game/types'
+import type { Block, Bullet, Ship, Vec2, World } from '$/game/types'
 import {
   burnSurface,
   carveVoxel,
   createVoxelTerrain,
   findPool,
+  moveBedrock,
+  restoreVoxel,
+  snapshotVoxel,
   stepVoxel,
+  type VoxelSnapshot,
   voxelToBlocks,
   wetSurface,
 } from '$/game/voxel'
-import { addPool, submersion, waterSurfaceAt } from '$/game/water'
+import { raisePool, submersion, waterSurfaceAt } from '$/game/water'
 import { fireSecondary } from '$/game/weapons'
 
 // Pairs a ship with whatever drives it plus its match bookkeeping. The sim owns these;
@@ -93,6 +105,11 @@ export type Sim = {
   addCombatant: (combatant: Combatant) => void
   removeCombatant: (id: number) => void
   getCombatant: (id: number) => Combatant | undefined
+  respawnIn: (id: number) => number // s until the combatant's ship re-enters; 0 = alive (or gone)
+  // Terrain persistence: the carved voxel state as plain JSON, and its overlay onto a sim
+  // rebuilt from the SAME world seed (false = snapshot didn't fit; nothing was touched).
+  serializeTerrain: () => VoxelSnapshot
+  restoreTerrain: (snap: VoxelSnapshot) => boolean
 }
 
 // A blank arena: seeded rng + the procedurally generated terrain, with empty entity lists. Ships
@@ -161,6 +178,11 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
   if (config.mode === SimMode.CAMPAIGN) world.bases = createCampaignBases()
   const submergedShips = new Set<number>() // ids currently underwater, for splash-on-crossing
   const eliminated = new Set<number>() // ids removed from play this run (CAMPAIGN, out of lives)
+  // Dying costs time, and it compounds: the wreck leaves the sky and the combatant waits out a
+  // delay that grows with every death already suffered (the reinforcement clock).
+  const awaiting = new Set<number>() // ids whose ships are out of the world, waiting to respawn
+  const pending: { combatant: Combatant; at: number }[] = []
+  const deathCounts = new Map<number, number>()
   // Read `water` live: pooling can replace world.water with a new array mid-run, so a one-time
   // snapshot would go stale and ship buoyancy would miss freshly pooled water.
   const env: ShipEnv = {
@@ -179,6 +201,39 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
   }
   refreshTerrain()
 
+  // Each base's metal landing slab (the bedrock anchor whose top sits on the pad line) and its
+  // resting height, resolved once — the float step below rides these on rising water.
+  const padSlabs = new Map<number, { slab: Block; rest: number }>()
+  for (const base of world.bases) {
+    const slab = voxel.bedrock.find((b) => base.x >= b.x && base.x < b.x + b.w && Math.abs(b.y - base.y) < VOXEL_CELL)
+    if (slab) padSlabs.set(base.owner, { slab, rest: slab.y })
+  }
+
+  // A pool lapping over a pad makes the slab FLOAT: it steps up (whole cells, so the grounding
+  // mask stays aligned) until its top clears the waterline, carrying the barracks line and
+  // everyone standing on deck with it — an indestructible base never drowns either.
+  const floatBases = (): void => {
+    for (const base of world.bases) {
+      const pad = padSlabs.get(base.owner)
+      if (!pad) continue
+      const surface = waterSurfaceAt(world.water, base.x, pad.slab.y)
+      let target = pad.rest
+      if (surface !== undefined && surface < pad.rest) target = Math.floor(surface / VOXEL_CELL) * VOXEL_CELL
+      if (target === pad.slab.y) continue
+      const oldTop = pad.slab.y
+      const delta = target - oldTop
+      moveBedrock(voxel, pad.slab, target)
+      base.y = target
+      for (const d of world.devices) {
+        if (d.kind !== DeviceKind.INFANTRY || !d.attached) continue
+        if (d.x <= pad.slab.x || d.x >= pad.slab.x + pad.slab.w) continue
+        if (Math.abs(d.y + d.radius - oldTop) > 6) continue
+        d.y += delta // the deck rises under their feet — ride it, don't get embedded by it
+      }
+      terrainDirty = true
+    }
+  }
+
   const getCombatant = (id: number): Combatant | undefined => combatants.find((c) => c.ship.id === id)
 
   // The open spawn anchor farthest from every live enemy (so a respawn isn't a face-off).
@@ -192,10 +247,11 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     world.devices = world.devices.filter((device) => Math.hypot(device.x - x, device.y - y) > SHIP_SPAWN_CLEAR_RADIUS)
   }
 
-  // Blow up a downed ship: credit the killer, then respawn it (or, in CAMPAIGN, eliminate it
-  // once its lives run out). Guarded so a ship already reaped this frame isn't killed twice.
+  // Blow up a downed ship: credit the killer, then queue its respawn (or, in CAMPAIGN,
+  // eliminate it once its lives run out). Guarded so a ship already reaped this frame isn't
+  // killed twice.
   const killShip = (victim: Ship, killerId: number | undefined, events: DeathEvent[]): void => {
-    if (eliminated.has(victim.id)) return
+    if (eliminated.has(victim.id) || awaiting.has(victim.id)) return
     const vc = getCombatant(victim.id)
     if (!vc) return
     const deathX = victim.x // captured before respawn relocates the ship (for the death event)
@@ -221,11 +277,15 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
       // Drop the wreck from the world so nothing keeps targeting (or drawing) a ghost.
       world.ships = world.ships.filter((ship) => ship.id !== victim.id)
     } else {
-      const spawn = config.mode === SimMode.DEATHMATCH ? pickSpawn(victim.id) : vc.spawn
-      respawnShipAt(victim, spawn.x, spawn.y, world.rng, config.forcedWeapon)
-      refillBay(victim, config.mode)
+      // The reinforcement clock: the wreck leaves the sky and the respawn waits — longer for
+      // every death already suffered this run.
+      const deaths = (deathCounts.get(victim.id) ?? 0) + 1
+      deathCounts.set(victim.id, deaths)
+      const delay = Math.min(RESPAWN_DELAY_MAX, RESPAWN_DELAY_BASE + (deaths - 1) * RESPAWN_DELAY_GROWTH)
+      awaiting.add(victim.id)
+      pending.push({ combatant: vc, at: world.time + delay })
+      world.ships = world.ships.filter((ship) => ship.id !== victim.id)
       victim.lastHitBy = undefined
-      clearSpawnArea(victim.x, victim.y)
     }
     events.push({
       victimId: victim.id,
@@ -238,10 +298,11 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
   }
 
   // A shot striking an enemy ship: spark, damage, attribute, and reap on hull depletion.
-  // Returns true when the bullet is spent. Invulnerable / eliminated ships and the firer skip.
+  // Returns true when the bullet is spent. Invulnerable / eliminated / respawn-waiting ships
+  // and the firer skip.
   const bulletHitShip = (bullet: Bullet, events: DeathEvent[]): boolean => {
     for (const { ship } of combatants) {
-      if (ship.id === bullet.owner || ship.invuln > 0 || eliminated.has(ship.id)) continue
+      if (ship.id === bullet.owner || ship.invuln > 0 || eliminated.has(ship.id) || awaiting.has(ship.id)) continue
       if (!circlesOverlap(bullet.x, bullet.y, bullet.radius, ship.x, ship.y, ship.radius)) continue
       applyDamage(ship, bullet.damage)
       ship.lastHitBy = bullet.owner
@@ -265,16 +326,35 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     const surviving: Bullet[] = []
     for (const bullet of world.bullets) {
       if (bulletHitShip(bullet, events)) continue
+      // Friendly fire is real: a bullet hits whatever trooper it meets, whoever fired it
+      // (infantry fire from the muzzle, clear of their own bodies, and hold the trigger when a
+      // friend stands in the lane — see devices.ts).
       const unit = world.devices.findIndex(
-        (d) =>
-          d.kind === DeviceKind.INFANTRY &&
-          d.owner !== bullet.owner &&
-          circlesOverlap(bullet.x, bullet.y, bullet.radius, d.x, d.y, d.radius)
+        (d) => d.kind === DeviceKind.INFANTRY && circlesOverlap(bullet.x, bullet.y, bullet.radius, d.x, d.y, d.radius)
       )
       if (unit >= 0) {
         const inf = world.devices[unit]
-        spawnExplosion(world.particles, inf.x, inf.y, Color.BLOOD, world.rng, 6)
-        world.devices.splice(unit, 1)
+        if (inf.kind === DeviceKind.INFANTRY && bullet.wet) {
+          // The water jet doesn't kill a trooper — it douses any fire on it and washes it off
+          // its feet into a skid (airborne/swimming units just get shoved).
+          inf.burning = 0
+          const dir = bullet.vx >= 0 ? 1 : -1
+          if (inf.attached) {
+            inf.slide = clamp(inf.slide + dir * (bullet.push ?? 0), -INFANTRY_WASH_PUSH_MAX, INFANTRY_WASH_PUSH_MAX)
+            inf.kneel = 0 // knocked out of any brace
+          } else {
+            inf.vx += dir * (bullet.push ?? 0) * 0.5
+          }
+          spawnExplosion(world.particles, inf.x, inf.y, Color.WATER_EDGE, world.rng, 5)
+        } else if (inf.kind === DeviceKind.INFANTRY && bullet.burn) {
+          // A flame gout sets the trooper alight rather than killing outright — the burn
+          // timer (and the panicked flailing) takes it from here. Wet units can't catch.
+          if (inf.swim <= 0 && inf.sinking <= 0) inf.burning = INFANTRY_BURN_TIME
+          spawnExplosion(world.particles, inf.x, inf.y, Color.THRUST, world.rng, 5)
+        } else {
+          spawnExplosion(world.particles, inf.x, inf.y, Color.BLOOD, world.rng, 6)
+          world.devices.splice(unit, 1)
+        }
         continue
       }
       const hit = world.blocks.findIndex((b) =>
@@ -283,16 +363,17 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
       if (hit >= 0) {
         const block = world.blocks[hit]
         if (bullet.burn) {
-          // Incendiary: scorch grass → bare earth (surface only, no carve), with a lick of flame.
-          if (burnSurface(voxel, bullet.x, bullet.y, INCENDIARY_BURN_RADIUS)) terrainDirty = true
+          // Flamethrower: scorch grass → bare earth (surface only, no carve), with a lick of flame.
+          if (burnSurface(voxel, bullet.x, bullet.y, FLAMETHROWER_BURN_RADIUS)) terrainDirty = true
           spawnExplosion(world.particles, bullet.x, bullet.y, Color.THRUST, world.rng, 7)
         } else if (bullet.wet) {
           // Water cannon: wet bare earth → grass (regrows over time, no carve), and if the impact
-          // sits in a cupped basin, pour a pool there (merging into any adjacent body).
+          // sits in a cupped basin, POUR a droplet's worth into it — the level climbs gradually
+          // toward the spill line (merging into any adjacent body), never all at once.
           wetSurface(voxel, bullet.x, bullet.y, WATER_CANNON_WET_RADIUS)
-          const pool = findPool(voxel, bullet.x, bullet.y)
-          if (pool) {
-            const pooled = addPool(world.water, pool, MAX_WATER_BODIES)
+          const basin = findPool(voxel, bullet.x, bullet.y)
+          if (basin) {
+            const pooled = raisePool(world.water, basin, POOL_FILL_AREA, MAX_WATER_BODIES)
             if (pooled !== world.water) {
               world.water = pooled
               terrainDirty = true // water is drawn in the terrainVersion-cached layer
@@ -317,7 +398,7 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
   // Land/bounce/crash each ship against terrain; only a hard crash (once invuln lapses) kills.
   const resolveTerrain = (dt: number, events: DeathEvent[]): void => {
     for (const { ship } of combatants) {
-      if (eliminated.has(ship.id)) continue
+      if (eliminated.has(ship.id) || awaiting.has(ship.id)) continue
       if (resolveShipTerrain(ship, world.blocks, dt) === 'crash' && ship.invuln <= 0) killShip(ship, undefined, events)
     }
   }
@@ -326,8 +407,20 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     const events: DeathEvent[] = []
     if (world.shake > 0) world.shake = Math.max(0, world.shake - SHAKE_DECAY * dt)
     world.time += dt
+    // Reinforcements whose wait has elapsed re-enter (the spawn point is picked NOW, against the
+    // sky as it is, not as it was at the moment of death).
+    for (let i = pending.length - 1; i >= 0; i -= 1) {
+      if (world.time < pending[i].at) continue
+      const { combatant: vc } = pending.splice(i, 1)[0]
+      awaiting.delete(vc.ship.id)
+      const spawn = config.mode === SimMode.DEATHMATCH ? pickSpawn(vc.ship.id) : vc.spawn
+      respawnShipAt(vc.ship, spawn.x, spawn.y, world.rng, config.forcedWeapon)
+      refillBay(vc.ship, config.mode)
+      clearSpawnArea(vc.ship.x, vc.ship.y)
+      world.ships.push(vc.ship)
+    }
     for (const { ship, input: control } of combatants) {
-      if (eliminated.has(ship.id)) continue
+      if (eliminated.has(ship.id) || awaiting.has(ship.id)) continue
       updateShip(ship, control, dt, env)
       if (ship.thrusting) {
         const bx = -Math.cos(ship.angle)
@@ -341,6 +434,21 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
           Color.THRUST,
           world.rng,
           THRUST_PARTICLE_LIFE
+        )
+      }
+      if (ship.reversing) {
+        // The retro nozzles spit a smaller ember stream forward past the nose.
+        const fx = Math.cos(ship.angle)
+        const fy = Math.sin(ship.angle)
+        spawnPuff(
+          world.particles,
+          ship.x + fx * ship.radius,
+          ship.y + fy * ship.radius,
+          fx * THRUST_PARTICLE_SPEED * 0.7,
+          fy * THRUST_PARTICLE_SPEED * 0.7,
+          Color.THRUST,
+          world.rng,
+          THRUST_PARTICLE_LIFE * 0.7
         )
       }
       if (ship.health < SHIP_SMOKE_HEALTH && ship.invuln <= 0) {
@@ -374,6 +482,7 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     resolveTerrain(dt, events)
     resolveInfantryContacts(world)
     stepBases(world, dt)
+    floatBases()
     // Advance loosed terrain chunks; rebuild the derived blocks if the terrain changed this frame.
     const debrisMoved = stepVoxel(voxel, dt)
     if (terrainDirty || debrisMoved) {
@@ -397,7 +506,35 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     world.devices = world.devices.filter((device) => device.owner !== id) // drop orphaned mines/troopers
     eliminated.delete(id)
     submergedShips.delete(id)
+    awaiting.delete(id)
+    deathCounts.delete(id)
+    const queued = pending.findIndex((p) => p.combatant.ship.id === id)
+    if (queued >= 0) pending.splice(queued, 1)
   }
 
-  return { world, combatants, config, step, addCombatant, removeCombatant, getCombatant }
+  const respawnIn = (id: number): number => {
+    const queued = pending.find((p) => p.combatant.ship.id === id)
+    return queued ? Math.max(0, queued.at - world.time) : 0
+  }
+
+  const serializeTerrain = (): VoxelSnapshot => snapshotVoxel(voxel)
+
+  const restoreTerrain = (snap: VoxelSnapshot): boolean => {
+    if (!restoreVoxel(voxel, snap)) return false
+    refreshTerrain()
+    return true
+  }
+
+  return {
+    world,
+    combatants,
+    config,
+    step,
+    addCombatant,
+    removeCombatant,
+    getCombatant,
+    respawnIn,
+    serializeTerrain,
+    restoreTerrain,
+  }
 }
