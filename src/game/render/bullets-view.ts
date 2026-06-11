@@ -2,6 +2,7 @@ import { Graphics, Particle, ParticleContainer, Rectangle, type Renderer, Textur
 
 import { Color, FLAMETHROWER_LIFE, WORLD_HEIGHT, WORLD_WIDTH } from '$/game/constants'
 import { clamp } from '$/game/math'
+import { PALETTE_FLASH, type PaletteSlots } from '$/game/render/owner-colors'
 import type { Bullet } from '$/game/types'
 
 // GPU bullet pass: primary shots and flame gouts batched through one ParticleContainer over a
@@ -14,7 +15,7 @@ const GLOW_STEPS = 8 // concentric rings approximating the radial falloff of the
 
 export type BulletsView = {
   container: ParticleContainer<Particle>
-  draw: (bullets: Bullet[], selfId: number) => void
+  draw: (bullets: Bullet[], selfId: number, slots?: PaletteSlots) => void
   destroy: () => void
 }
 
@@ -62,7 +63,7 @@ export const createBulletsView = (renderer: Renderer): BulletsView => {
     used += 1
   }
 
-  const draw = (bullets: Bullet[], selfId: number): void => {
+  const draw = (bullets: Bullet[], selfId: number, slots?: PaletteSlots): void => {
     used = 0
     for (const bullet of bullets) {
       if (bullet.burn) {
@@ -76,7 +77,14 @@ export const createBulletsView = (renderer: Renderer): BulletsView => {
         emit(hard, bullet.x, bullet.y, r * 0.45, Color.SHIP_CORE, Math.max(0, 0.9 - age * 1.5))
         continue
       }
-      const color = bullet.color ?? (bullet.owner === selfId ? Color.BULLET : Color.BULLET_ENEMY)
+      // Online (a palette map in play): a shot carries its seat's flash hue, so tracers read
+      // per-player; offline keeps the legacy self/enemy pair exactly.
+      const owned = slots
+        ? (PALETTE_FLASH[slots.get(bullet.owner) ?? 1] ?? Color.BULLET_ENEMY)
+        : bullet.owner === selfId
+          ? Color.BULLET
+          : Color.BULLET_ENEMY
+      const color = bullet.color ?? owned
       emit(soft, bullet.x, bullet.y, bullet.radius * 2.2, color, 0.18) // soft halo
       emit(hard, bullet.x, bullet.y, bullet.radius, color, 1)
     }
