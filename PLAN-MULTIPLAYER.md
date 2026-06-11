@@ -13,7 +13,13 @@ lands. If a session dies mid-phase, the feature branch holds the WIP.
 
 - [x] Phase 1 — Online state resurrection — branch `feature/online-state-resurrection` (merged `5dae0b5`)
 - [x] Phase 2 — Per-player colors — branch `feature/online-player-colors` (merged `489e1c9`)
-- [ ] Phase 3 — Reconnect + kill feed + logging — branch `feature/online-reconnect-ux`
+- [x] Phase 3 — Reconnect + kill feed + logging — branch `feature/online-reconnect-ux` (merged `85312be`)
+
+**All phases complete (2026-06-11).** Manual QA still recommended: `bun run dev:all`, two
+`bun run chrome` tabs in one room (distinct hulls/troopers/tracers/minimap dots + the white
+self-ring in each), kill the `vwing:srv` process mid-match and restart it (the client banner
+counts re-dials, then the seat comes back with score/color intact + the welcome-back toast),
+and eyeball the offline campaign for pixel-identical colors.
 
 ## Settled decisions
 
