@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import type { RedisClient } from 'bun'
 
 import {
   Color,
@@ -13,9 +14,10 @@ import {
 import type { Device } from '$/game/types'
 import { decodeClient, gameNameKey, MsgType, pilotNameKey, sanitizeGameName } from '$/net/protocol'
 import { startServer } from '$/server/index'
+import { createLog } from '$/server/log'
 import { parsePersisted } from '$/server/restore'
 import { createRoom, JoinRefusal, type JoinResult, parseRestore, type Room } from '$/server/room'
-import { createStore, STATE_TTL } from '$/server/store'
+import { createRedisStore, createStore, STATE_TTL } from '$/server/store'
 
 // Unwrap a join that the test expects to succeed (a refusal is a test failure, not a branch).
 const seat = (result: JoinResult): { shipId: number; reclaimed: boolean } => {
@@ -222,7 +224,14 @@ describe('room bench (disconnect → same-name reclaim, no auth)', () => {
 
     room.leave(a.shipId)
     expect(room.playerCount()).toBe(0)
-    expect(room.players()).toContainEqual({ id: a.shipId, name: 'Maverick', score: 7, palette: 0, connected: false })
+    expect(room.players()).toContainEqual({
+      id: a.shipId,
+      name: 'Maverick',
+      score: 7,
+      palette: 0,
+      respawnIn: 0,
+      connected: false,
+    })
 
     const back = seat(room.join('MAVERICK')) // identity is the NFKC casefold, not the spelling
     expect(back).toEqual({ shipId: a.shipId, reclaimed: true })
@@ -513,6 +522,48 @@ describe('palette slots (server-assigned seat colors)', () => {
     expect(slotOf(twin, backA.shipId)).toBe(0) // A kept its slot across the restart
     const backB = seat(twin.join('b'))
     expect(slotOf(twin, backB.shipId)).toBe(1) // B was reassigned the lowest free, not 99
+  })
+})
+
+describe('players() respawn clock on the wire', () => {
+  test('respawnIn counts a downed seat to re-entry; flying and benched rows carry 0', () => {
+    const room = createRoom('Clock2')
+    const a = seat(room.join('Viper'))
+    const b = seat(room.join('Jester'))
+    expect(room.players().every((p) => p.respawnIn === 0)).toBe(true)
+    downShip(room, a.shipId)
+    const downed = room.players().find((p) => p.id === a.shipId)?.respawnIn ?? 0
+    expect(downed).toBeGreaterThan(0)
+    for (let i = 0; i < 30; i += 1) room.step(1 / 30)
+    expect(room.players().find((p) => p.id === a.shipId)?.respawnIn).toBeLessThan(downed) // counting down
+    room.leave(b.shipId)
+    expect(room.players().find((p) => p.id === b.shipId)?.respawnIn).toBe(0) // benched rows carry 0
+    for (let i = 0; i < Math.ceil((RESPAWN_DELAY_BASE + 1) * 30); i += 1) room.step(1 / 30)
+    expect(room.players().find((p) => p.id === a.shipId)?.respawnIn).toBe(0) // flying again
+  })
+})
+
+describe('store outage → recovery (one transition line each)', () => {
+  test('a flaky Redis client logs exactly one loss and one recovery', async () => {
+    const lines: string[] = []
+    let failures = 2
+    const fake = {
+      set: async () => {
+        if (failures > 0) {
+          failures -= 1
+          throw new Error('boom')
+        }
+        return 'OK'
+      },
+      close: () => {},
+    } as unknown as RedisClient
+    const store = createRedisStore(fake, createLog('store', { sink: (_level, line) => void lines.push(line) }))
+    await store.saveState('a', '{}') // fail → the one loss line
+    await store.saveState('a', '{}') // fail again → suppressed
+    await store.saveState('a', '{}') // success → the one recovery line
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toContain('Redis lost')
+    expect(lines[1]).toContain('Redis restored')
   })
 })
 

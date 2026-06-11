@@ -1,10 +1,14 @@
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
+import Chip from '@mui/material/Chip'
+import Snackbar from '@mui/material/Snackbar'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
+import { useEffect, useState } from 'react'
 
-import { PLAYER_PALETTE, SECONDARY_MAX_CHARGE, WEAPON_CONFIG } from '$/game/constants'
+import { NET_FEED_TTL, PLAYER_PALETTE, SECONDARY_MAX_CHARGE, WEAPON_CONFIG } from '$/game/constants'
 import type { NetStatus } from '$/net/client'
+import type { FeedEntry } from '$/net/feed'
 
 type OnlineHudProps = {
   status: NetStatus
@@ -14,6 +18,40 @@ type OnlineHudProps = {
 // The seat's palette slot as a CSS hex (out-of-range falls back to the enemy rose, like the canvas).
 const chipHex = (slot: number): string =>
   `#${(PLAYER_PALETTE[slot] ?? PLAYER_PALETTE[1]).toString(16).padStart(6, '0')}`
+
+// One kill-feed line: names tinted by their seats' colors. The fade is a CSS animation over the
+// line's whole TTL (holds, then dims out) so no re-render is needed to age it.
+const FeedLine = ({ entry }: { entry: FeedEntry }) => (
+  <Typography
+    sx={{
+      fontSize: 12,
+      fontWeight: 600,
+      textAlign: 'right',
+      textShadow: '0 0 6px rgba(0,0,0,0.8)',
+      '@keyframes feedFade': { '0%': { opacity: 1 }, '70%': { opacity: 1 }, '100%': { opacity: 0 } },
+      animation: `feedFade ${NET_FEED_TTL}s linear forwards`,
+    }}
+  >
+    {entry.killer ? (
+      <>
+        <Box component="span" sx={{ color: chipHex(entry.killer.palette) }}>
+          {entry.killer.name}
+        </Box>
+        <Box component="span" sx={{ color: 'text.secondary' }}>
+          {' downed '}
+        </Box>
+      </>
+    ) : null}
+    <Box component="span" sx={{ color: chipHex(entry.victim.palette) }}>
+      {entry.victim.name}
+    </Box>
+    {entry.killer ? null : (
+      <Box component="span" sx={{ color: 'text.secondary' }}>
+        {' crashed'}
+      </Box>
+    )}
+  </Typography>
+)
 
 const Scoreboard = ({ status }: { status: NetStatus }) => {
   const rows = [...status.players].sort((a, b) => b.score - a.score).slice(0, 8)
@@ -70,6 +108,11 @@ const Scoreboard = ({ status }: { status: NetStatus }) => {
 
 const OnlineHud = ({ status, onLeave }: OnlineHudProps) => {
   const ready = status.charge >= (WEAPON_CONFIG[status.weapon].cost / SECONDARY_MAX_CHARGE) * 100
+  // The welcome-back toast opens on each reclaimed WELCOME (reclaims only ever increments).
+  const [toastFor, setToastFor] = useState(0)
+  useEffect(() => {
+    if (status.reclaims > 0) setToastFor(status.reclaims)
+  }, [status.reclaims])
   return (
     <Box
       sx={{
@@ -93,6 +136,9 @@ const OnlineHud = ({ status, onLeave }: OnlineHudProps) => {
           Leave
         </Button>
         <Typography sx={{ fontSize: 11, letterSpacing: '0.18em', color: 'text.secondary' }}>{status.game}</Typography>
+        {status.stalled ? (
+          <Chip label="UNSTABLE" size="small" color="secondary" variant="outlined" sx={{ letterSpacing: '0.18em' }} />
+        ) : null}
       </Stack>
 
       <Stack spacing={0.5} sx={{ alignItems: 'center', pt: 0.25 }}>
@@ -120,7 +166,41 @@ const OnlineHud = ({ status, onLeave }: OnlineHudProps) => {
         </Box>
       </Stack>
 
-      <Scoreboard status={status} />
+      <Stack spacing={1} sx={{ alignItems: 'flex-end' }}>
+        <Scoreboard status={status} />
+        <Stack spacing={0.25} sx={{ alignItems: 'flex-end' }}>
+          {status.feed.map((entry) => (
+            <FeedLine key={entry.id} entry={entry} />
+          ))}
+        </Stack>
+      </Stack>
+
+      {status.respawnIn > 0 ? (
+        <Typography
+          sx={{
+            position: 'absolute',
+            top: '44%',
+            left: 0,
+            right: 0,
+            textAlign: 'center',
+            fontSize: 20,
+            fontWeight: 900,
+            letterSpacing: '0.24em',
+            color: 'primary.main',
+            textShadow: '0 0 16px currentColor',
+          }}
+        >
+          REINFORCEMENTS IN {Math.ceil(status.respawnIn)}
+        </Typography>
+      ) : null}
+
+      <Snackbar
+        open={toastFor > 0}
+        autoHideDuration={4000}
+        onClose={() => setToastFor(0)}
+        message="Welcome back — seat restored"
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      />
     </Box>
   )
 }

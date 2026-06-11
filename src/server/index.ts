@@ -8,7 +8,16 @@ import {
   NET_PERSIST_EVERY,
   NET_TICK_RATE,
 } from '$/game/constants'
-import { decodeClient, encode, gameNameKey, JoinIntent, MsgType, sanitizeGameName } from '$/net/protocol'
+import {
+  decodeClient,
+  encode,
+  gameNameKey,
+  JoinIntent,
+  MsgType,
+  NAME_TAKEN_REASON,
+  sanitizeGameName,
+} from '$/net/protocol'
+import { createLog } from '$/server/log'
 import { parsePersisted, type RoomRestore } from '$/server/restore'
 import { createRoom, JoinRefusal, type Room } from '$/server/room'
 import type { Store } from '$/server/store'
@@ -33,6 +42,7 @@ export type ServerOptions = { port: number; distDir?: string }
 export type GameServer = { server: Server<ConnData>; stop: () => Promise<void> }
 
 export const startServer = (store: Store, options: ServerOptions): GameServer => {
+  const log = createLog('server')
   const rooms = new Map<string, RoomState>()
   const tickMs = 1000 / NET_TICK_RATE
   const dt = 1 / NET_TICK_RATE
@@ -59,7 +69,7 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
       ? `: ${restored.restore.roster?.length ?? 0} benched pilots, ${restored.restore.devices?.length ?? 0} devices` +
         (restored.degraded.length > 0 ? ` (degraded: ${restored.degraded.join(', ')})` : '')
       : ''
-    console.log(`[server] room ${restored ? 'resumed' : 'created'}: "${displayName}"${detail}`)
+    log.info(`room ${restored ? 'resumed' : 'created'}: "${displayName}"${detail}`)
     return created
   }
 
@@ -76,7 +86,7 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
     // Hibernate, don't delete: the final write leaves the room resurrectable until the store's
     // state TTL lapses — the single authority on when a game is truly gone.
     void store.saveState(key, rs.room.persisted())
-    console.log(`[server] room hibernated: "${rs.room.name}"`)
+    log.info(`room hibernated: "${rs.room.name}"`)
   }
 
   // ── Static serving (production single-origin): everything that isn't /api or /ws falls
@@ -98,7 +108,15 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
       // The lobby reads from the store, so Redis is the source of truth for "what games exist"
       // (and survives across instances). With the in-memory fallback this mirrors the live rooms.
       if (url.pathname === '/api/games') return jsonResponse({ games: await store.listGames() })
-      if (url.pathname === '/api/health') return jsonResponse({ ok: true, store: store.kind, rooms: rooms.size })
+      if (url.pathname === '/api/health') {
+        // Per-room rows for curl-level DX: who's live, and how old each match is (sim seconds).
+        const live = [...rooms.entries()].map(([key, rs]) => ({
+          key,
+          players: rs.room.playerCount(),
+          ageSeconds: Math.round(rs.room.sim.world.time),
+        }))
+        return jsonResponse({ ok: true, store: store.kind, rooms: live })
+      }
 
       if (url.pathname === '/ws') {
         const game = sanitizeGameName(url.searchParams.get('game') ?? '', NET_GAME_NAME_MAX)
@@ -140,8 +158,8 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
         const rs = existing ?? createRoomState(key, game, restored)
         const seat = rs.room.join(ws.data.name)
         if ('refusal' in seat) {
-          const reason =
-            seat.refusal === JoinRefusal.NAME_TAKEN ? 'That pilot is already flying in this game.' : 'Game is full'
+          const reason = seat.refusal === JoinRefusal.NAME_TAKEN ? NAME_TAKEN_REASON : 'Game is full'
+          log.info(`"${ws.data.name}" refused from "${rs.room.name}": ${seat.refusal}`)
           ws.send(encode({ t: MsgType.REJECTED, reason }))
           ws.close()
           return
@@ -164,8 +182,8 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
           maxPlayers: NET_MAX_PLAYERS,
         })
         const verb = intent === JoinIntent.HOST ? 'hosted' : 'joined'
-        console.log(
-          `[server] "${ws.data.name}" ${verb} "${rs.room.name}" as #${seat.shipId}${seat.reclaimed ? ' (reclaimed seat)' : ''} (${rs.room.playerCount()} in room)`
+        log.info(
+          `"${ws.data.name}" ${verb} "${rs.room.name}" as #${seat.shipId}${seat.reclaimed ? ' (reclaimed seat)' : ''} (${rs.room.playerCount()} in room)`
         )
       },
       message: (ws: ServerWebSocket<ConnData>, raw) => {
@@ -188,7 +206,7 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
           maxPlayers: NET_MAX_PLAYERS,
         })
         if (rs.room.isEmpty()) rs.emptySince = tickCount
-        console.log(`[server] "${ws.data.name}" left "${rs.room.name}" (${rs.room.playerCount()} remain)`)
+        log.info(`"${ws.data.name}" left "${rs.room.name}" (${rs.room.playerCount()} remain)`)
       },
     },
   })
@@ -198,6 +216,7 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
   const emptyTtlTicks = NET_EMPTY_ROOM_TTL * NET_TICK_RATE
   const loop = setInterval(() => {
     tickCount += 1
+    const passStart = performance.now()
     for (const [key, rs] of rooms) {
       if (rs.room.isEmpty()) {
         if (rs.emptySince !== undefined && tickCount - rs.emptySince >= emptyTtlTicks) disposeRoom(key, rs)
@@ -208,7 +227,9 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
       rs.persistTick += 1
       if (rs.persistTick >= NET_PERSIST_EVERY) {
         rs.persistTick = 0
-        void store.saveState(key, rs.room.persisted()) // seed + world + carved terrain → store (restorable; see store.ts)
+        const persisted = rs.room.persisted() // full session: seats + devices + carved terrain (see restore.ts)
+        void store.saveState(key, persisted)
+        log.debug(`persisted "${rs.room.name}" (${(persisted.length / 1024).toFixed(1)} KB)`)
         // refresh lobby TTL
         void store.registerGame(key, {
           name: rs.room.name,
@@ -217,6 +238,11 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
         })
       }
     }
+    // A pass that overruns the tick budget means the sim is falling behind real time — warn,
+    // but never per tick (a sustained overload would otherwise drown the pane it warns into).
+    const passMs = performance.now() - passStart
+    if (passMs > tickMs)
+      log.throttle('slow-tick', 10, `tick took ${passMs.toFixed(1)} ms (budget ${tickMs.toFixed(1)} ms)`)
   }, tickMs)
 
   return {

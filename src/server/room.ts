@@ -214,12 +214,14 @@ export const createRoom = (name: string, restore?: RoomRestore): Room => {
 
   // Live seats first, then the bench (connected: false) — a disconnected pilot stays on the
   // scoreboard (greyed) and their orphaned troopers keep a resolvable owner AND color.
+  // respawnIn rides the row (0.1 s steps) so the client can count its own reinforcement down.
   const players = (): PlayerInfo[] => [
     ...sim.combatants.map((c) => ({
       id: c.ship.id,
       name: c.name,
       score: c.score,
       palette: palettes.get(c.ship.id) ?? 1,
+      respawnIn: Math.round(sim.respawnIn(c.ship.id) * 10) / 10,
       connected: members.has(c.ship.id),
     })),
     ...[...bench.values()].map((seat) => ({
@@ -227,6 +229,7 @@ export const createRoom = (name: string, restore?: RoomRestore): Room => {
       name: seat.name,
       score: seat.score,
       palette: seat.palette,
+      respawnIn: 0,
       connected: false,
     })),
   ]

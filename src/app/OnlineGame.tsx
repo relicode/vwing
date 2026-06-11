@@ -7,6 +7,7 @@ import GameCanvas from '$/app/GameCanvas'
 import OnlineHud from '$/app/OnlineHud'
 import Overlay from '$/app/Overlay'
 import { useNetStatus } from '$/app/use-net'
+import { NET_RECONNECT_DELAYS_MS } from '$/game/constants'
 import { connectGame, type NetClient, NetPhase } from '$/net/client'
 import { JoinIntent } from '$/net/protocol'
 
@@ -49,6 +50,23 @@ const OnlineGame = ({ game, pilot, intent, onExit }: OnlineGameProps) => {
     <>
       {client ? <GameCanvas canvas={client.canvas} /> : null}
       {client && status.phase === NetPhase.PLAYING ? <OnlineHud status={status} onLeave={onExit} /> : null}
+
+      {status.phase === NetPhase.RECONNECTING ? (
+        // The canvas stays mounted under the dim — the world freezes rather than vanishing,
+        // and the WELCOME of a successful re-dial lifts the banner without remounting anything.
+        <Overlay>
+          <CircularProgress color="secondary" />
+          <Typography variant="h6" sx={{ fontWeight: 800, letterSpacing: '0.14em', color: 'secondary.main' }}>
+            CONNECTION LOST
+          </Typography>
+          <Typography sx={{ color: 'text.secondary' }}>
+            Reconnecting ({status.attempt}/{NET_RECONNECT_DELAYS_MS.length})…
+          </Typography>
+          <Button variant="text" onClick={onExit} sx={{ color: 'text.secondary' }}>
+            Back to lobby
+          </Button>
+        </Overlay>
+      ) : null}
 
       {status.phase === NetPhase.CONNECTING && !bootError ? (
         <Overlay>
