@@ -4,11 +4,13 @@ import {
   BOT_KILL_SCORE,
   DEATHMATCH_FRAG_SCORE,
   DeviceKind,
+  GRASS_BURN_TIME,
   RESPAWN_DELAY_BASE,
   SHIP_MAX_HEALTH,
   ShipKind,
   SimMode,
   StructureType,
+  Surface,
   TROOP_BAY_CAPACITY,
 } from '$/game/constants'
 import { inputFromSnapshot, NEUTRAL_INPUT } from '$/game/input'
@@ -254,6 +256,36 @@ describe('createSim — destructible terrain', () => {
 
     expect(world.terrainVersion).toBeGreaterThan(versionBefore) // a carve happened and blocks were rebuilt
     expect(destructibleArea(world.blocks)).toBeLessThan(rockAreaBefore) // the earth actually lost mass
+  })
+})
+
+describe('createSim — grass fire', () => {
+  test('a flame gout sets the lawn alight; the first cells spend to bare earth while the fire creeps on', () => {
+    const world = createWorld(7)
+    const bystander = combatant(0, 500, 400, Number.POSITIVE_INFINITY)
+    bystander.ship.invuln = 999 // park it out of the story — the terrain is the subject
+    const sim = createSim(world, [bystander], { mode: SimMode.DEATHMATCH })
+    // The arena is procedural, so torch whatever lawn this seed produced: the highest exposed
+    // grass top wide enough for the fire to have somewhere to creep.
+    const air = (x: number, y: number): boolean =>
+      !world.blocks.some((b) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h)
+    const lawn = world.blocks
+      .filter((b) => b.surface === Surface.GRASS && b.w >= 90 && air(b.x + b.w / 2, b.y - 30))
+      .sort((a, b) => a.y - b.y)[0]
+    expect(lawn).toBeDefined()
+    const cx = lawn.x + lawn.w / 2
+    const surfaceAt = (x: number, y: number): Surface | undefined =>
+      world.blocks.find((b) => x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h)?.surface
+
+    const versionBefore = world.terrainVersion
+    world.bullets.push({ x: cx, y: lawn.y + 2, vx: 0, vy: 0, radius: 3, life: 0.3, owner: 0, damage: 3, burn: true })
+    sim.step(1 / 60)
+    expect(surfaceAt(cx, lawn.y + 2)).toBe(Surface.FIRE) // alight where the gout splashed, not scorched away
+    expect(world.terrainVersion).toBeGreaterThan(versionBefore)
+
+    for (let i = 0; i < Math.ceil((GRASS_BURN_TIME + 0.2) * 60); i += 1) sim.step(1 / 60)
+    expect(surfaceAt(cx, lawn.y + 2)).toBe(Surface.EARTH) // the first-caught cells burned through…
+    expect(world.blocks.some((b) => b.surface === Surface.FIRE)).toBe(true) // …while the creep marches on
   })
 })
 

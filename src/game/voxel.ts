@@ -1,6 +1,8 @@
 import {
   DEBRIS_MAX_BODIES,
   DEBRIS_TERMINAL,
+  GRASS_BURN_TIME,
+  GRASS_FIRE_SPREAD_AFTER,
   GRAVITY,
   POOL_HALF_WIDTH,
   POOL_MAX_DEPTH,
@@ -29,16 +31,19 @@ const EMPTY = 0
 const EARTH = 1 // bare earth
 const GRASS = 2
 const ICE = 3
+const FIRE = 4 // grass alight (its burn clock lives in `burning`; spent cells become EARTH)
 
 const SURFACE_OF: Record<number, Surface> = {
   [EARTH]: Surface.EARTH,
   [GRASS]: Surface.GRASS,
   [ICE]: Surface.ICE,
+  [FIRE]: Surface.FIRE,
 }
 const ID_OF: Partial<Record<Surface, number>> = {
   [Surface.EARTH]: EARTH,
   [Surface.GRASS]: GRASS,
   [Surface.ICE]: ICE,
+  [Surface.FIRE]: FIRE,
 }
 
 // A loosed chunk falling under gravity. It moves vertically in whole-cell steps (timed by the
@@ -65,6 +70,7 @@ export type VoxelTerrain = {
   water: readonly WaterBody[]
   staticBlocks: Block[] // cached greedy mesh of `mat`, recomputed on change
   regrow: Map<number, number> // wetted bare-earth cells → s left until they regrow grass (server-side only)
+  burning: Map<number, number> // FIRE cells → s of burn left (spreads at the spread mark, spends to EARTH at 0)
 }
 
 const idx = (vt: { cols: number }, col: number, row: number): number => row * vt.cols + col
@@ -219,7 +225,9 @@ const liftComponent = (vt: VoxelTerrain, component: number[]): void => {
   for (const i of component) {
     const col = i % vt.cols
     const row = (i / vt.cols) | 0
-    cells[(row - minRow) * boxCols + (col - minCol)] = vt.mat[i]
+    // The fall snuffs a flame: a burning cell rides into the chunk as plain scorched earth
+    // (its timer entry, keyed to the static grid, is swept by the fire tick once mat empties).
+    cells[(row - minRow) * boxCols + (col - minCol)] = vt.mat[i] === FIRE ? EARTH : vt.mat[i]
     vt.mat[i] = EMPTY
   }
   if (vt.bodies.length < DEBRIS_MAX_BODIES) {
@@ -310,6 +318,7 @@ export const createVoxelTerrain = (blocks: Block[], water: WaterBody[]): VoxelTe
     water,
     staticBlocks: [],
     regrow: new Map(),
+    burning: new Map(),
   }
 
   // Anything not grounded at birth is an intentional floating island: pin its component so it
@@ -432,10 +441,16 @@ export const carveVoxel = (vt: VoxelTerrain, x: number, y: number, radius: numbe
   return true
 }
 
-// Scorch the GRASS surface to bare EARTH inside a circle (flamethrower). Structure is untouched
-// (no carve); cancels any pending regrow on the burned cells. Re-meshes if anything changed.
-// Returns whether the terrain changed (so the caller refreshes derived blocks).
-export const burnSurface = (vt: VoxelTerrain, x: number, y: number, radius: number): boolean => {
+// Is the cell's covering open to the sky-side (nothing in the grid directly above)? Fire and
+// regrowth both live on this exposed skin: buried grass neither catches nor regrows.
+const exposedAbove = (vt: VoxelTerrain, i: number): boolean => i < vt.cols || vt.mat[i - vt.cols] === EMPTY
+
+// Set the exposed GRASS surface ALIGHT inside a circle (flame gout). Structure is untouched
+// (no carve): each caught cell turns FIRE and starts its burn clock — the fire tick in stepVoxel
+// then creeps it to adjacent grass and eventually spends it to bare earth. Cancels any pending
+// regrow on the caught cells. Re-meshes if anything caught. Returns whether the terrain changed
+// (so the caller refreshes derived blocks).
+export const igniteSurface = (vt: VoxelTerrain, x: number, y: number, radius: number): boolean => {
   const r2 = radius * radius
   const c0 = Math.max(0, Math.floor((x - radius) / vt.cell))
   const c1 = Math.min(vt.cols - 1, Math.floor((x + radius) / vt.cell))
@@ -445,12 +460,39 @@ export const burnSurface = (vt: VoxelTerrain, x: number, y: number, radius: numb
   for (let row = r0; row <= r1; row += 1) {
     for (let col = c0; col <= c1; col += 1) {
       const i = idx(vt, col, row)
-      if (vt.mat[i] !== GRASS) continue
+      if (vt.mat[i] !== GRASS || !exposedAbove(vt, i)) continue
       const dx = centerX(vt.cell, col) - x
       const dy = centerY(vt.cell, row) - y
       if (dx * dx + dy * dy > r2) continue
-      vt.mat[i] = EARTH
+      vt.mat[i] = FIRE
+      vt.burning.set(i, GRASS_BURN_TIME)
       vt.regrow.delete(i)
+      changed = true
+    }
+  }
+  if (changed) vt.staticBlocks = meshGrid(vt.mat, vt.cols, vt.rows, vt.cell, 0, 0)
+  return changed
+}
+
+// Douse every burning cell inside a circle (water hit): the flame dies and the cell is GRASS
+// again — it never finished burning. Re-meshes if anything was put out. Returns whether the
+// terrain changed (so the caller refreshes derived blocks).
+export const douseSurface = (vt: VoxelTerrain, x: number, y: number, radius: number): boolean => {
+  const r2 = radius * radius
+  const c0 = Math.max(0, Math.floor((x - radius) / vt.cell))
+  const c1 = Math.min(vt.cols - 1, Math.floor((x + radius) / vt.cell))
+  const r0 = Math.max(0, Math.floor((y - radius) / vt.cell))
+  const r1 = Math.min(vt.rows - 1, Math.floor((y + radius) / vt.cell))
+  let changed = false
+  for (let row = r0; row <= r1; row += 1) {
+    for (let col = c0; col <= c1; col += 1) {
+      const i = idx(vt, col, row)
+      if (vt.mat[i] !== FIRE) continue
+      const dx = centerX(vt.cell, col) - x
+      const dy = centerY(vt.cell, row) - y
+      if (dx * dx + dy * dy > r2) continue
+      vt.mat[i] = GRASS
+      vt.burning.delete(i)
       changed = true
     }
   }
@@ -472,7 +514,7 @@ export const wetSurface = (vt: VoxelTerrain, x: number, y: number, radius: numbe
     for (let col = c0; col <= c1; col += 1) {
       const i = idx(vt, col, row)
       if (vt.mat[i] !== EARTH) continue
-      if (row > 0 && vt.mat[i - vt.cols] !== EMPTY) continue // only the exposed top can regrow grass
+      if (!exposedAbove(vt, i)) continue // only the exposed top can regrow grass
       const dx = centerX(vt.cell, col) - x
       const dy = centerY(vt.cell, row) - y
       if (dx * dx + dy * dy > r2) continue
@@ -568,9 +610,10 @@ export const moveBedrock = (vt: VoxelTerrain, block: Block, newY: number): void 
   stamp(block, 1)
 }
 
-// Advance falling debris one frame and tick wetted cells toward regrowing grass; lands chunks
-// back into the grid where they come to rest. Returns whether anything changed (so the caller
-// refreshes derived blocks). Both regrowth and debris settling mutate the static grid; mesh once.
+// Advance falling debris one frame, tick wetted cells toward regrowing grass, and walk the
+// grass fire (spread + burn-out); lands chunks back into the grid where they come to rest.
+// Returns whether anything changed (so the caller refreshes derived blocks). Regrowth, fire,
+// and debris settling all mutate the static grid; mesh once.
 export const stepVoxel = (vt: VoxelTerrain, dt: number): boolean => {
   let changed = false
   let needsMesh = false
@@ -584,11 +627,53 @@ export const stepVoxel = (vt: VoxelTerrain, dt: number): boolean => {
         continue
       }
       vt.regrow.delete(i)
-      if (vt.mat[i] === EARTH && (i < vt.cols || vt.mat[i - vt.cols] === EMPTY)) {
+      if (vt.mat[i] === EARTH && exposedAbove(vt, i)) {
         vt.mat[i] = GRASS
         needsMesh = true
         changed = true
       }
+    }
+  }
+
+  // The fire walks: each burning cell creeps to its exposed grass neighbours once its clock
+  // crosses the spread mark (a deterministic wavefront — no rng anywhere in the terrain), and
+  // is spent to bare earth at zero. Cells the grid no longer owns as FIRE (carved away, doused,
+  // or lifted into debris) just drop their stale timer. Fresh catches are collected and lit
+  // AFTER the walk: a Map visits entries inserted mid-iteration, which would tick (and spread)
+  // a newborn flame in the very frame it caught.
+  if (vt.burning.size > 0) {
+    const spreadMark = GRASS_BURN_TIME - GRASS_FIRE_SPREAD_AFTER
+    const catches: number[] = []
+    for (const [i, time] of vt.burning) {
+      if (vt.mat[i] !== FIRE) {
+        vt.burning.delete(i)
+        continue
+      }
+      const next = time - dt
+      if (time > spreadMark && next <= spreadMark) {
+        const col = i % vt.cols
+        const row = (i / vt.cols) | 0
+        if (col > 0) catches.push(i - 1)
+        if (col < vt.cols - 1) catches.push(i + 1)
+        if (row > 0) catches.push(i - vt.cols)
+        if (row < vt.rows - 1) catches.push(i + vt.cols)
+      }
+      if (next <= 0) {
+        vt.burning.delete(i)
+        vt.mat[i] = EARTH
+        needsMesh = true
+        changed = true
+      } else {
+        vt.burning.set(i, next)
+      }
+    }
+    for (const i of catches) {
+      if (vt.mat[i] !== GRASS || !exposedAbove(vt, i)) continue
+      vt.mat[i] = FIRE
+      vt.burning.set(i, GRASS_BURN_TIME)
+      vt.regrow.delete(i)
+      needsMesh = true
+      changed = true
     }
   }
 
@@ -663,6 +748,7 @@ export type VoxelSnapshot = {
   pinned: number[][] // each pinned floating-island component's cell indices
   bodies: { col0: number; row0: number; boxCols: number; boxRows: number; cells: string; vy: number; fall: number }[]
   regrow: [number, number][] // wetted-cell index → s left until grass regrows
+  burning?: [number, number][] // FIRE-cell index → s of burn left (absent in pre-fire snapshots)
 }
 
 export const snapshotVoxel = (vt: VoxelTerrain): VoxelSnapshot => ({
@@ -680,6 +766,7 @@ export const snapshotVoxel = (vt: VoxelTerrain): VoxelSnapshot => ({
     fall: b.fall,
   })),
   regrow: [...vt.regrow],
+  burning: [...vt.burning],
 })
 
 // Overlay a persisted snapshot onto a terrain rebuilt from the SAME seed. Returns false (and
@@ -701,6 +788,7 @@ export const restoreVoxel = (vt: VoxelTerrain, snap: VoxelSnapshot): boolean => 
     fall: b.fall,
   }))
   vt.regrow = new Map(snap.regrow)
+  vt.burning = new Map(snap.burning ?? []) // pre-fire snapshots carry no burning map
   vt.staticBlocks = meshGrid(vt.mat, vt.cols, vt.rows, vt.cell, 0, 0)
   return true
 }
