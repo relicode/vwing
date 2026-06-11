@@ -31,6 +31,21 @@ describe('buildHeadTags', () => {
       expect(match[1]).not.toContain('>')
     }
   })
+
+  test('escapes site-derived values too: a quote in the host cannot break out of an attribute', () => {
+    // The WHATWG URL serializer percent-decodes %22 in the host, so this base carries a
+    // literal double quote into every href/content it reaches.
+    const hostile = resolveSiteBase('https://%22.example.test/')
+    expect(hostile).toContain('"')
+    const hostileTags = buildHeadTags(hostile)
+    for (const tag of hostileTags.split('><')) {
+      // An unescaped quote would leave a tag with an odd quote count (broken attribute).
+      if (tag.includes('href=') || tag.includes('content=')) {
+        expect((tag.match(/"/g) ?? []).length % 2).toBe(0)
+      }
+    }
+    expect(hostileTags).toContain('&quot;.example.test')
+  })
 })
 
 describe('buildJsonLd', () => {
@@ -58,5 +73,13 @@ describe('injectHead', () => {
   test('refuses a document without a head or with tags already present', () => {
     expect(() => injectHead('<html><body></body></html>', SITE)).toThrow()
     expect(() => injectHead(injectHead(SHELL, SITE), SITE)).toThrow()
+  })
+
+  test('replacement patterns in the injected block stay literal', () => {
+    // A site path containing $& would, with naive String.replace, re-inject the matched
+    // </head> and corrupt the document.
+    const dollars = injectHead(SHELL, resolveSiteBase('https://example.test/a$&b/'))
+    expect(dollars.match(/<\/head>/g)?.length).toBe(1)
+    expect(dollars).toContain('a$&amp;b')
   })
 })

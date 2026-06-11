@@ -25,66 +25,89 @@ const sw = self as unknown as SwGlobal
 
 const PRECACHE = `vwing-precache-${__CACHE_VERSION__}`
 const FONT_CACHE = 'vwing-fonts'
+const FONT_CACHE_LIMIT = 32
 const PRECACHED = new Set(__PRECACHE_URLS__.map((url) => new URL(url, sw.location.href).href))
 const SHELL_URL = new URL('index.html', sw.location.href).href
 
-sw.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches
-      .open(PRECACHE)
-      // cache: 'reload' bypasses the HTTP cache so a stale CDN/browser entry can never
-      // be enshrined as the new version's shell.
-      .then((cache) => cache.addAll([...PRECACHED].map((href) => new Request(href, { cache: 'reload' }))))
-      .then(() => sw.skipWaiting())
-  )
-})
+const install = async (): Promise<void> => {
+  const cache = await caches.open(PRECACHE)
+  // cache: 'reload' bypasses the HTTP cache so a stale CDN/browser entry can never
+  // be enshrined as the new version's shell.
+  await cache.addAll([...PRECACHED].map((href) => new Request(href, { cache: 'reload' })))
+  await sw.skipWaiting()
+}
 
-sw.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches
-      .keys()
-      .then((keys) =>
-        Promise.all(
-          keys.filter((key) => key.startsWith('vwing-precache-') && key !== PRECACHE).map((key) => caches.delete(key))
-        )
-      )
-      .then(() => sw.clients.claim())
+const activate = async (): Promise<void> => {
+  const keys = await caches.keys()
+  await Promise.all(
+    keys.filter((key) => key.startsWith('vwing-precache-') && key !== PRECACHE).map((key) => caches.delete(key))
   )
-})
+  await sw.clients.claim()
+}
 
-const offlineShell = (): Promise<Response> =>
-  caches.match(SHELL_URL).then((cached) => cached ?? new Response('V-Wing is offline.', { status: 503 }))
+sw.addEventListener('install', (event) => event.waitUntil(install()))
+sw.addEventListener('activate', (event) => event.waitUntil(activate()))
 
-const cacheFirst = (request: Request, cacheName: string): Promise<Response> =>
-  caches.match(request).then(
-    (cached) =>
-      cached ??
-      fetch(request).then((response) => {
-        if (response.ok) {
-          const copy = response.clone()
-          caches.open(cacheName).then((cache) => cache.put(request, copy))
-        }
-        return response
-      })
-  )
+// The Fonts stylesheet <link> carries no crossorigin attribute, so its request mode is
+// no-cors and the response is opaque: status 0, ok false — but still perfectly cacheable
+// and servable. Anything else (4xx/5xx/partial) stays out of the caches.
+const storable = (response: Response): boolean => response.ok || response.type === 'opaque'
+
+// Drop the oldest entries once the runtime cache outgrows its cap (Cache keys() returns
+// insertion order). The font pair is small but unversioned — without this it grows forever.
+const trim = async (cache: Cache): Promise<void> => {
+  const keys = await cache.keys()
+  await Promise.all(keys.slice(0, Math.max(0, keys.length - FONT_CACHE_LIMIT)).map((key) => cache.delete(key)))
+}
+
+const offlineShell = async (): Promise<Response> =>
+  (await caches.match(SHELL_URL)) ?? new Response('V-Wing is offline.', { status: 503 })
+
+const networkFirst = async (request: Request): Promise<Response> => {
+  try {
+    return await fetch(request)
+  } catch {
+    return offlineShell()
+  }
+}
+
+const cacheFirst = async (request: Request, cacheName: string): Promise<Response> => {
+  const cached = await caches.match(request)
+  if (cached) return cached
+  const response = await fetch(request)
+  if (storable(response)) {
+    const cache = await caches.open(cacheName)
+    await cache.put(request, response.clone())
+    if (cacheName === FONT_CACHE) await trim(cache)
+  }
+  return response
+}
 
 // Serve the cached copy immediately but refresh it in the background (the Fonts CSS can
 // change per user agent, so it should not be pinned forever like the woff2 binaries).
-const staleWhileRevalidate = (request: Request, cacheName: string): Promise<Response> =>
-  caches.open(cacheName).then((cache) => {
-    const refresh = fetch(request).then((response) => {
-      if (response.ok) cache.put(request, response.clone())
-      return response
-    })
-    return cache.match(request).then((cached) => cached ?? refresh)
+const staleWhileRevalidate = async (request: Request, cacheName: string): Promise<Response> => {
+  const cache = await caches.open(cacheName)
+  const refresh = fetch(request).then(async (response) => {
+    if (storable(response)) {
+      await cache.put(request, response.clone())
+      await trim(cache)
+    }
+    return response
   })
+  const cached = await cache.match(request)
+  if (cached) {
+    refresh.catch(() => undefined) // offline refresh failing is the expected case
+    return cached
+  }
+  return refresh
+}
 
 sw.addEventListener('fetch', (event) => {
   const { request } = event
   if (request.method !== 'GET') return
   const url = new URL(request.url)
   if (request.mode === 'navigate') {
-    event.respondWith(fetch(request).catch(offlineShell))
+    event.respondWith(networkFirst(request))
     return
   }
   if (PRECACHED.has(url.href)) {

@@ -39,16 +39,21 @@ export const buildJsonLd = (site: string): string =>
   }).replaceAll('<', '\\u003c')
 
 export const buildHeadTags = (site: string): string => {
-  const shareImage = absoluteUrl(site, SHARE_IMAGE.file)
+  // Even the site-derived URLs go through escapeAttribute: the WHATWG URL serializer can
+  // emit a raw double quote in the host (https://%22.example.com/ round-trips to a literal
+  // "), so "it's a parsed URL" is not an escaping guarantee.
+  const href = (path?: string): string => escapeAttribute(path === undefined ? site : absoluteUrl(site, path))
+  const shareImage = href(SHARE_IMAGE.file)
   const shareAlt = `${GAME_TITLE} — a neon ship dogfight over voxel terrain`
+  const appIcon = MANIFEST_ICONS.find((icon) => icon.purpose === 'any') ?? MANIFEST_ICONS[0]
   const lines = [
     `<meta name="description" content="${escapeAttribute(GAME_DESCRIPTION)}">`,
     `<meta name="theme-color" content="${THEME_COLOR}">`,
-    `<link rel="canonical" href="${site}">`,
-    `<link rel="manifest" href="${absoluteUrl(site, 'manifest.webmanifest')}">`,
-    `<link rel="icon" type="image/png" sizes="${FAVICON.size}x${FAVICON.size}" href="${absoluteUrl(site, FAVICON.file)}">`,
-    `<link rel="icon" type="image/png" sizes="192x192" href="${absoluteUrl(site, MANIFEST_ICONS[0].file)}">`,
-    `<link rel="apple-touch-icon" sizes="${APPLE_TOUCH_ICON.size}x${APPLE_TOUCH_ICON.size}" href="${absoluteUrl(site, APPLE_TOUCH_ICON.file)}">`,
+    `<link rel="canonical" href="${href()}">`,
+    `<link rel="manifest" href="${href('manifest.webmanifest')}">`,
+    `<link rel="icon" type="image/png" sizes="${FAVICON.size}x${FAVICON.size}" href="${href(FAVICON.file)}">`,
+    `<link rel="icon" type="image/png" sizes="${appIcon.size}x${appIcon.size}" href="${href(appIcon.file)}">`,
+    `<link rel="apple-touch-icon" sizes="${APPLE_TOUCH_ICON.size}x${APPLE_TOUCH_ICON.size}" href="${href(APPLE_TOUCH_ICON.file)}">`,
     '<meta name="mobile-web-app-capable" content="yes">',
     '<meta name="apple-mobile-web-app-capable" content="yes">',
     '<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">',
@@ -56,7 +61,7 @@ export const buildHeadTags = (site: string): string => {
     `<meta property="og:title" content="${escapeAttribute(GAME_TITLE)}">`,
     `<meta property="og:description" content="${escapeAttribute(GAME_DESCRIPTION)}">`,
     '<meta property="og:type" content="website">',
-    `<meta property="og:url" content="${site}">`,
+    `<meta property="og:url" content="${href()}">`,
     `<meta property="og:site_name" content="${escapeAttribute(GAME_NAME)}">`,
     '<meta property="og:locale" content="en_US">',
     `<meta property="og:image" content="${shareImage}">`,
@@ -75,5 +80,6 @@ export const buildHeadTags = (site: string): string => {
 export const injectHead = (html: string, site: string): string => {
   if (!html.includes('</head>')) throw new Error('injectHead: no </head> in document')
   if (html.includes('rel="manifest"')) throw new Error('injectHead: document already carries PWA head tags')
-  return html.replace('</head>', `${buildHeadTags(site)}</head>`)
+  // Function replacement so `$&`-style patterns in the tag block stay literal.
+  return html.replace('</head>', () => `${buildHeadTags(site)}</head>`)
 }

@@ -10,7 +10,7 @@ import { readdir, rm } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
 
 import { renderIcon, renderShareImage } from './pwa/artwork'
-import { buildHeadTags } from './pwa/head'
+import { injectHead } from './pwa/head'
 import { APPLE_TOUCH_ICON, FAVICON, MANIFEST_ICONS, resolveSiteBase, SHARE_IMAGE, SITE_DEFAULT } from './pwa/identity'
 import { buildManifest } from './pwa/manifest'
 
@@ -20,7 +20,8 @@ const DIST = join(ROOT, 'dist')
 const siteArgument = (): string | undefined => {
   const flag = process.argv.findIndex((argument) => argument === '--site' || argument.startsWith('--site='))
   if (flag === -1) return undefined
-  const inline = process.argv[flag].split('=')[1]
+  // slice, not split: the URL itself may contain '=' (query strings and the like).
+  const inline = process.argv[flag].startsWith('--site=') ? process.argv[flag].slice('--site='.length) : undefined
   const value = inline ?? process.argv[flag + 1]
   if (!value) throw new Error('--site needs a URL argument')
   return value
@@ -62,9 +63,7 @@ await Bun.write(join(DIST, 'manifest.webmanifest'), `${JSON.stringify(buildManif
 
 // 3. Head metadata into the built shell.
 const shellPath = join(DIST, 'index.html')
-const shell = await Bun.file(shellPath).text()
-if (!shell.includes('</head>')) throw new Error('dist/index.html has no </head> to inject into')
-await Bun.write(shellPath, shell.replace('</head>', `${buildHeadTags(site)}</head>`))
+await Bun.write(shellPath, injectHead(await Bun.file(shellPath).text(), site))
 
 // 4. Service worker, last: its precache list is everything now in dist except sourcemaps
 // (debugging aids) and the share card (scraper-only). Cache version = content hash of the lot.

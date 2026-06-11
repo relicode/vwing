@@ -94,7 +94,8 @@ src/
 scripts/              # server.ts (game-server entry), preview.ts, build.ts (bundle + PWA layer)
   pwa/                # build-time generators: identity.ts (site base + naming), manifest.ts,
                       # head.ts (OG/Twitter/JSON-LD), artwork.ts + png.ts (SDF icon/og bake)
-__tests__/            # bun:test specs for the pure logic (sim only — never imports pixi.js)
+__tests__/            # bun:test specs for the pure logic (sim + build-time PWA generators —
+                      # never imports pixi.js)
 ```
 
 ## Architecture notes
