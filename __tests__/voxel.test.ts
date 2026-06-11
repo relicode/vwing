@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 
 import {
+  BULLET_RADIUS,
+  CARVE_RADIUS_BASE,
+  CARVE_RADIUS_SCALE,
   GRASS_BURN_TIME,
   GRASS_FIRE_SPREAD_AFTER,
   StructureType,
@@ -136,6 +139,21 @@ describe('carveVoxel', () => {
     const after = filledCells(vt.mat)
     expect(after).toBeLessThan(before)
     expect(carveVoxel(vt, ...cellCenter(PILLAR_C0 + 8, 90), 18)).toBe(false) // already hollowed
+  })
+
+  test('a primary-shot corner hit carves — even from a contact point just outside the corner', () => {
+    const carve = BULLET_RADIUS * CARVE_RADIUS_SCALE + CARVE_RADIUS_BASE
+    const cornerX = PILLAR_C0 * C // the pillar's top-left corner (a cell corner by construction)
+    const cornerY = PILLAR_TOP_ROW * C
+    const exact = mkVt()
+    expect(carveVoxel(exact, cornerX, cornerY, carve)).toBe(true)
+    expect(exact.mat[PILLAR_TOP_ROW * exact.cols + PILLAR_C0]).toBe(0) // the corner cell is gone
+    // circleRectContact registers a corner hit with the bullet center up to BULLET_RADIUS
+    // diagonally OUTSIDE the rect — a detected hit must never carve nothing.
+    const off = (BULLET_RADIUS * 0.7) / Math.SQRT2
+    const outside = mkVt()
+    expect(carveVoxel(outside, cornerX - off, cornerY - off, carve)).toBe(true)
+    expect(outside.mat[PILLAR_TOP_ROW * outside.cols + PILLAR_C0]).toBe(0)
   })
 
   test('boring a hole through a floating island leaves the connected remainder aloft', () => {

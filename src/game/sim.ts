@@ -399,9 +399,18 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
         }
         continue
       }
-      const hit = world.blocks.findIndex((b) =>
-        circleRectContact(bullet.x, bullet.y, bullet.radius, b.x, b.y, b.w, b.h)
-      )
+      // Prefer a destructible (EARTH) contact: blocks list bedrock first, so taking the first
+      // match would let an indestructible seam shadow the earth a corner shot also touches.
+      let hit = -1
+      for (let i = 0; i < world.blocks.length; i += 1) {
+        const b = world.blocks[i]
+        if (!circleRectContact(bullet.x, bullet.y, bullet.radius, b.x, b.y, b.w, b.h)) continue
+        if (b.structure === StructureType.EARTH) {
+          hit = i
+          break
+        }
+        if (hit < 0) hit = i
+      }
       if (hit >= 0) {
         const block = world.blocks[hit]
         if (bullet.burn) {

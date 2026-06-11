@@ -15,6 +15,7 @@ import {
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from '$/game/constants'
+import { clamp } from '$/game/math'
 import type { Block, WaterBody } from '$/game/types'
 
 // Destructible terrain as a grid of small cells. Metal stays as indestructible anchor
@@ -414,8 +415,11 @@ export const carveVoxel = (vt: VoxelTerrain, x: number, y: number, radius: numbe
     for (let col = c0; col <= c1; col += 1) {
       const i = idx(vt, col, row)
       if (vt.mat[i] === EMPTY) continue
-      const dx = centerX(vt.cell, col) - x
-      const dy = centerY(vt.cell, row) - y
+      // Circle-vs-cell overlap (clamped nearest point) — the same predicate that detected the
+      // hit. Sampling cell CENTERS instead used to leave corner hits carving nothing: a corner
+      // cell's center sits cell·√2/2 ≈ 12.7 px from the corner, beyond a primary shot's reach.
+      const dx = clamp(x, col * vt.cell, (col + 1) * vt.cell) - x
+      const dy = clamp(y, row * vt.cell, (row + 1) * vt.cell) - y
       if (dx * dx + dy * dy <= r2) {
         vt.mat[i] = EMPTY
         removed.push(i)
