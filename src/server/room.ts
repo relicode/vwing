@@ -163,7 +163,11 @@ export const createRoom = (name: string, restore?: RoomRestore): Room => {
       // (fresh bay, fresh weapon) like any other respawn, by design.
       benched.ship.troops = troops
       benched.ship.invuln = Math.max(benched.ship.invuln, 1) // re-entry grace
-      palettes.set(benched.ship.id, benched.palette) // same seat, same color
+      // Same seat, same color — unless that slot was stolen out from under this bench while it
+      // slept (all-8-held steal). Restoring a slot a LIVE seat now holds would put two live
+      // players in one color; in that (rare) case take the lowest free slot instead.
+      const live = new Set(palettes.values())
+      palettes.set(benched.ship.id, live.has(benched.palette) ? freeSlot() : benched.palette)
       members.set(benched.ship.id, { shipId: benched.ship.id, name: displayName, input })
       return { shipId: benched.ship.id, reclaimed: true }
     }

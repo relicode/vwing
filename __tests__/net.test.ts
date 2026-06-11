@@ -483,9 +483,26 @@ describe('palette slots (server-assigned seat colors)', () => {
     expect(new Set(live).size).toBe(live.length) // live players never share a color
   })
 
+  test('a reclaim whose slot was stolen while benched is reassigned, never duplicating a live color', () => {
+    const room = createRoom('Hue4')
+    const ids = Array.from({ length: NET_MAX_PLAYERS }, (_, i) => seat(room.join(`P${i}`)).shipId)
+    room.leave(ids[0]) // slot 0 rides P0's bench
+    const q = seat(room.join('Q')) // …and is stolen — Q is now live on slot 0
+    expect(slotOf(room, q.shipId)).toBe(0)
+    room.leave(ids[1]) // free a live seat (slot 1) so P0's reclaim isn't refused FULL
+    const back = seat(room.join('P0')) // P0 returns to find its old slot taken
+    expect(back.reclaimed).toBe(true)
+    const live = room
+      .players()
+      .filter((p) => p.connected)
+      .map((p) => p.palette)
+    expect(new Set(live).size).toBe(live.length) // two live pilots must never share a color
+    expect(slotOf(room, back.shipId)).not.toBe(slotOf(room, q.shipId))
+  })
+
   test('the slot survives persist → restore → reclaim; an out-of-range persisted slot is reassigned', () => {
     const room = createRoom('Hue3')
-    const a = seat(room.join('A'))
+    seat(room.join('A')) // A must be a seated pilot so it can reclaim slot 0 after the restart
     const b = seat(room.join('B'))
     room.step(1 / 30)
     const raw = JSON.parse(room.persisted())
