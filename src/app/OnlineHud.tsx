@@ -3,13 +3,17 @@ import Button from '@mui/material/Button'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
 
-import { SECONDARY_MAX_CHARGE, WEAPON_CONFIG } from '$/game/constants'
+import { PLAYER_PALETTE, SECONDARY_MAX_CHARGE, WEAPON_CONFIG } from '$/game/constants'
 import type { NetStatus } from '$/net/client'
 
 type OnlineHudProps = {
   status: NetStatus
   onLeave: () => void
 }
+
+// The seat's palette slot as a CSS hex (out-of-range falls back to the enemy rose, like the canvas).
+const chipHex = (slot: number): string =>
+  `#${(PLAYER_PALETTE[slot] ?? PLAYER_PALETTE[1]).toString(16).padStart(6, '0')}`
 
 const Scoreboard = ({ status }: { status: NetStatus }) => {
   const rows = [...status.players].sort((a, b) => b.score - a.score).slice(0, 8)
@@ -29,17 +33,30 @@ const Scoreboard = ({ status }: { status: NetStatus }) => {
           const isSelf = player.id === status.selfId
           return (
             <Stack key={player.id} direction="row" sx={{ justifyContent: 'space-between', gap: 2 }}>
-              <Typography
-                noWrap
-                sx={{
-                  fontSize: 13,
-                  maxWidth: 110,
-                  fontWeight: isSelf ? 800 : 500,
-                  color: isSelf ? 'primary.main' : player.connected ? 'secondary.main' : 'text.disabled',
-                }}
-              >
-                {player.name}
-              </Typography>
+              <Stack direction="row" sx={{ alignItems: 'center', gap: 0.75, minWidth: 0 }}>
+                <Box
+                  sx={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: '50%',
+                    flex: 'none',
+                    bgcolor: chipHex(player.palette),
+                    boxShadow: `0 0 4px ${chipHex(player.palette)}`,
+                    opacity: player.connected ? 1 : 0.45,
+                  }}
+                />
+                <Typography
+                  noWrap
+                  sx={{
+                    fontSize: 13,
+                    maxWidth: 110,
+                    fontWeight: isSelf ? 800 : 500,
+                    color: isSelf ? 'primary.main' : player.connected ? 'secondary.main' : 'text.disabled',
+                  }}
+                >
+                  {player.name}
+                </Typography>
+              </Stack>
               <Typography sx={{ fontSize: 13, fontWeight: 700, color: isSelf ? 'primary.main' : 'text.secondary' }}>
                 {player.score}
               </Typography>

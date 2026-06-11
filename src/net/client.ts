@@ -2,9 +2,9 @@ import {
   Color,
   GamePhase,
   NET_DEFAULT_PORT,
+  PLAYER_PALETTE,
   SECONDARY_MAX_CHARGE,
   SHIP_SMOKE_HEALTH,
-  ShipKind,
   SMOKE_LIFE,
   THRUST_PARTICLE_LIFE,
   THRUST_PARTICLE_SPEED,
@@ -17,6 +17,10 @@ import { createRng } from '$/game/rng'
 import type { Particle } from '$/game/types'
 import { createCanvasApp } from '$/game/view'
 import { decodeServer, encode, type JoinIntent, MsgType, type PlayerInfo, type WorldSnapshot } from '$/net/protocol'
+
+// Clamp a wire palette slot into the table (a stale/hostile server value falls back to enemy rose).
+const clampSlot = (palette: number): number =>
+  Number.isInteger(palette) && palette >= 0 && palette < PLAYER_PALETTE.length ? palette : 1
 
 // Where the game server lives. Overridable for split deploys via `?server=` or a stored value;
 // otherwise the current host on the game-server port (covers both single-origin production and
@@ -69,6 +73,7 @@ export const connectGame = async (game: string, name: string, intent: JoinIntent
   let world: WorldSnapshot | undefined
   let selfId = -1
   let players: PlayerInfo[] = []
+  let paletteSlots = new Map<number, number>() // owner id → PLAYER_PALETTE slot, rebuilt per snapshot
   let phase = NetPhase.CONNECTING
   let error: string | undefined
   let leaving = false
@@ -111,8 +116,9 @@ export const connectGame = async (game: string, name: string, intent: JoinIntent
     }
     // Cheap shallow compare on the fields the HUD reads (players identity changes per tick,
     // but its content rarely does — compare a small signature to avoid churning React).
+    // EVERY HUD-read field must appear here, or its changes silently never reach React.
     const sig = (s: NetStatus): string =>
-      `${s.phase}|${s.score}|${s.weapon}|${s.charge}|${s.error ?? ''}|${s.players.map((p) => `${p.id}:${p.score}`).join(',')}`
+      `${s.phase}|${s.score}|${s.weapon}|${s.charge}|${s.error ?? ''}|${s.players.map((p) => `${p.id}:${p.score}:${p.palette}:${p.connected}`).join(',')}`
     if (sig(next) === sig(status)) return
     status = next
     notify()
@@ -131,9 +137,13 @@ export const connectGame = async (game: string, name: string, intent: JoinIntent
     } else if (message.t === MsgType.SNAPSHOT) {
       world = message.world
       players = message.players
-      // The wire carries no particles (cosmetic); spawn a wreck explosion at each death here.
+      // Benched seats ride players[] too, so a disconnected pilot's troopers keep their color.
+      paletteSlots = new Map(players.map((p) => [p.id, clampSlot(p.palette)]))
+      // The wire carries no particles (cosmetic); spawn a wreck explosion at each death here,
+      // in the victim's seat color.
       for (const event of message.events) {
-        const color = event.victimKind === ShipKind.BOT ? Color.ENEMY : Color.SHIP
+        const slot = paletteSlots.get(event.victimId)
+        const color = slot === undefined ? Color.ENEMY : (PLAYER_PALETTE[slot] ?? Color.ENEMY)
         spawnExplosion(fxParticles, event.x, event.y, color, fxRng, 34)
       }
       publish()
@@ -188,7 +198,7 @@ export const connectGame = async (game: string, name: string, intent: JoinIntent
       }
     }
     fxParticles = updateParticles(fxParticles, dt)
-    renderer.draw({ ...world, particles: fxParticles }, GamePhase.PLAYING, selfId)
+    renderer.draw({ ...world, particles: fxParticles }, GamePhase.PLAYING, selfId, paletteSlots)
   })
 
   const leave = (): void => {
