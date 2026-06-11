@@ -6,7 +6,9 @@ import {
   BASE_PAD_CELLS,
   BASE_PAD_Y_FRAC,
   MAX_AUTHORED_WATER,
+  SEA_EAST_FRAC,
   SEA_SPILL_FRAC,
+  SEA_WEST_FRAC,
   SHIP_RADIUS,
   SPAWN_ALTITUDE,
   StructureType,
@@ -153,7 +155,7 @@ describe('createTerrain (procedural arena)', () => {
           b.y >= minTop &&
           b.y + b.h <= seaSpill
       )
-      expect(isles.length).toBeGreaterThanOrEqual(3) // the gulf is populated, not empty
+      expect(isles.length).toBeGreaterThanOrEqual(10) // the gulf is dense stepping-stone country, not empty
       const vt = createVoxelTerrain(blocks, water)
       const cellIdx = (x: number, y: number): number =>
         Math.floor(y / VOXEL_CELL) * vt.cols + Math.floor(x / VOXEL_CELL)
@@ -188,6 +190,46 @@ describe('createTerrain (procedural arena)', () => {
       const { blocks } = createTerrain(createRng(seed))
       const area = blocks.reduce((sum, b) => (b.structure === StructureType.EARTH ? sum + b.w * b.h : sum), 0)
       expect(area / interior).toBeGreaterThanOrEqual(0.3)
+    }
+  })
+
+  test('the middle of the map is no longer empty: the gulf and the sky band keep a solid floor', () => {
+    // Solid fraction of a world-space box in the voxel grid.
+    const solidFrac = (
+      vt: ReturnType<typeof createVoxelTerrain>,
+      x0: number,
+      x1: number,
+      y0: number,
+      y1: number
+    ): number => {
+      let solid = 0
+      let total = 0
+      for (let r = Math.floor(y0 / VOXEL_CELL); r <= Math.floor(y1 / VOXEL_CELL); r += 1)
+        for (let c = Math.floor(x0 / VOXEL_CELL); c <= Math.floor(x1 / VOXEL_CELL); c += 1) {
+          total += 1
+          if (vt.mat[r * vt.cols + c] !== 0) solid += 1
+        }
+      return solid / total
+    }
+    const playW = WORLD_WIDTH - 2 * WALL_THICKNESS
+    const skyBottom = WORLD_HEIGHT * BAND_SKY_BOTTOM
+    for (const seed of SEEDS) {
+      const { blocks, water } = createTerrain(createRng(seed))
+      const vt = createVoxelTerrain(blocks, water)
+      // The mid-gulf box (the crossing between the bases, sky line down to the water): the
+      // archipelago must blanket it — it measured ~2% solid before the densification, ~7-10% after.
+      const gulf = solidFrac(
+        vt,
+        WALL_THICKNESS + playW * SEA_WEST_FRAC,
+        WALL_THICKNESS + playW * SEA_EAST_FRAC,
+        skyBottom + 2 * VOXEL_CELL,
+        WORLD_HEIGHT * SEA_SPILL_FRAC
+      )
+      expect(gulf).toBeGreaterThanOrEqual(0.06)
+      // The sky band stays mostly open (it is the ferry flyway) but not barren.
+      const sky = solidFrac(vt, WALL_THICKNESS, WORLD_WIDTH - WALL_THICKNESS, WALL_THICKNESS, skyBottom)
+      expect(sky).toBeGreaterThanOrEqual(0.01)
+      expect(sky).toBeLessThanOrEqual(0.08) // and never closes over the cruise lane
     }
   })
 })

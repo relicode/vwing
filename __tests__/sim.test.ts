@@ -266,7 +266,9 @@ describe('createSim — troop bay + deploy', () => {
   })
 
   test('holding deploy streams troopers at the cadence and drains the bay', () => {
-    const world = createWorld(12)
+    // Seed picked for a clear column under the drop point — a trooper that meets a sky isle
+    // mid-fall splats legitimately, which is the game, not what this test is counting.
+    const world = createWorld(15)
     const carrier = combatant(0, 500, 400)
     carrier.input = deployInput
     const sim = createSim(world, [carrier], { mode: SimMode.DEATHMATCH })

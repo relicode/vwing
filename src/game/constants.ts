@@ -157,8 +157,8 @@ export const SPAWN_KEEPOUT_RADIUS = 400 // px disc around every spawn kept free 
 export const BAND_SKY_BOTTOM = 0.3 // fraction of WORLD_HEIGHT: open airspace above this (DM anchors live here)
 // The central sea (LOW band): column span as fractions of the play width, surface + floor as
 // fractions of WORLD_HEIGHT. Shared with the tests so the gulf geometry can't drift apart.
-export const SEA_WEST_FRAC = 0.34
-export const SEA_EAST_FRAC = 0.66
+export const SEA_WEST_FRAC = 0.4
+export const SEA_EAST_FRAC = 0.62
 export const SEA_SPILL_FRAC = 0.74 // the water surface (spill level below the containing lips)
 export const SEA_FLOOR_FRAC = 0.9
 export const PLATEAU_MIN_CELLS = 8 // min flat-run width (cells) so plateau tops are wide patrol ledges
