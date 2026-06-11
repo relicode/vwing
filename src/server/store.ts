@@ -16,7 +16,10 @@ const STATE_KEY = (game: string): string => `vwing:state:${game}`
 const SUMMARY_KEY = (game: string): string => `vwing:game:${game}`
 const GAMES_SET = 'vwing:games'
 const SUMMARY_TTL = 30 // s; refreshed by each room's heartbeat, so a crashed server expires out of the lobby
-const STATE_TTL = 3600 // s; the persisted snapshot lingers an hour for inspection / external tooling
+// How long a persisted room outlives its last write — the single authority on when a hibernated
+// game is truly gone (the restore path also treats older-than-this blobs as stale, which covers
+// the TTL-less in-memory store).
+export const STATE_TTL = 3600 // s
 
 // Keyed by a game's canonical (case-insensitive, normalized) key — same index the server's
 // `rooms` map uses — so the lobby never lists two casings of one game. `name` carries the

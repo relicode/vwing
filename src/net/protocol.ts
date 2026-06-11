@@ -42,7 +42,7 @@ export enum JoinIntent {
 export type ClientMessage = { t: MsgType.INPUT; input: InputSnapshot }
 
 export type ServerMessage =
-  | { t: MsgType.WELCOME; selfId: number; game: string; tickRate: number }
+  | { t: MsgType.WELCOME; selfId: number; game: string; tickRate: number; reclaimed: boolean }
   | { t: MsgType.SNAPSHOT; world: WorldSnapshot; players: PlayerInfo[]; events: DeathEvent[] }
   | { t: MsgType.REJECTED; reason: string }
 
@@ -81,3 +81,8 @@ export const sanitizeGameName = (raw: string, max: number): string =>
 // the same game and can't be double-hosted ("Arena" == "arena", precomposed "é" == combining
 // "é", fullwidth "Ａ" == "a"). Diacritics are preserved (café ≠ cafe — genuinely distinct names).
 export const gameNameKey = (name: string): string => name.normalize('NFKC').toLowerCase()
+
+// A pilot's canonical identity within a room — the same NFKC casefold a game name gets. With no
+// auth, the name IS the identity: a disconnected pilot rejoining under any casing/normalization
+// of their name reclaims their benched seat (see server/room.ts).
+export const pilotNameKey = gameNameKey
