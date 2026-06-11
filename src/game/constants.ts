@@ -248,6 +248,25 @@ export const Color = {
   FIRE_EDGE: 0xff9e3f,
 } as const
 
+// One distinct hull color per online seat, assigned by the server as a SLOT index that rides
+// the wire (PlayerInfo.palette), the bench, and the persisted roster — so every client agrees
+// who is amber. Slots 0/1 equal the legacy SHIP/ENEMY hues, so a 1v1 looks like it always has,
+// and the offline campaign (which passes no palette map to the renderer) is untouched.
+// Constraints on the hexes: pairwise distinct, length === NET_MAX_PLAYERS, and clear of the
+// FX/terrain hues they'd be confused with (EXPLOSION/MISSILE 0xffd166, BULLET_ENEMY 0xff9d5c,
+// THRUST 0xffb347, WATER_EDGE 0x7fc8ff, FIRE_EDGE 0xff9e3f, GRASS_EDGE 0x77c95f) — pinned by
+// __tests__/net.test.ts. The most-separated hues come first so small games read best.
+export const PLAYER_PALETTE: readonly number[] = [
+  0x8fe3ff, // 0 cyan — the legacy self hue
+  0xff6b8b, // 1 rose — the legacy enemy hue
+  0xffd76a, // 2 gold
+  0xb38bff, // 3 violet
+  0xc6f25a, // 4 lime
+  0xff7ae0, // 5 magenta
+  0x7d8cff, // 6 indigo
+  0xdde6f2, // 7 silver
+]
+
 // Global gravity: a constant downward pull. Thrust must beat it to climb.
 export const GRAVITY = 200 // px/s^2
 

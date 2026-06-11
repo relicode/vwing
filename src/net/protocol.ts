@@ -12,6 +12,7 @@ export type PlayerInfo = {
   id: number
   name: string
   score: number // points (CAMPAIGN) / frags (DEATHMATCH)
+  palette: number // PLAYER_PALETTE slot the server assigned this seat (clients clamp, fallback 1)
   connected: boolean
 }
 
