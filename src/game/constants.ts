@@ -8,15 +8,15 @@ export enum GamePhase {
   VICTORY = 'VICTORY', // the campaign won: the bot eliminated (base captured + ship downed)
 }
 
-// Who controls a ship. PLAYER is the camera-followed, life-counted human; BOT is AI.
+// Who controls a ship. PLAYER is the camera-followed human; BOT is AI.
 export enum ShipKind {
   PLAYER = 'PLAYER',
   BOT = 'BOT',
 }
 
-// How a simulation scores and respawns. CAMPAIGN is the offline run (the human has a
-// finite life count + a point score, bots respawn endlessly); DEATHMATCH is online PvP
-// (everyone respawns endlessly and a kill is worth one frag to its shooter).
+// How a simulation scores and respawns. CAMPAIGN is the offline base war (respawns flow from
+// holding a base — lose every base and death is elimination); DEATHMATCH is online PvP
+// (baseless: everyone respawns endlessly and a kill is worth one frag to its shooter).
 export enum SimMode {
   CAMPAIGN = 'CAMPAIGN',
   DEATHMATCH = 'DEATHMATCH',
@@ -263,16 +263,14 @@ export const SHIP_THRUST = 580 // px/s^2 along the nose
 export const SHIP_REVERSE_THRUST = 260 // px/s^2 opposite the nose while the retros burn
 export const SHIP_TURN_RATE = 3.6 // rad/s
 export const SHIP_DRAG = 0.22 // gentle velocity damping coefficient (per second)
-export const SHIP_START_LIVES = 3
 export const SHIP_FIRE_INTERVAL = 0.17 // s between shots
 export const SHIP_RESPAWN_INVULN = 2.5 // s of invulnerability after (re)spawn
 export const SHIP_SPAWN_CLEAR_RADIUS = 260 // rocks within this of a respawn are cleared
-// Dying costs time, and it compounds: the first death waits RESPAWN_DELAY_BASE before the
-// ship re-enters, and every death already suffered this run adds RESPAWN_DELAY_GROWTH (capped) —
-// a side being worn down reinforces slower and slower.
+// Respawns are unlimited, but dying costs time and it compounds without ceiling: the waits run
+// 5, 10, 15, … — a side being worn down reinforces ever slower. The only hard stop is the base
+// war: a side holding NO base (its own lost, none captured) has no respawns at all (sim.ts).
 export const RESPAWN_DELAY_BASE = 5 // s the first respawn waits
-export const RESPAWN_DELAY_GROWTH = 2.5 // s added per prior death
-export const RESPAWN_DELAY_MAX = 15 // ceiling on the wait
+export const RESPAWN_DELAY_GROWTH = 5 // s added per prior death (uncapped)
 
 // Projectiles fly straight (no gravity), inheriting the ship's velocity.
 export const BULLET_SPEED = 600 // muzzle speed

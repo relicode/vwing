@@ -8,7 +8,7 @@ export type Rng = () => number
 // A Newtonian body in the dogfight. PvP-ready: the world holds a list of ships.
 export type Ship = {
   id: number // owner tag matched against bullets so shots skip their firer
-  kind: ShipKind // PLAYER (camera + lives) vs BOT (AI), drives render + death rules
+  kind: ShipKind // PLAYER (the camera-followed human) vs BOT (AI), drives render + victory rules
   x: number
   y: number
   vx: number
@@ -220,7 +220,6 @@ export type EngineStatus = {
   phase: GamePhase
   score: number
   best: number
-  lives: number
   weapon: WeaponKind // the PLAYER ship's current secondary
   charge: number // the PLAYER ship's secondary energy as a 0..100 percent (for the HUD bar)
   troops: number // whole troopers aboard the PLAYER ship (bay pips)

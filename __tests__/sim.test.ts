@@ -6,9 +6,11 @@ import {
   DeviceKind,
   GRASS_BURN_TIME,
   RESPAWN_DELAY_BASE,
+  RESPAWN_DELAY_GROWTH,
   SHIP_MAX_HEALTH,
   ShipKind,
   SimMode,
+  SPAWN_ALTITUDE,
   StructureType,
   Surface,
   TROOP_BAY_CAPACITY,
@@ -22,10 +24,10 @@ import type { Block, Bullet, Device } from '$/game/types'
 const destructibleArea = (blocks: Block[]): number =>
   blocks.reduce((sum, b) => (b.structure === StructureType.METAL ? sum : sum + b.w * b.h), 0)
 
-const combatant = (id: number, x: number, y: number, lives: number): Combatant => {
+const combatant = (id: number, x: number, y: number): Combatant => {
   const ship = createShip(ShipKind.PLAYER, x, y, id)
   ship.invuln = 0 // drop spawn invulnerability so the test shot connects
-  return { ship, input: inputFromSnapshot({ ...NEUTRAL_INPUT }), name: `p${id}`, score: 0, lives, spawn: { x, y } }
+  return { ship, input: inputFromSnapshot({ ...NEUTRAL_INPUT }), name: `p${id}`, score: 0, spawn: { x, y } }
 }
 
 const lethalShot = (x: number, y: number, owner: number): Bullet => ({
@@ -42,8 +44,8 @@ const lethalShot = (x: number, y: number, owner: number): Bullet => ({
 describe('createSim — deathmatch', () => {
   test('a kill credits the shooter a frag and respawns the victim after the reinforcement wait', () => {
     const world = createWorld(1)
-    const shooter = combatant(0, 500, 400, Number.POSITIVE_INFINITY)
-    const victim = combatant(1, 520, 400, Number.POSITIVE_INFINITY)
+    const shooter = combatant(0, 500, 400)
+    const victim = combatant(1, 520, 400)
     const sim = createSim(world, [shooter, victim], { mode: SimMode.DEATHMATCH })
     victim.ship.health = 10
     world.bullets.push(lethalShot(victim.ship.x, victim.ship.y, shooter.ship.id))
@@ -64,8 +66,8 @@ describe('createSim — deathmatch', () => {
 
   test('every death grows the next wait (the reinforcement clock compounds)', () => {
     const world = createWorld(5)
-    const shooter = combatant(0, 500, 400, Number.POSITIVE_INFINITY)
-    const victim = combatant(1, 520, 400, Number.POSITIVE_INFINITY)
+    const shooter = combatant(0, 500, 400)
+    const victim = combatant(1, 520, 400)
     const sim = createSim(world, [shooter, victim], { mode: SimMode.DEATHMATCH })
     victim.ship.health = 10
     world.bullets.push(lethalShot(victim.ship.x, victim.ship.y, shooter.ship.id))
@@ -76,13 +78,14 @@ describe('createSim — deathmatch', () => {
     victim.ship.health = 10
     world.bullets.push(lethalShot(victim.ship.x, victim.ship.y, shooter.ship.id))
     sim.step(1 / 60) // …and die again
-    expect(sim.respawnIn(1)).toBeGreaterThan(RESPAWN_DELAY_BASE) // the second wait is longer
+    // The waits run 5, 10, 15, … — one full RESPAWN_DELAY_GROWTH longer per prior death, no cap.
+    expect(sim.respawnIn(1)).toBeCloseTo(RESPAWN_DELAY_BASE + RESPAWN_DELAY_GROWTH, 1)
   })
 
   test('a shooter never scores off its own deaths', () => {
     const world = createWorld(2)
-    const a = combatant(0, 500, 400, Number.POSITIVE_INFINITY)
-    const b = combatant(1, 1500, 400, Number.POSITIVE_INFINITY)
+    const a = combatant(0, 500, 400)
+    const b = combatant(1, 1500, 400)
     const sim = createSim(world, [a, b], { mode: SimMode.DEATHMATCH })
     a.ship.health = 10
     world.bullets.push(lethalShot(a.ship.x, a.ship.y, b.ship.id)) // b kills a
@@ -93,10 +96,10 @@ describe('createSim — deathmatch', () => {
 })
 
 describe('createSim — campaign', () => {
-  test('running out of lives eliminates the victim (no respawn) and scores the killer', () => {
+  test('a campaign kill scores the killer; the victim respawns while its base stands (no life count)', () => {
     const world = createWorld(3)
-    const player = combatant(0, 500, 400, 1) // last life
-    const enemy = combatant(1, 1500, 400, Number.POSITIVE_INFINITY)
+    const player = combatant(0, 500, 400)
+    const enemy = combatant(1, 1500, 400)
     const sim = createSim(world, [player, enemy], { mode: SimMode.CAMPAIGN })
     player.ship.health = 5
     world.bullets.push(lethalShot(player.ship.x, player.ship.y, enemy.ship.id))
@@ -104,8 +107,7 @@ describe('createSim — campaign', () => {
     const events = sim.step(1 / 60)
 
     expect(events).toHaveLength(1)
-    expect(events[0]).toMatchObject({ victimId: 0, eliminated: true })
-    expect(player.lives).toBe(0)
+    expect(events[0]).toMatchObject({ victimId: 0, eliminated: false })
     expect(enemy.score).toBe(BOT_KILL_SCORE)
   })
 })
@@ -113,17 +115,17 @@ describe('createSim — campaign', () => {
 describe('createSim — base capture cuts respawns', () => {
   test('CAMPAIGN seeds one barracks per side; DEATHMATCH stays baseless', () => {
     const campaign = createWorld(21)
-    createSim(campaign, [combatant(0, 500, 400, 3)], { mode: SimMode.CAMPAIGN })
+    createSim(campaign, [combatant(0, 500, 400)], { mode: SimMode.CAMPAIGN })
     expect(campaign.bases).toHaveLength(2)
     const dm = createWorld(21)
-    createSim(dm, [combatant(0, 500, 400, Number.POSITIVE_INFINITY)], { mode: SimMode.DEATHMATCH })
+    createSim(dm, [combatant(0, 500, 400)], { mode: SimMode.DEATHMATCH })
     expect(dm.bases).toHaveLength(0)
   })
 
-  test('dying while your base is captured is elimination, lives or not — and the wreck leaves the world', () => {
+  test('dying with your last held base captured is elimination — and the wreck leaves the world', () => {
     const world = createWorld(22)
-    const player = combatant(0, 500, 400, 3) // plenty of lives left
-    const enemy = combatant(1, 1500, 400, Number.POSITIVE_INFINITY)
+    const player = combatant(0, 500, 400)
+    const enemy = combatant(1, 1500, 400)
     const sim = createSim(world, [player, enemy], { mode: SimMode.CAMPAIGN })
     const home = world.bases.find((b) => b.owner === 0)
     if (home) {
@@ -136,13 +138,71 @@ describe('createSim — base capture cuts respawns', () => {
     const events = sim.step(1 / 60)
 
     expect(events[0]).toMatchObject({ victimId: 0, eliminated: true })
-    expect(player.lives).toBe(2) // the lives counter wasn't the reason
     expect(world.ships.some((s) => s.id === 0)).toBe(false) // no ghost left to target or draw
+  })
+
+  test('holding the ENEMY base keeps a beheaded side respawning — mustered above the captured pad', () => {
+    const world = createWorld(26)
+    const player = combatant(0, 500, 400)
+    const enemy = combatant(1, 1500, 400)
+    const sim = createSim(world, [player, enemy], { mode: SimMode.CAMPAIGN })
+    const home = world.bases.find((b) => b.owner === 0)
+    const taken = world.bases.find((b) => b.owner === 1)
+    expect(home).toBeDefined()
+    expect(taken).toBeDefined()
+    if (!home || !taken) return
+    player.ship.health = 5
+    world.bullets.push(lethalShot(player.ship.x, player.ship.y, enemy.ship.id))
+    // An occupying squad holds both captures for the whole wait (an empty zone bleeds capture
+    // back through stepBases — occupation, not a flag, is what "holding" means).
+    const holdCaptures = (): void => {
+      home.capture = 1
+      home.capturedBy = 1 // own barracks lost…
+      taken.capture = 1
+      taken.capturedBy = 0 // …but the enemy's taken in return
+    }
+    holdCaptures()
+    expect(sim.step(1 / 60)[0]).toMatchObject({ victimId: 0, eliminated: false }) // the taken pad sustains the side
+    let musterX: number | undefined // sampled the frame the ship re-enters (gravity moves it after)
+    let musterY: number | undefined
+    for (let i = 0; i < Math.ceil((RESPAWN_DELAY_BASE + 0.2) * 60); i += 1) {
+      holdCaptures()
+      sim.step(1 / 60)
+      const ship = world.ships.find((s) => s.id === 0)
+      if (ship && musterY === undefined) {
+        musterX = ship.x
+        musterY = ship.y
+      }
+    }
+    expect(musterX).toBe(taken.x) // respawned despite the fallen home, above the pad it captured
+    expect(musterY).toBeCloseTo(taken.y - SPAWN_ALTITUDE, 0)
+  })
+
+  test('losing your last base while the clock runs cancels the respawn (eliminated at muster)', () => {
+    const world = createWorld(27)
+    const player = combatant(0, 500, 400)
+    const enemy = combatant(1, 1500, 400)
+    const sim = createSim(world, [player, enemy], { mode: SimMode.CAMPAIGN })
+    player.ship.health = 5
+    world.bullets.push(lethalShot(player.ship.x, player.ship.y, enemy.ship.id))
+    expect(sim.step(1 / 60)[0]).toMatchObject({ victimId: 0, eliminated: false }) // the base stood at death
+    const home = world.bases.find((b) => b.owner === 0)
+    expect(home).toBeDefined()
+    if (!home) return
+    let eliminatedMidWait = false
+    for (let i = 0; i < Math.ceil((RESPAWN_DELAY_BASE + 0.2) * 60); i += 1) {
+      home.capture = 1 // the assault completes while the wreck waits
+      home.capturedBy = 1
+      if (sim.step(1 / 60).some((e) => e.victimId === 0 && e.eliminated)) eliminatedMidWait = true
+    }
+    expect(eliminatedMidWait).toBe(true) // the noose closing mid-wait is reported like any death
+    expect(world.ships.some((s) => s.id === 0)).toBe(false) // the reinforcement never arrived
+    expect(sim.respawnIn(0)).toBe(0)
   })
 
   test('a pool lapping over a pad floats the barracks slab up to the waterline', () => {
     const world = createWorld(21)
-    const sim = createSim(world, [combatant(0, 500, 400, 3)], { mode: SimMode.CAMPAIGN })
+    const sim = createSim(world, [combatant(0, 500, 400)], { mode: SimMode.CAMPAIGN })
     const home = world.bases.find((b) => b.owner === 0)
     expect(home).toBeDefined()
     if (!home) return
@@ -158,8 +218,8 @@ describe('createSim — base capture cuts respawns', () => {
 
   test('an uncaptured base means a normal respawn (the noose only closes when the base falls)', () => {
     const world = createWorld(23)
-    const player = combatant(0, 500, 400, 3)
-    const enemy = combatant(1, 1500, 400, Number.POSITIVE_INFINITY)
+    const player = combatant(0, 500, 400)
+    const enemy = combatant(1, 1500, 400)
     const sim = createSim(world, [player, enemy], { mode: SimMode.CAMPAIGN })
     player.ship.health = 5
     world.bullets.push(lethalShot(player.ship.x, player.ship.y, enemy.ship.id))
@@ -174,18 +234,18 @@ describe('createSim — troop bay + deploy', () => {
   const deployInput = inputFromSnapshot({ ...NEUTRAL_INPUT, deploying: true })
 
   test('mode fills the bay: DEATHMATCH spawns full, CAMPAIGN spawns empty', () => {
-    const dm = combatant(0, 500, 400, Number.POSITIVE_INFINITY)
+    const dm = combatant(0, 500, 400)
     createSim(createWorld(11), [dm], { mode: SimMode.DEATHMATCH })
     expect(dm.ship.troops).toBe(TROOP_BAY_CAPACITY)
 
-    const camper = combatant(0, 500, 400, 3)
+    const camper = combatant(0, 500, 400)
     createSim(createWorld(11), [camper], { mode: SimMode.CAMPAIGN })
     expect(camper.ship.troops).toBe(0)
   })
 
   test('holding deploy streams troopers at the cadence and drains the bay', () => {
     const world = createWorld(12)
-    const carrier = combatant(0, 500, 400, Number.POSITIVE_INFINITY)
+    const carrier = combatant(0, 500, 400)
     carrier.input = deployInput
     const sim = createSim(world, [carrier], { mode: SimMode.DEATHMATCH })
 
@@ -203,7 +263,7 @@ describe('createSim — troop bay + deploy', () => {
 
   test('an empty bay deploys nothing (CAMPAIGN spawn)', () => {
     const world = createWorld(13)
-    const empty = combatant(0, 500, 400, 3)
+    const empty = combatant(0, 500, 400)
     empty.input = deployInput
     const sim = createSim(world, [empty], { mode: SimMode.CAMPAIGN })
     for (let i = 0; i < 10; i += 1) sim.step(1 / 60)
@@ -213,8 +273,8 @@ describe('createSim — troop bay + deploy', () => {
 
   test('a DEATHMATCH respawn refills the bay', () => {
     const world = createWorld(14)
-    const shooter = combatant(0, 500, 400, Number.POSITIVE_INFINITY)
-    const victim = combatant(1, 520, 400, Number.POSITIVE_INFINITY)
+    const shooter = combatant(0, 500, 400)
+    const victim = combatant(1, 520, 400)
     const sim = createSim(world, [victim, shooter], { mode: SimMode.DEATHMATCH })
     victim.ship.troops = 2 // partially spent bay
     victim.ship.health = 10
@@ -227,7 +287,7 @@ describe('createSim — troop bay + deploy', () => {
 describe('createSim — destructible terrain', () => {
   test('firing into a destructible surface carves it and bumps the terrain version', () => {
     const world = createWorld(7)
-    const gunner = combatant(0, 540, 1280, Number.POSITIVE_INFINITY)
+    const gunner = combatant(0, 540, 1280)
     gunner.ship.angle = Math.PI / 2 // forward = +y (straight down into the earth)
     gunner.ship.invuln = 999 // keep it from dying on the terrain while it shoots
     gunner.input = inputFromSnapshot({
@@ -262,7 +322,7 @@ describe('createSim — destructible terrain', () => {
 describe('createSim — grass fire', () => {
   test('a flame gout sets the lawn alight; the first cells spend to bare earth while the fire creeps on', () => {
     const world = createWorld(7)
-    const bystander = combatant(0, 500, 400, Number.POSITIVE_INFINITY)
+    const bystander = combatant(0, 500, 400)
     bystander.ship.invuln = 999 // park it out of the story — the terrain is the subject
     const sim = createSim(world, [bystander], { mode: SimMode.DEATHMATCH })
     // The arena is procedural, so torch whatever lawn this seed produced: the highest exposed
@@ -292,7 +352,7 @@ describe('createSim — grass fire', () => {
 describe('createSim — water', () => {
   test('ship buoyancy reads water pooled into world.water after the sim was created', () => {
     const world = createWorld(8)
-    const floater = combatant(0, 500, 400, Number.POSITIVE_INFINITY)
+    const floater = combatant(0, 500, 400)
     const sim = createSim(world, [floater], { mode: SimMode.DEATHMATCH })
     // A pool forms mid-run (as the water cannon does), replacing the world.water array. The ship
     // sits fully under the new surface, so buoyancy (which beats gravity) must push it upward —
@@ -307,11 +367,11 @@ describe('createSim — water', () => {
 describe('createSim — membership', () => {
   test('addCombatant / removeCombatant keep world.ships in lockstep', () => {
     const world = createWorld(4)
-    const a = combatant(0, 500, 400, Number.POSITIVE_INFINITY)
+    const a = combatant(0, 500, 400)
     const sim = createSim(world, [a], { mode: SimMode.DEATHMATCH })
     expect(world.ships).toHaveLength(1)
 
-    const b = combatant(1, 700, 400, Number.POSITIVE_INFINITY)
+    const b = combatant(1, 700, 400)
     sim.addCombatant(b)
     expect(world.ships).toHaveLength(2)
     expect(sim.getCombatant(1)).toBe(b)
@@ -352,7 +412,7 @@ describe('createSim — flame and water vs infantry', () => {
 
   test('friendly fire is real: a stray same-side bullet splatters a trooper', () => {
     const world = createWorld(31)
-    const sim = createSim(world, [combatant(0, 500, 400, Number.POSITIVE_INFINITY)], { mode: SimMode.DEATHMATCH })
+    const sim = createSim(world, [combatant(0, 500, 400)], { mode: SimMode.DEATHMATCH })
     const ownMan = airborneTrooper(700, 300, 0) // same side as the bullet below
     world.devices.push(ownMan)
     world.bullets.push({ x: 700, y: 300, vx: 0, vy: 0, radius: 3, life: 0.3, owner: 0, damage: 22 })
@@ -362,7 +422,7 @@ describe('createSim — flame and water vs infantry', () => {
 
   test('a flame gout ignites a trooper (no instant kill); a water squirt douses and shoves it', () => {
     const world = createWorld(21)
-    const sim = createSim(world, [combatant(0, 500, 400, Number.POSITIVE_INFINITY)], { mode: SimMode.DEATHMATCH })
+    const sim = createSim(world, [combatant(0, 500, 400)], { mode: SimMode.DEATHMATCH })
     const victim = airborneTrooper(700, 300, 1)
     world.devices.push(victim)
     world.bullets.push({ x: 700, y: 300, vx: 0, vy: 0, radius: 3, life: 0.3, owner: 0, damage: 3, burn: true })
