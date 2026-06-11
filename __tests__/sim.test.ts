@@ -178,7 +178,7 @@ describe('createSim — base capture cuts respawns', () => {
     expect(musterY).toBeCloseTo(taken.y - SPAWN_ALTITUDE, 0)
   })
 
-  test('losing your last base while the clock runs cancels the respawn (eliminated at muster)', () => {
+  test('losing your last base while the clock runs is immediate elimination (no doomed countdown)', () => {
     const world = createWorld(27)
     const player = combatant(0, 500, 400)
     const enemy = combatant(1, 1500, 400)
@@ -189,13 +189,12 @@ describe('createSim — base capture cuts respawns', () => {
     const home = world.bases.find((b) => b.owner === 0)
     expect(home).toBeDefined()
     if (!home) return
-    let eliminatedMidWait = false
-    for (let i = 0; i < Math.ceil((RESPAWN_DELAY_BASE + 0.2) * 60); i += 1) {
-      home.capture = 1 // the assault completes while the wreck waits
-      home.capturedBy = 1
-      if (sim.step(1 / 60).some((e) => e.victimId === 0 && e.eliminated)) eliminatedMidWait = true
-    }
-    expect(eliminatedMidWait).toBe(true) // the noose closing mid-wait is reported like any death
+    home.capture = 1 // the assault completes while the wreck waits
+    home.capturedBy = 1
+    // The very next frame — far inside the RESPAWN_DELAY_BASE wait — the noose closes: no
+    // sitting through a countdown whose outcome is already sealed.
+    const events = sim.step(1 / 60)
+    expect(events).toContainEqual(expect.objectContaining({ victimId: 0, eliminated: true }))
     expect(world.ships.some((s) => s.id === 0)).toBe(false) // the reinforcement never arrived
     expect(sim.respawnIn(0)).toBe(0)
   })

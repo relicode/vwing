@@ -273,6 +273,10 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
   const controlledBases = (id: number): Base[] =>
     world.bases.filter((b) => (b.owner === id ? b.capture < 1 : b.capture >= 1 && b.capturedBy === id))
 
+  // The base-war noose: a side controlling no base has no reinforcements left. Always false in
+  // baseless (DEATHMATCH) worlds.
+  const noBaseLeft = (id: number): boolean => world.bases.length > 0 && controlledBases(id).length === 0
+
   // Where a reinforcement re-enters: DEATHMATCH picks the open anchor farthest from live
   // enemies; CAMPAIGN musters above a base the side still controls — the home pad while it
   // stands, else a pad it captured. undefined = no base left to muster at.
@@ -310,7 +314,7 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     // own barracks lost and no enemy barracks taken — has no reinforcements left, and dying in
     // that state is elimination. DEATHMATCH worlds are baseless, so the noose never closes
     // there: respawns are endless, only ever slower.
-    const isEliminated = world.bases.length > 0 && controlledBases(victim.id).length === 0
+    const isEliminated = noBaseLeft(victim.id)
     if (isEliminated) {
       eliminated.add(victim.id)
       // Drop the wreck from the world so nothing keeps targeting (or drawing) a ghost.
@@ -449,12 +453,14 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     if (world.shake > 0) world.shake = Math.max(0, world.shake - SHAKE_DECAY * dt)
     world.time += dt
     // Reinforcements whose wait has elapsed re-enter (the spawn point is picked NOW, against the
-    // world as it is, not as it was at the moment of death).
+    // world as it is, not as it was at the moment of death). A side whose last base falls while
+    // the clock runs doesn't get to watch a doomed countdown: it is eliminated on the spot.
     for (let i = pending.length - 1; i >= 0; i -= 1) {
-      if (world.time < pending[i].at) continue
+      const doomed = noBaseLeft(pending[i].combatant.ship.id)
+      if (!doomed && world.time < pending[i].at) continue
       const { combatant: vc } = pending.splice(i, 1)[0]
       awaiting.delete(vc.ship.id)
-      const spawn = spawnFor(vc)
+      const spawn = doomed ? undefined : spawnFor(vc)
       if (!spawn) {
         // The noose closed mid-wait: the side's last held base fell while the clock ran. The
         // reinforcement never arrives — that is elimination, reported like any other death.
