@@ -18,7 +18,6 @@ import {
   POOL_FILL_AREA,
   RESPAWN_DELAY_BASE,
   RESPAWN_DELAY_GROWTH,
-  RESPAWN_DELAY_MAX,
   SHAKE_DECAY,
   SHIP_DEATH_SHAKE,
   SHIP_FIRE_INTERVAL,
@@ -28,6 +27,7 @@ import {
   ShipKind,
   SimMode,
   SMOKE_LIFE,
+  SPAWN_ALTITUDE,
   SPAWN_ANCHOR_FRACS_X,
   SPAWN_ANCHOR_FRACS_Y,
   SPLASH_MIN_SPEED,
@@ -53,7 +53,7 @@ import { respawnShipAt, type ShipEnv, updateShip } from '$/game/ship'
 import { resolveShipTerrain } from '$/game/terrain'
 import { createTerrain } from '$/game/terrain-map'
 import { spawnTrooper } from '$/game/troops'
-import type { Block, Bullet, Ship, Vec2, World } from '$/game/types'
+import type { Base, Block, Bullet, Ship, Vec2, World } from '$/game/types'
 import {
   carveVoxel,
   createVoxelTerrain,
@@ -78,7 +78,6 @@ export type Combatant = {
   input: Input
   name: string
   score: number // points (CAMPAIGN) / frags (DEATHMATCH)
-  lives: number // remaining lives; Number.POSITIVE_INFINITY = endless respawns (bots, PvP)
   spawn: Vec2 // CAMPAIGN home respawn point
 }
 
@@ -89,7 +88,7 @@ export type DeathEvent = {
   victimId: number
   victimKind: ShipKind
   killerId: number | undefined
-  eliminated: boolean // CAMPAIGN: out of lives, removed from play (never true in DEATHMATCH)
+  eliminated: boolean // CAMPAIGN: no base left to respawn from — out of the run (never true in DEATHMATCH)
   x: number // death location (the networked client spawns the wreck explosion here)
   y: number
 }
@@ -179,7 +178,7 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
   // which short-circuits every base/capture rule below into a no-op.
   if (config.mode === SimMode.CAMPAIGN) world.bases = createCampaignBases()
   const submergedShips = new Set<number>() // ids currently underwater, for splash-on-crossing
-  const eliminated = new Set<number>() // ids removed from play this run (CAMPAIGN, out of lives)
+  const eliminated = new Set<number>() // ids removed from play this run (CAMPAIGN, no base left)
   // Dying costs time, and it compounds: the wreck leaves the sky and the combatant waits out a
   // delay that grows with every death already suffered (the reinforcement clock).
   const awaiting = new Set<number>() // ids whose ships are out of the world, waiting to respawn
@@ -266,13 +265,30 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     return chooseSpawn(world, enemies)
   }
 
+  // Every base sustaining a combatant's respawns: its own barracks while it still stands, plus
+  // any enemy barracks it has captured.
+  const controlledBases = (id: number): Base[] =>
+    world.bases.filter((b) => (b.owner === id ? b.capture < 1 : b.capture >= 1 && b.capturedBy === id))
+
+  // Where a reinforcement re-enters: DEATHMATCH picks the open anchor farthest from live
+  // enemies; CAMPAIGN musters above a base the side still controls — the home pad while it
+  // stands, else a pad it captured. undefined = no base left to muster at.
+  const spawnFor = (vc: Combatant): Vec2 | undefined => {
+    if (config.mode === SimMode.DEATHMATCH) return pickSpawn(vc.ship.id)
+    if (world.bases.length === 0) return vc.spawn
+    const held = controlledBases(vc.ship.id)
+    if (held.some((b) => b.owner === vc.ship.id)) return vc.spawn // home stands — the usual pad
+    const taken = held[0]
+    return taken ? { x: taken.x, y: taken.y - SPAWN_ALTITUDE } : undefined
+  }
+
   // Clear deployed devices around a fresh spawn so a respawn isn't an instant re-death.
   const clearSpawnArea = (x: number, y: number): void => {
     world.devices = world.devices.filter((device) => Math.hypot(device.x - x, device.y - y) > SHIP_SPAWN_CLEAR_RADIUS)
   }
 
   // Blow up a downed ship: credit the killer, then queue its respawn (or, in CAMPAIGN,
-  // eliminate it once its lives run out). Guarded so a ship already reaped this frame isn't
+  // eliminate it once it holds no base). Guarded so a ship already reaped this frame isn't
   // killed twice.
   const killShip = (victim: Ship, killerId: number | undefined, events: DeathEvent[]): void => {
     if (eliminated.has(victim.id) || awaiting.has(victim.id)) return
@@ -287,25 +303,21 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     const killer = killerId !== undefined && killerId !== victim.id ? getCombatant(killerId) : undefined
     if (killer) killer.score += config.mode === SimMode.DEATHMATCH ? DEATHMATCH_FRAG_SCORE : BOT_KILL_SCORE
 
-    let isEliminated = false
-    if (Number.isFinite(vc.lives)) {
-      vc.lives -= 1
-      if (vc.lives <= 0) isEliminated = true
-    }
-    // The base-war noose: a side whose home barracks is captured has no respawns left —
-    // dying in that state is elimination, regardless of how many lives remain.
-    const home = world.bases.find((b) => b.owner === victim.id)
-    if (home && home.capture >= 1) isEliminated = true
+    // The base-war noose: respawns flow from holding a base. A side that controls none — its
+    // own barracks lost and no enemy barracks taken — has no reinforcements left, and dying in
+    // that state is elimination. DEATHMATCH worlds are baseless, so the noose never closes
+    // there: respawns are endless, only ever slower.
+    const isEliminated = world.bases.length > 0 && controlledBases(victim.id).length === 0
     if (isEliminated) {
       eliminated.add(victim.id)
       // Drop the wreck from the world so nothing keeps targeting (or drawing) a ghost.
       world.ships = world.ships.filter((ship) => ship.id !== victim.id)
     } else {
-      // The reinforcement clock: the wreck leaves the sky and the respawn waits — longer for
-      // every death already suffered this run.
+      // The reinforcement clock: the wreck leaves the sky and the respawn waits — 5 s more for
+      // every death already suffered this run, without ceiling. Attrition IS the cost of dying.
       const deaths = (deathCounts.get(victim.id) ?? 0) + 1
       deathCounts.set(victim.id, deaths)
-      const delay = Math.min(RESPAWN_DELAY_MAX, RESPAWN_DELAY_BASE + (deaths - 1) * RESPAWN_DELAY_GROWTH)
+      const delay = RESPAWN_DELAY_BASE + (deaths - 1) * RESPAWN_DELAY_GROWTH
       awaiting.add(victim.id)
       pending.push({ combatant: vc, at: world.time + delay })
       world.ships = world.ships.filter((ship) => ship.id !== victim.id)
@@ -435,12 +447,26 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     if (world.shake > 0) world.shake = Math.max(0, world.shake - SHAKE_DECAY * dt)
     world.time += dt
     // Reinforcements whose wait has elapsed re-enter (the spawn point is picked NOW, against the
-    // sky as it is, not as it was at the moment of death).
+    // world as it is, not as it was at the moment of death).
     for (let i = pending.length - 1; i >= 0; i -= 1) {
       if (world.time < pending[i].at) continue
       const { combatant: vc } = pending.splice(i, 1)[0]
       awaiting.delete(vc.ship.id)
-      const spawn = config.mode === SimMode.DEATHMATCH ? pickSpawn(vc.ship.id) : vc.spawn
+      const spawn = spawnFor(vc)
+      if (!spawn) {
+        // The noose closed mid-wait: the side's last held base fell while the clock ran. The
+        // reinforcement never arrives — that is elimination, reported like any other death.
+        eliminated.add(vc.ship.id)
+        events.push({
+          victimId: vc.ship.id,
+          victimKind: vc.ship.kind,
+          killerId: undefined,
+          eliminated: true,
+          x: vc.ship.x,
+          y: vc.ship.y,
+        })
+        continue
+      }
       respawnShipAt(vc.ship, spawn.x, spawn.y, world.rng, config.forcedWeapon)
       refillBay(vc.ship, config.mode)
       clearSpawnArea(vc.ship.x, vc.ship.y)
