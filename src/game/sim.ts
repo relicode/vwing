@@ -243,11 +243,11 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     const cells = [...voxel.burning.keys()]
     for (let n = 0; n < GRASS_FIRE_EMBERS; n += 1) {
       const i = cells[Math.floor(world.rng() * cells.length)]
-      const x = (i % voxel.cols) * VOXEL_CELL + VOXEL_CELL / 2
-      const y = Math.floor(i / voxel.cols) * VOXEL_CELL // the cell's top — flames lick up off the skin
+      const x = (i % voxel.cols) * voxel.cell + voxel.cell / 2
+      const y = Math.floor(i / voxel.cols) * voxel.cell // the cell's top — flames lick up off the skin
       spawnPuff(
         world.particles,
-        x + randRange(world.rng, -VOXEL_CELL / 2, VOXEL_CELL / 2),
+        x + randRange(world.rng, -voxel.cell / 2, voxel.cell / 2),
         y,
         0,
         -randRange(world.rng, 30, 80),
