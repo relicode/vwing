@@ -271,6 +271,15 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     expect(world.bullets.length).toBe(0)
   })
 
+  test('footing on burning grass sets the man himself alight', () => {
+    const world = makeWorld([], [infantry({ attached: true, x: 150, y: 94, groundLeft: 100, groundRight: 160 })])
+    world.blocks = [{ x: 100, y: 102, w: 60, h: 40, structure: StructureType.EARTH, surface: Surface.FIRE }]
+    updateDevices(world, 1 / 60)
+    const u = world.devices[0]
+    expect(u?.kind).toBe(DeviceKind.INFANTRY)
+    if (u?.kind === DeviceKind.INFANTRY) expect(u.burning).toBeGreaterThan(0)
+  })
+
   test('a landed unit patrols its block and never walks off the edges', () => {
     const world = makeWorld([], [infantry({ attached: true, x: 150, y: 94, groundLeft: 100, groundRight: 160 })])
     world.blocks = [{ x: 100, y: 102, w: 60, h: 40, structure: StructureType.EARTH, surface: Surface.EARTH }] // the block it stands on

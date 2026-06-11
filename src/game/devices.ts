@@ -894,6 +894,8 @@ const stepDevice = (
         device.slide = 0
         return true
       }
+      // Burning ground: footing on grass that's alight catches the man himself.
+      if (device.burning <= 0 && ground.surface === Surface.FIRE) device.burning = INFANTRY_BURN_TIME
       // Alight: a burning trooper has no discipline left — it flails blindly along its block
       // at a dead sprint (reversing on a whim), shedding the fire onto anyone it brushes.
       if (device.burning > 0) {

@@ -11,6 +11,7 @@ import {
   DEATHMATCH_FRAG_SCORE,
   DeviceKind,
   FLAMETHROWER_BURN_RADIUS,
+  GRASS_FIRE_EMBERS,
   INFANTRY_BURN_TIME,
   INFANTRY_WASH_PUSH_MAX,
   MAX_WATER_BODIES,
@@ -47,17 +48,18 @@ import { resolveInfantryContacts, updateDevices } from '$/game/devices'
 import type { Input } from '$/game/input'
 import { clamp } from '$/game/math'
 import { spawnExplosion, spawnPuff, updateParticles } from '$/game/particles'
-import { createRng } from '$/game/rng'
+import { createRng, randRange } from '$/game/rng'
 import { respawnShipAt, type ShipEnv, updateShip } from '$/game/ship'
 import { resolveShipTerrain } from '$/game/terrain'
 import { createTerrain } from '$/game/terrain-map'
 import { spawnTrooper } from '$/game/troops'
 import type { Block, Bullet, Ship, Vec2, World } from '$/game/types'
 import {
-  burnSurface,
   carveVoxel,
   createVoxelTerrain,
+  douseSurface,
   findPool,
+  igniteSurface,
   moveBedrock,
   restoreVoxel,
   snapshotVoxel,
@@ -234,6 +236,28 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     }
   }
 
+  // Burning grass sheds embers: a few cells sampled per frame — not one per cell, so even a
+  // broad fire line stays inside the particle budget (the FIRE surface itself sells the area).
+  const emberBurningGrass = (): void => {
+    if (voxel.burning.size === 0) return
+    const cells = [...voxel.burning.keys()]
+    for (let n = 0; n < GRASS_FIRE_EMBERS; n += 1) {
+      const i = cells[Math.floor(world.rng() * cells.length)]
+      const x = (i % voxel.cols) * voxel.cell + voxel.cell / 2
+      const y = Math.floor(i / voxel.cols) * voxel.cell // the cell's top — flames lick up off the skin
+      spawnPuff(
+        world.particles,
+        x + randRange(world.rng, -voxel.cell / 2, voxel.cell / 2),
+        y,
+        0,
+        -randRange(world.rng, 30, 80),
+        world.rng() < 0.5 ? Color.THRUST : Color.EXPLOSION,
+        world.rng,
+        0.45
+      )
+    }
+  }
+
   const getCombatant = (id: number): Combatant | undefined => combatants.find((c) => c.ship.id === id)
 
   // The open spawn anchor farthest from every live enemy (so a respawn isn't a face-off).
@@ -363,13 +387,16 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
       if (hit >= 0) {
         const block = world.blocks[hit]
         if (bullet.burn) {
-          // Flamethrower: scorch grass → bare earth (surface only, no carve), with a lick of flame.
-          if (burnSurface(voxel, bullet.x, bullet.y, FLAMETHROWER_BURN_RADIUS)) terrainDirty = true
+          // Flamethrower: set the grass ALIGHT (surface only, no carve) — the fire then creeps
+          // on its own through the voxel fire tick — with a lick of flame at the impact.
+          if (igniteSurface(voxel, bullet.x, bullet.y, FLAMETHROWER_BURN_RADIUS)) terrainDirty = true
           spawnExplosion(world.particles, bullet.x, bullet.y, Color.THRUST, world.rng, 7)
         } else if (bullet.wet) {
-          // Water cannon: wet bare earth → grass (regrows over time, no carve), and if the impact
-          // sits in a cupped basin, POUR a droplet's worth into it — the level climbs gradually
-          // toward the spill line (merging into any adjacent body), never all at once.
+          // Water cannon: douse any grass alight, wet bare earth → grass (regrows over time, no
+          // carve), and if the impact sits in a cupped basin, POUR a droplet's worth into it —
+          // the level climbs gradually toward the spill line (merging into any adjacent body),
+          // never all at once.
+          if (douseSurface(voxel, bullet.x, bullet.y, WATER_CANNON_WET_RADIUS)) terrainDirty = true
           wetSurface(voxel, bullet.x, bullet.y, WATER_CANNON_WET_RADIUS)
           const basin = findPool(voxel, bullet.x, bullet.y)
           if (basin) {
@@ -483,7 +510,9 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     resolveInfantryContacts(world)
     stepBases(world, dt)
     floatBases()
-    // Advance loosed terrain chunks; rebuild the derived blocks if the terrain changed this frame.
+    emberBurningGrass()
+    // Advance loosed terrain chunks + the grass fire; rebuild the derived blocks if the terrain
+    // changed this frame.
     const debrisMoved = stepVoxel(voxel, dt)
     if (terrainDirty || debrisMoved) {
       refreshTerrain()

@@ -47,9 +47,10 @@ export enum WeaponKind {
 // Terrain is two independent layers. STRUCTURE is the material body: EARTH is destructible
 // (voxelized, carves into craters), METAL is indestructible (an out-of-grid anchor that never
 // falls and grounds the floating-island flood-fill). SURFACE is the cover on top, which
-// transforms without touching the structure: GRASS burns to bare EARTH, bare EARTH regrows to
-// GRASS when wetted, ICE is slippery. WATER is a surface in the design vocabulary but is modeled
-// as WaterBody overlays (see water.ts), never a stored grid cell.
+// transforms without touching the structure: flame sets GRASS alight (FIRE — it creeps to
+// adjacent grass, then burns out to bare EARTH), bare EARTH regrows to GRASS when wetted, ICE
+// is slippery. WATER is a surface in the design vocabulary but is modeled as WaterBody overlays
+// (see water.ts), never a stored grid cell.
 export enum StructureType {
   EARTH = 'EARTH',
   METAL = 'METAL',
@@ -60,6 +61,7 @@ export enum Surface {
   GRASS = 'GRASS',
   ICE = 'ICE',
   WATER = 'WATER',
+  FIRE = 'FIRE', // grass that is currently alight (transient: douse → GRASS, burn out → EARTH)
 }
 
 // Deployed, world-resident entities spawned by some weapons (one Device[] array, switched on kind).
@@ -240,6 +242,8 @@ export const Color = {
   GRASS_EDGE: 0x77c95f,
   ICE: 0x8fd0e8,
   ICE_EDGE: 0xd9f4ff,
+  FIRE: 0xb5461b, // grass alight — ember-orange body
+  FIRE_EDGE: 0xff9e3f,
 } as const
 
 // Global gravity: a constant downward pull. Thrust must beat it to climb.
@@ -373,14 +377,15 @@ export const WATER_CANNON_LIFE = 0.5
 export const WATER_CANNON_SPREAD = 0.05 // rad jitter
 export const WATER_CANNON_WET_RADIUS = 26 // px radius of earth→grass wetting on a terrain hit
 
-// Flamethrower — a held-down stream of short-lived flame gouts: scorches grass→earth, lightly
-// burns ships, and SETS INFANTRY ALIGHT (see INFANTRY_BURN_*). Short reach, murder up close.
+// Flamethrower — a held-down stream of short-lived flame gouts: sets grass ALIGHT (the fire
+// then creeps on its own — see GRASS_BURN_TIME / GRASS_FIRE_SPREAD_AFTER), lightly burns ships,
+// and SETS INFANTRY ALIGHT (see INFANTRY_BURN_*). Short reach, murder up close.
 export const FLAMETHROWER_PELLETS = 2 // gouts per pulse (the stream is the cooldown cadence)
 export const FLAMETHROWER_SPREAD = 0.18 // rad half-cone
 export const FLAMETHROWER_DAMAGE = 3
 export const FLAMETHROWER_SPEED = 340
 export const FLAMETHROWER_LIFE = 0.5
-export const FLAMETHROWER_BURN_RADIUS = 22 // px radius of grass→earth scorch on a terrain hit
+export const FLAMETHROWER_BURN_RADIUS = 22 // px radius of grass ignition on a terrain hit
 
 // ── Infantry (troop bay) ────────────────────────────────────────────────────
 // Every ship carries a troop bay: it loads troopers from its barracks, then the deploy key
@@ -642,9 +647,15 @@ export const CARVE_RADIUS_BASE = 5 // px crater radius floor (even a tiny pellet
 export const CARVE_RADIUS_SCALE = 2.4 // crater radius = projectile radius × this + base (bigger shot → bigger hole)
 export const DEBRIS_TERMINAL = 520 // px/s terminal fall speed of a loosed chunk
 export const DEBRIS_MAX_BODIES = 32 // safety cap on simultaneous falling chunks (excess is discarded)
-// Surfaces transform without touching structure: a flamethrower scorches grass→bare earth on hit;
-// the water cannon wets bare earth, which regrows grass after SURFACE_REGROW_TIME of being wet.
+// Surfaces transform without touching structure: a flame gout SETS grass ALIGHT rather than
+// scorching it outright — the burning cell creeps fire to adjacent exposed grass (a deterministic
+// wavefront, no rng) and only burns out to bare earth once its own timer is spent; a water hit
+// douses burning cells back to grass; the water cannon wets bare earth, which regrows grass
+// after SURFACE_REGROW_TIME of being wet.
 export const SURFACE_REGROW_TIME = 6 // s a wetted bare-earth cell takes to regrow grass
+export const GRASS_BURN_TIME = 3 // s a grass cell stays alight before it is spent to bare earth
+export const GRASS_FIRE_SPREAD_AFTER = 0.8 // s into a cell's burn at which the fire jumps to adjacent grass
+export const GRASS_FIRE_EMBERS = 3 // ember puffs sampled per frame across ALL burning cells (particle budget)
 
 // ── Terrain landing model ─────────────────────────────────────────────────
 // On contact the ship is classified by `impact` = closing speed (px/s) along the
@@ -662,4 +673,5 @@ export const SURFACE_FRICTION: Record<Surface, number> = {
   [Surface.GRASS]: 7,
   [Surface.ICE]: 0.3,
   [Surface.WATER]: 0,
+  [Surface.FIRE]: 7, // still grass underfoot — it grips like grass while it burns
 }

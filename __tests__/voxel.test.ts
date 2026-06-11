@@ -1,13 +1,23 @@
 import { describe, expect, test } from 'bun:test'
 
-import { StructureType, SURFACE_REGROW_TIME, Surface, VOXEL_CELL, WORLD_HEIGHT, WORLD_WIDTH } from '$/game/constants'
+import {
+  GRASS_BURN_TIME,
+  GRASS_FIRE_SPREAD_AFTER,
+  StructureType,
+  SURFACE_REGROW_TIME,
+  Surface,
+  VOXEL_CELL,
+  WORLD_HEIGHT,
+  WORLD_WIDTH,
+} from '$/game/constants'
 import type { Block, WaterBody } from '$/game/types'
 import {
-  burnSurface,
   carveVoxel,
   createVoxelTerrain,
+  douseSurface,
   findPool,
   hasDebris,
+  igniteSurface,
   restoreVoxel,
   snapshotVoxel,
   stepVoxel,
@@ -202,40 +212,65 @@ describe('connectivity + debris', () => {
 const surfaceArea = (vt: ReturnType<typeof createVoxelTerrain>, surface: Surface): number =>
   voxelToBlocks(vt).reduce((sum, b) => (b.surface === surface ? sum + b.w * b.h : sum), 0)
 
-describe('surface transitions (burn / wet / regrow)', () => {
+describe('surface transitions (ignite / creep / burn out / douse / wet / regrow)', () => {
   // Island A's grass cap sits on row 29, cols 100–113.
   const [GRASS_X, GRASS_Y] = cellCenter(A_C0 + 6, A_TOP_ROW - 1)
+  // Long enough for a fire lit at one END of the cap to creep its A_COLS - 1 jumps and for the
+  // last-caught cell to burn through.
+  const CAP_BURNOUT = (A_COLS - 1) * GRASS_FIRE_SPREAD_AFTER + GRASS_BURN_TIME + 1
 
-  test('burnSurface scorches grass to bare earth (structure intact, no carve) and is idempotent', () => {
+  test('igniteSurface sets exposed grass alight in place (structure intact, no carve)', () => {
     const vt = mkVt()
     const filledBefore = filledCells(vt.mat)
     const grassBefore = surfaceArea(vt, Surface.GRASS)
     expect(grassBefore).toBeGreaterThan(0)
 
-    expect(burnSurface(vt, GRASS_X, GRASS_Y, 30)).toBe(true)
-    expect(surfaceArea(vt, Surface.GRASS)).toBeLessThan(grassBefore)
-    expect(filledCells(vt.mat)).toBe(filledBefore) // burning removes no cells (structure intact)
-    expect(burnSurface(vt, GRASS_X, GRASS_Y, 30)).toBe(false) // nothing left to scorch there
+    expect(igniteSurface(vt, GRASS_X, GRASS_Y, 30)).toBe(true)
+    const alight = surfaceArea(vt, Surface.FIRE)
+    expect(alight).toBeGreaterThan(0) // alight where the gout splashed, not scorched away
+    expect(surfaceArea(vt, Surface.GRASS)).toBe(grassBefore - alight)
+    expect(filledCells(vt.mat)).toBe(filledBefore) // fire removes no cells (structure intact)
+    expect(igniteSurface(vt, GRASS_X, GRASS_Y, 30)).toBe(false) // already alight — nothing new catches
+    expect(igniteSurface(vt, ...cellCenter(PILLAR_C0 + 8, PILLAR_TOP_ROW), 30)).toBe(false) // bare earth never catches
   })
 
-  test('wetSurface regrows grass on the burned top after SURFACE_REGROW_TIME', () => {
+  test('the fire creeps across the whole exposed cap, then spends itself to bare earth for good', () => {
     const vt = mkVt()
-    burnSurface(vt, GRASS_X, GRASS_Y, 30)
-    const grassBurned = surfaceArea(vt, Surface.GRASS)
+    expect(igniteSurface(vt, ...cellCenter(A_C0, A_TOP_ROW - 1), 1)).toBe(true) // one END cell alight
+    expect(surfaceArea(vt, Surface.FIRE)).toBe(C * C)
+    stepVoxel(vt, GRASS_FIRE_SPREAD_AFTER + 1 / 30) // cross the spread mark
+    expect(surfaceArea(vt, Surface.FIRE)).toBe(2 * C * C) // crept exactly one neighbour along the cap
+    for (let t = 0; t < CAP_BURNOUT; t += 1 / 30) stepVoxel(vt, 1 / 30)
+    expect(surfaceArea(vt, Surface.FIRE)).toBe(0) // every cell spent…
+    expect(surfaceArea(vt, Surface.GRASS)).toBe(0) // …and no grass survived anywhere on the cap
+    for (let i = 0; i < 300; i += 1) stepVoxel(vt, 1 / 30)
+    expect(surfaceArea(vt, Surface.GRASS)).toBe(0) // spent ground stays bare without wetting
+  })
+
+  test('a water hit douses burning cells back to grass mid-burn (no stale timer resurrects)', () => {
+    const vt = mkVt()
+    const grassBefore = surfaceArea(vt, Surface.GRASS)
+    igniteSurface(vt, GRASS_X, GRASS_Y, 30)
+    stepVoxel(vt, 1 / 30) // the burn is underway
+    expect(douseSurface(vt, GRASS_X, GRASS_Y, 60)).toBe(true)
+    expect(surfaceArea(vt, Surface.FIRE)).toBe(0)
+    expect(surfaceArea(vt, Surface.GRASS)).toBe(grassBefore) // saved — it never finished burning
+    expect(douseSurface(vt, GRASS_X, GRASS_Y, 60)).toBe(false) // nothing left alight
+    for (let i = 0; i < 300; i += 1) stepVoxel(vt, 1 / 30) // long past the would-be burn-out
+    expect(surfaceArea(vt, Surface.GRASS)).toBe(grassBefore)
+  })
+
+  test('wetSurface regrows grass on burned-out ground after SURFACE_REGROW_TIME', () => {
+    const vt = mkVt()
+    igniteSurface(vt, ...cellCenter(A_C0, A_TOP_ROW - 1), 1)
+    for (let t = 0; t < CAP_BURNOUT + GRASS_FIRE_SPREAD_AFTER; t += 1 / 30) stepVoxel(vt, 1 / 30)
+    expect(surfaceArea(vt, Surface.GRASS)).toBe(0) // the whole cap burned through
 
     expect(wetSurface(vt, GRASS_X, GRASS_Y, 30)).toBe(true)
     stepVoxel(vt, SURFACE_REGROW_TIME * 0.5)
-    expect(surfaceArea(vt, Surface.GRASS)).toBe(grassBurned)
+    expect(surfaceArea(vt, Surface.GRASS)).toBe(0)
     stepVoxel(vt, SURFACE_REGROW_TIME * 0.6)
-    expect(surfaceArea(vt, Surface.GRASS)).toBeGreaterThan(grassBurned)
-  })
-
-  test('a dry surface does not regrow without wetting', () => {
-    const vt = mkVt()
-    burnSurface(vt, GRASS_X, GRASS_Y, 30)
-    const grassBurned = surfaceArea(vt, Surface.GRASS)
-    for (let i = 0; i < 600; i += 1) stepVoxel(vt, 1 / 30)
-    expect(surfaceArea(vt, Surface.GRASS)).toBe(grassBurned)
+    expect(surfaceArea(vt, Surface.GRASS)).toBeGreaterThan(0)
   })
 })
 
@@ -263,15 +298,16 @@ describe('findPool (basin detection)', () => {
 })
 
 describe('snapshotVoxel / restoreVoxel (terrain persistence round-trip)', () => {
-  test('a carved, scorched, wetted arena restores cell-for-cell onto a same-fixture grid', () => {
+  test('a carved, burning, wetted arena restores cell-for-cell onto a same-fixture grid', () => {
     const vt = mkVt()
-    // Crater the pillar, scorch + wet the island cap, and carve into island B (possibly
+    // Crater the pillar, ignite + wet the island cap, and carve into island B (possibly
     // severing a chunk into flight — whatever results must round-trip exactly).
     carveVoxel(vt, ...cellCenter(PILLAR_C0 + 4, PILLAR_TOP_ROW), 2.5 * C)
-    burnSurface(vt, ...cellCenter(A_C0 + 2, A_TOP_ROW - 1), C)
+    igniteSurface(vt, ...cellCenter(A_C0 + 2, A_TOP_ROW - 1), C)
     wetSurface(vt, ...cellCenter(A_C0 + 8, A_TOP_ROW - 1), C)
     carveVoxel(vt, ...cellCenter(B_C0 + 5, B_TOP_ROW + 2), 2.2 * C)
-    stepVoxel(vt, 0.1) // let any loosed chunk accrue fall state worth persisting
+    stepVoxel(vt, 0.1) // let any loosed chunk accrue fall state (and the fire clock tick) worth persisting
+    expect(vt.burning.size).toBeGreaterThan(0) // the cap is alight going into the snapshot
     const snap = snapshotVoxel(vt)
 
     const restored = mkVt()
@@ -280,7 +316,17 @@ describe('snapshotVoxel / restoreVoxel (terrain persistence round-trip)', () => 
     expect(restored.pinned.map((s) => [...s].sort())).toEqual(vt.pinned.map((s) => [...s].sort()))
     expect(restored.bodies.length).toBe(vt.bodies.length)
     expect([...restored.regrow.entries()]).toEqual([...vt.regrow.entries()])
+    expect([...restored.burning.entries()]).toEqual([...vt.burning.entries()])
     expect(JSON.stringify(voxelToBlocks(restored))).toBe(JSON.stringify(voxelToBlocks(vt)))
+  })
+
+  test('a pre-fire snapshot (no burning map) restores with nothing alight', () => {
+    const vt = mkVt()
+    const snap = { ...snapshotVoxel(vt), burning: undefined }
+    const restored = mkVt()
+    restored.burning.set(0, 1) // stale state the restore must replace
+    expect(restoreVoxel(restored, snap)).toBe(true)
+    expect(restored.burning.size).toBe(0)
   })
 
   test('a snapshot that does not fit the grid is rejected untouched', () => {
