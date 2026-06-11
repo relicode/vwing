@@ -1,8 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 
 import {
+  Color,
   DeviceKind,
+  NET_MAX_PLAYERS,
   NET_PERSIST_MAX_DEVICES,
+  PLAYER_PALETTE,
   RESPAWN_DELAY_BASE,
   SHIP_MAX_HEALTH,
   StructureType,
@@ -219,7 +222,7 @@ describe('room bench (disconnect → same-name reclaim, no auth)', () => {
 
     room.leave(a.shipId)
     expect(room.playerCount()).toBe(0)
-    expect(room.players()).toContainEqual({ id: a.shipId, name: 'Maverick', score: 7, connected: false })
+    expect(room.players()).toContainEqual({ id: a.shipId, name: 'Maverick', score: 7, palette: 0, connected: false })
 
     const back = seat(room.join('MAVERICK')) // identity is the NFKC casefold, not the spelling
     expect(back).toEqual({ shipId: a.shipId, reclaimed: true })
@@ -421,6 +424,95 @@ describe('parsePersisted (hostile/corrupt/stale blobs degrade per section, never
     const parsed = parsePersisted(JSON.stringify(raw))
     expect(parsed?.restore.devices).toHaveLength(NET_PERSIST_MAX_DEVICES)
     expect(parsed?.degraded).toContain('devices')
+  })
+})
+
+describe('PLAYER_PALETTE (distinct seat colors)', () => {
+  test('one valid, pairwise-distinct hex per seat, clear of the FX hues it could be confused with', () => {
+    expect(PLAYER_PALETTE).toHaveLength(NET_MAX_PLAYERS)
+    expect(new Set(PLAYER_PALETTE).size).toBe(PLAYER_PALETTE.length)
+    for (const hex of PLAYER_PALETTE) {
+      expect(Number.isInteger(hex)).toBe(true)
+      expect(hex).toBeGreaterThanOrEqual(0)
+      expect(hex).toBeLessThanOrEqual(0xffffff)
+    }
+    // Slots 0/1 ARE the legacy hues by design (a 1v1 looks like it always has)…
+    expect(PLAYER_PALETTE[0]).toBe(Color.SHIP)
+    expect(PLAYER_PALETTE[1]).toBe(Color.ENEMY)
+    // …and no slot collides with an FX/terrain hue a player would misread.
+    const reserved = [
+      Color.EXPLOSION,
+      Color.BULLET_ENEMY,
+      Color.THRUST,
+      Color.WATER_EDGE,
+      Color.FIRE_EDGE,
+      Color.GRASS_EDGE,
+    ]
+    for (const hex of PLAYER_PALETTE) expect(reserved).not.toContain(hex)
+  })
+})
+
+describe('palette slots (server-assigned seat colors)', () => {
+  const slotOf = (room: Room, id: number): number | undefined => room.players().find((p) => p.id === id)?.palette
+
+  test('fresh joins take the lowest free slots; a benched seat keeps its slot through leave + rejoin', () => {
+    const room = createRoom('Hue')
+    const a = seat(room.join('A'))
+    const b = seat(room.join('B'))
+    const c = seat(room.join('C'))
+    expect([slotOf(room, a.shipId), slotOf(room, b.shipId), slotOf(room, c.shipId)]).toEqual([0, 1, 2])
+    room.leave(b.shipId)
+    const d = seat(room.join('D'))
+    expect(slotOf(room, d.shipId)).toBe(3) // B's bench still holds slot 1 — no recolor on a blip
+    const back = seat(room.join('b'))
+    expect(back.shipId).toBe(b.shipId)
+    expect(slotOf(room, back.shipId)).toBe(1) // the reclaimed seat kept its color
+  })
+
+  test('with every slot held, a fresh join steals the OLDEST benched slot — live seats stay distinct', () => {
+    const room = createRoom('Hue2')
+    const ids = Array.from({ length: NET_MAX_PLAYERS }, (_, i) => seat(room.join(`P${i}`)).shipId)
+    expect(room.join('Q')).toEqual({ refusal: JoinRefusal.FULL })
+    room.leave(ids[0]) // slot 0 rides P0's bench; all 8 slots stay held
+    const q = seat(room.join('Q'))
+    expect(slotOf(room, q.shipId)).toBe(0) // stolen from the only (oldest) benched seat
+    const live = room
+      .players()
+      .filter((p) => p.connected)
+      .map((p) => p.palette)
+    expect(new Set(live).size).toBe(live.length) // live players never share a color
+  })
+
+  test('a reclaim whose slot was stolen while benched is reassigned, never duplicating a live color', () => {
+    const room = createRoom('Hue4')
+    const ids = Array.from({ length: NET_MAX_PLAYERS }, (_, i) => seat(room.join(`P${i}`)).shipId)
+    room.leave(ids[0]) // slot 0 rides P0's bench
+    const q = seat(room.join('Q')) // …and is stolen — Q is now live on slot 0
+    expect(slotOf(room, q.shipId)).toBe(0)
+    room.leave(ids[1]) // free a live seat (slot 1) so P0's reclaim isn't refused FULL
+    const back = seat(room.join('P0')) // P0 returns to find its old slot taken
+    expect(back.reclaimed).toBe(true)
+    const live = room
+      .players()
+      .filter((p) => p.connected)
+      .map((p) => p.palette)
+    expect(new Set(live).size).toBe(live.length) // two live pilots must never share a color
+    expect(slotOf(room, back.shipId)).not.toBe(slotOf(room, q.shipId))
+  })
+
+  test('the slot survives persist → restore → reclaim; an out-of-range persisted slot is reassigned', () => {
+    const room = createRoom('Hue3')
+    seat(room.join('A')) // A must be a seated pilot so it can reclaim slot 0 after the restart
+    const b = seat(room.join('B'))
+    room.step(1 / 30)
+    const raw = JSON.parse(room.persisted())
+    const rowB = raw.roster.find((s: { id: number }) => s.id === b.shipId)
+    rowB.palette = 99 // a poisoned slot must not render PLAYER_PALETTE[-ish] garbage
+    const twin = createRoom('Hue3', parsePersisted(JSON.stringify(raw))?.restore)
+    const backA = seat(twin.join('a'))
+    expect(slotOf(twin, backA.shipId)).toBe(0) // A kept its slot across the restart
+    const backB = seat(twin.join('b'))
+    expect(slotOf(twin, backB.shipId)).toBe(1) // B was reassigned the lowest free, not 99
   })
 })
 

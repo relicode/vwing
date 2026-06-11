@@ -7,10 +7,12 @@ import {
   INFANTRY_KNEEL_FIRE_AT,
   INFANTRY_SINK_TIME,
   InfantryState,
+  PLAYER_PALETTE,
   WeaponKind,
 } from '$/game/constants'
 import { stateOf } from '$/game/devices'
 import { clamp } from '$/game/math'
+import { darken, PALETTE_FLASH, PALETTE_RIM, type PaletteSlots } from '$/game/render/owner-colors'
 import type { Device } from '$/game/types'
 
 export type InfantrySprite = Extract<Device, { kind: DeviceKind.INFANTRY }>
@@ -31,16 +33,8 @@ const BELT_COLOR = Color.SMOKE
 const PACK_COLOR = Color.ROCK
 const EYE_COLOR = Color.INK
 
-// Darken a 0xRRGGBB colour per channel — the owner-derived rim stroke that keeps a trooper's outline
-// reading its team while popping it off bright grass/ice as well as the dark void.
-const darken = (hex: number, f: number): number => {
-  const r = Math.round(((hex >> 16) & 0xff) * f)
-  const g = Math.round(((hex >> 8) & 0xff) * f)
-  const b = Math.round((hex & 0xff) * f)
-  return (r << 16) | (g << 8) | b
-}
-const SHIP_RIM = darken(Color.SHIP, 0.6)
-const ENEMY_RIM = darken(Color.ENEMY, 0.6)
+const SHIP_RIM = darken(Color.SHIP, 0.6) // the owner-derived rim stroke that keeps a trooper's
+const ENEMY_RIM = darken(Color.ENEMY, 0.6) // outline reading its team over grass/ice and the void
 
 // The face mood drives eye + mouth shape; each state picks one so its emotion reads.
 enum Mood {
@@ -53,9 +47,15 @@ enum Mood {
 }
 
 // The owner-derived colours every state shares (built once per draw) so a unit never changes its
-// apparent team as it changes pose.
+// apparent team as it changes pose. With a palette map (online) the trooper wears its seat's
+// slot color; without one (offline campaign) the legacy self/enemy binary holds exactly.
 type Kit = { body: number; rim: number; flash: number }
-const infantryKit = (d: InfantrySprite, selfId: number): Kit => {
+const infantryKit = (d: InfantrySprite, selfId: number, slots?: PaletteSlots): Kit => {
+  const slot = slots?.get(d.owner)
+  if (slot !== undefined && PLAYER_PALETTE[slot] !== undefined) {
+    return { body: PLAYER_PALETTE[slot], rim: PALETTE_RIM[slot], flash: PALETTE_FLASH[slot] }
+  }
+  if (slots) return { body: Color.ENEMY, rim: ENEMY_RIM, flash: Color.BULLET_ENEMY } // unmapped owner online
   const self = d.owner === selfId
   return {
     body: self ? Color.SHIP : Color.ENEMY,
@@ -557,9 +557,15 @@ const drawInfantryPose = (g: Graphics, d: InfantrySprite, kit: Kit, time: number
 
 // Pose first, then the field-keyed overlays — burning and the EMP stun ride on top of whatever
 // pose the trooper holds (the precedent the ice slide set: transients never fork stateOf).
-export const drawInfantry = (g: Graphics, d: InfantrySprite, time: number, selfId: number): void => {
+export const drawInfantry = (
+  g: Graphics,
+  d: InfantrySprite,
+  time: number,
+  selfId: number,
+  slots?: PaletteSlots
+): void => {
   const f = d.facing >= 0 ? 1 : -1
-  const kit = infantryKit(d, selfId)
+  const kit = infantryKit(d, selfId, slots)
   drawInfantryPose(g, d, kit, time, f)
   if (d.burning > 0) drawBurning(g, d, time)
   if (d.stun > 0) drawStunned(g, d, time)

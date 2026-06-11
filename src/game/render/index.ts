@@ -5,6 +5,7 @@ import { createBulletsView } from '$/game/render/bullets-view'
 import { createFollowCamera, shakeOffset } from '$/game/render/camera-view'
 import { drawBars, drawBase, drawBeams, drawDevice } from '$/game/render/entities'
 import { drawMapMarkers, drawMapTerrain, MINIMAP_HEIGHT } from '$/game/render/minimap'
+import type { PaletteSlots } from '$/game/render/owner-colors'
 import { createParticlesView } from '$/game/render/particles-view'
 import { createShipsView, shipBlinkHidden } from '$/game/render/ships-view'
 import { createStarsView } from '$/game/render/stars'
@@ -17,7 +18,9 @@ const DEVICE_CULL_MARGIN = 400
 
 export type Renderer = {
   view: Container
-  draw: (world: RenderWorld, phase: GamePhase, selfId: number) => void
+  // `slots` (owner id → PLAYER_PALETTE slot) colors every pass per seat; absent — the offline
+  // campaign — every pass keeps the legacy self/enemy binary exactly.
+  draw: (world: RenderWorld, phase: GamePhase, selfId: number, slots?: PaletteSlots) => void
   destroy: () => void
 }
 
@@ -60,7 +63,7 @@ export const createRenderer = (rng: Rng, pixiRenderer: PixiRenderer): Renderer =
   // world.terrainVersion on every carve and while debris is falling, and once per fresh run.
   let mapTerrainVersion = -1
 
-  const draw = (world: RenderWorld, phase: GamePhase, selfId: number): void => {
+  const draw = (world: RenderWorld, phase: GamePhase, selfId: number, slots?: PaletteSlots): void => {
     const cam = camera.update(world, selfId)
     // Screen shake: wobble the whole view (stars + world) by the decaying amplitude.
     const shake = shakeOffset(world)
@@ -69,7 +72,7 @@ export const createRenderer = (rng: Rng, pixiRenderer: PixiRenderer): Renderer =
     starsView.update(cam)
     terrainView.draw(world)
     dynGfx.clear()
-    for (const base of world.bases) drawBase(dynGfx, base, world.time, selfId)
+    for (const base of world.bases) drawBase(dynGfx, base, world.time, selfId, slots)
     // Manual CPU cull: Pixi can't cull inside one Graphics, and most of the infantry war is
     // happening far from the camera. The margin clears the largest device visual (well rings).
     const cullLeft = cam.x - DEVICE_CULL_MARGIN
@@ -78,17 +81,17 @@ export const createRenderer = (rng: Rng, pixiRenderer: PixiRenderer): Renderer =
     const cullBottom = cam.y + VIEW_HEIGHT + DEVICE_CULL_MARGIN
     for (const device of world.devices) {
       if (device.x < cullLeft || device.x > cullRight || device.y < cullTop || device.y > cullBottom) continue
-      drawDevice(dynGfx, device, world.time, selfId)
+      drawDevice(dynGfx, device, world.time, selfId, slots)
     }
     drawBeams(dynGfx, world.beams)
-    bulletsView.draw(world.bullets, selfId)
+    bulletsView.draw(world.bullets, selfId, slots)
     particlesView.draw(world.particles)
     // Ships are drawn only in-play: in TITLE/GAME_OVER updateShip never runs, so their
     // spawn invulnerability never ticks down and they'd blink forever over the backdrop.
     shipsView.layer.visible = phase === GamePhase.PLAYING
     barsGfx.clear()
     if (phase === GamePhase.PLAYING) {
-      shipsView.draw(world.ships, world.time, selfId)
+      shipsView.draw(world.ships, world.time, selfId, slots)
       for (const ship of world.ships) {
         if (!shipBlinkHidden(ship, world.time)) drawBars(barsGfx, ship)
       }
@@ -103,7 +106,7 @@ export const createRenderer = (rng: Rng, pixiRenderer: PixiRenderer): Renderer =
         drawMapTerrain(mapTerrainGfx, world)
         mapTerrainGfx.updateCacheTexture() // re-render the cached texture from the fresh geometry
       }
-      drawMapMarkers(mapDynGfx, world, cam, selfId)
+      drawMapMarkers(mapDynGfx, world, cam, selfId, slots)
     }
   }
 

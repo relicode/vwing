@@ -3,9 +3,10 @@ import type { Graphics } from 'pixi.js'
 import { Color, DeviceKind, SHIP_MAX_HEALTH, SHIP_MAX_SHIELDS } from '$/game/constants'
 import { clamp } from '$/game/math'
 import { drawInfantry } from '$/game/render/infantry'
+import { ownerHex, type PaletteSlots } from '$/game/render/owner-colors'
 import type { Base, Beam, Device, Ship } from '$/game/types'
 
-export const drawDevice = (g: Graphics, d: Device, time: number, selfId: number): void => {
+export const drawDevice = (g: Graphics, d: Device, time: number, selfId: number, slots?: PaletteSlots): void => {
   switch (d.kind) {
     case DeviceKind.MISSILE: {
       const a = Math.atan2(d.vy, d.vx)
@@ -23,7 +24,7 @@ export const drawDevice = (g: Graphics, d: Device, time: number, selfId: number)
       break
     }
     case DeviceKind.INFANTRY:
-      drawInfantry(g, d, time, selfId)
+      drawInfantry(g, d, time, selfId, slots)
       break
     case DeviceKind.GRENADE:
       g.circle(d.x, d.y, d.radius).fill({ color: Color.GRENADE })
@@ -63,9 +64,9 @@ export const drawBars = (g: Graphics, ship: Ship): void => {
 // the capturer's color the moment it falls), with garrison helmet pips over the door and a
 // flashing takeover bar while the capture is in progress. Drawn in the dynamic layer — capture
 // state and garrison mutate every frame, so it can't live in the terrainVersion cache.
-export const drawBase = (g: Graphics, base: Base, time: number, selfId: number): void => {
+export const drawBase = (g: Graphics, base: Base, time: number, selfId: number, slots?: PaletteSlots): void => {
   const holder = base.capture >= 1 && base.capturedBy !== undefined ? base.capturedBy : base.owner
-  const body = holder === selfId ? Color.SHIP : Color.ENEMY
+  const body = ownerHex(holder, selfId, slots)
   const w = 120
   const h = 52
   const x = base.x - w / 2

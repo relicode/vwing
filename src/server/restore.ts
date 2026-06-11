@@ -2,6 +2,7 @@ import {
   DeviceKind,
   NET_BENCH_MAX,
   NET_GAME_NAME_MAX,
+  NET_MAX_PLAYERS,
   NET_PERSIST_MAX_DEVICES,
   SHIP_MAX_HEALTH,
   WORLD_HEIGHT,
@@ -32,6 +33,7 @@ export type PersistedSeat = {
   score: number
   deaths: number
   respawnIn: number
+  palette?: number // PLAYER_PALETTE slot; absent/invalid → the room reassigns the lowest free
   ship: Ship
 }
 
@@ -180,12 +182,17 @@ const validSeat = (raw: unknown, seenIds: Set<number>, seenKeys: Set<string>): P
   ship.x = clamp(ship.x, 0, WORLD_WIDTH)
   ship.y = clamp(ship.y, 0, WORLD_HEIGHT)
   ship.health = clamp(ship.health, 1, SHIP_MAX_HEALTH)
+  const palette =
+    finite(seat.palette) && Number.isInteger(seat.palette) && seat.palette >= 0 && seat.palette < NET_MAX_PLAYERS
+      ? seat.palette
+      : undefined // out-of-range/missing → the room reassigns the lowest free slot on bench
   return {
     id: seat.id,
     name,
     score: seat.score,
     deaths: Math.max(0, Math.floor(seat.deaths)),
     respawnIn: Math.max(0, seat.respawnIn),
+    palette,
     ship,
   }
 }

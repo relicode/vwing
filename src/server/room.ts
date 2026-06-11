@@ -29,6 +29,7 @@ type BenchedSeat = {
   score: number
   deaths: number
   respawnIn: number
+  palette: number // the seat's PLAYER_PALETTE slot — held while benched so a reclaim keeps its color
 }
 
 export enum JoinRefusal {
@@ -93,6 +94,19 @@ export const createRoom = (name: string, restore?: RoomRestore): Room => {
   const members = new Map<number, Member>()
   let nextId = restore?.nextId ?? 0 // monotonic per room: ids are never reused, so stale bullets can't mislabel a new seat
   const bench = new Map<string, BenchedSeat>() // pilotNameKey → seat; insertion order = age
+  const palettes = new Map<number, number>() // live shipId → PLAYER_PALETTE slot
+
+  // The lowest PLAYER_PALETTE slot no live or benched seat holds. When every slot is held the
+  // OLDEST benched seat's slot is stolen — live players always stay pairwise distinct (a stolen
+  // slot recolors that orphan's lingering troopers, a brief visual lie, never a live ambiguity).
+  const freeSlot = (): number => {
+    const used = new Set<number>([...palettes.values(), ...[...bench.values()].map((seat) => seat.palette)])
+    for (let slot = 0; slot < NET_MAX_PLAYERS; slot += 1) if (!used.has(slot)) return slot
+    const live = new Set(palettes.values())
+    for (const seat of bench.values()) if (!live.has(seat.palette)) return seat.palette // oldest first
+    return NET_MAX_PLAYERS - 1 // unreachable: live seats can't fill every slot AND the bench
+  }
+
   for (const seat of restore?.roster ?? []) {
     nextId = Math.max(nextId, seat.id + 1)
     bench.set(pilotNameKey(seat.name), {
@@ -101,6 +115,7 @@ export const createRoom = (name: string, restore?: RoomRestore): Room => {
       score: seat.score,
       deaths: seat.deaths,
       respawnIn: seat.respawnIn,
+      palette: seat.palette ?? freeSlot(), // a degraded/legacy row gets the lowest free slot
     })
   }
   // The persisted terrain blob is the heavy part of the state document — encode it only when
@@ -148,6 +163,11 @@ export const createRoom = (name: string, restore?: RoomRestore): Room => {
       // (fresh bay, fresh weapon) like any other respawn, by design.
       benched.ship.troops = troops
       benched.ship.invuln = Math.max(benched.ship.invuln, 1) // re-entry grace
+      // Same seat, same color — unless that slot was stolen out from under this bench while it
+      // slept (all-8-held steal). Restoring a slot a LIVE seat now holds would put two live
+      // players in one color; in that (rare) case take the lowest free slot instead.
+      const live = new Set(palettes.values())
+      palettes.set(benched.ship.id, live.has(benched.palette) ? freeSlot() : benched.palette)
       members.set(benched.ship.id, { shipId: benched.ship.id, name: displayName, input })
       return { shipId: benched.ship.id, reclaimed: true }
     }
@@ -163,6 +183,7 @@ export const createRoom = (name: string, restore?: RoomRestore): Room => {
       spawn,
     }
     sim.addCombatant(combatant)
+    palettes.set(shipId, freeSlot())
     members.set(shipId, { shipId, name: displayName, input })
     return { shipId, reclaimed: false }
   }
@@ -178,9 +199,11 @@ export const createRoom = (name: string, restore?: RoomRestore): Room => {
         score: combatant.score,
         deaths: combatant.deaths,
         respawnIn: sim.respawnIn(shipId),
+        palette: palettes.get(shipId) ?? 1, // the slot rides the bench
       })
     }
     sim.removeCombatant(shipId, true) // benched, not gone — the pilot's troopers keep fighting
+    palettes.delete(shipId)
     members.delete(shipId)
   }
 
@@ -190,18 +213,20 @@ export const createRoom = (name: string, restore?: RoomRestore): Room => {
   }
 
   // Live seats first, then the bench (connected: false) — a disconnected pilot stays on the
-  // scoreboard (greyed) and their orphaned troopers keep a resolvable owner.
+  // scoreboard (greyed) and their orphaned troopers keep a resolvable owner AND color.
   const players = (): PlayerInfo[] => [
     ...sim.combatants.map((c) => ({
       id: c.ship.id,
       name: c.name,
       score: c.score,
+      palette: palettes.get(c.ship.id) ?? 1,
       connected: members.has(c.ship.id),
     })),
     ...[...bench.values()].map((seat) => ({
       id: seat.ship.id,
       name: seat.name,
       score: seat.score,
+      palette: seat.palette,
       connected: false,
     })),
   ]
@@ -229,6 +254,7 @@ export const createRoom = (name: string, restore?: RoomRestore): Room => {
         score: c.score,
         deaths: c.deaths,
         respawnIn: sim.respawnIn(c.ship.id),
+        palette: palettes.get(c.ship.id) ?? 1,
         ship: c.ship,
       })),
       ...[...bench.values()].map((seat) => ({
@@ -237,6 +263,7 @@ export const createRoom = (name: string, restore?: RoomRestore): Room => {
         score: seat.score,
         deaths: seat.deaths,
         respawnIn: seat.respawnIn,
+        palette: seat.palette,
         ship: seat.ship,
       })),
     ]
