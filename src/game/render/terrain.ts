@@ -9,6 +9,7 @@ const SURFACE_STYLE: Record<Surface, { fill: number; edge: number }> = {
   [Surface.GRASS]: { fill: Color.GRASS, edge: Color.GRASS_EDGE },
   [Surface.ICE]: { fill: Color.ICE, edge: Color.ICE_EDGE },
   [Surface.WATER]: { fill: Color.WATER, edge: Color.WATER_EDGE },
+  [Surface.FIRE]: { fill: Color.FIRE, edge: Color.FIRE_EDGE },
 }
 const METAL_STYLE = { fill: Color.BEDROCK, edge: Color.BEDROCK_EDGE }
 
@@ -51,6 +52,14 @@ const drawBlockDetail = (g: Graphics, b: Block): void => {
         .stroke({ width: 1, color: Color.ROCK_EDGE, alpha: 0.35 })
       break
     }
+    case Surface.FIRE:
+      // Flame licks: like the grass blades but taller, hotter, and leaning with the burn.
+      for (let x = b.x + 6; x < b.x + b.w - 3; x += 11) {
+        g.moveTo(x, b.y)
+          .lineTo(x + 3, b.y - 6)
+          .stroke({ width: 1.5, color: Color.FIRE_EDGE, alpha: 0.9 })
+      }
+      break
     case Surface.WATER:
       break // water never appears on a block (it is a WaterBody overlay)
   }
