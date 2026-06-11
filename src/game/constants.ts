@@ -461,7 +461,7 @@ export const INFANTRY_SINK_SPEED = 36 // px/s it descends while sinking
 // idle swim is wild. Spread is drawn from world.rng so it stays deterministic across the network.
 export const INFANTRY_SPREAD_STANDING = 0 // aimed from a dead halt
 export const INFANTRY_SPREAD_WALKING = 0.06 // fires on the move, less accurate
-export const INFANTRY_SPREAD_PARACHUTE = 0.22 // swinging under the canopy
+export const INFANTRY_SPREAD_PARACHUTE = 0.7 // swinging under the canopy — the worst aim in the game
 export const INFANTRY_SPREAD_SWIM = 0.34 // treading water, barely aimed
 export const INFANTRY_SWIM_FIRE_INTERVAL = 2.4 // s between shots while drifting (standby — slow)
 // Running: a landed trooper sprints clear of a point-blank threat, and never fires while running.
