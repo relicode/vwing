@@ -15,7 +15,7 @@
     "dev:all": "concurrently -k --prefix-colors auto -n vwing:web,vwing:srv 'bun:dev' 'bun:server:dev'",
     "chrome": "${CHROME_BIN:-google-chrome-stable} --headless=new --remote-debugging-port=${CHROME_PORT:-9222} --user-data-dir=${TMPDIR:-/tmp}/vwing-chrome --no-first-run --no-default-browser-check http://localhost:${VWING_WEB_PORT:-3110}",
     "chrome:visual": "${CHROME_BIN:-google-chrome-stable} --new-window --remote-debugging-port=${CHROME_VISUAL_PORT:-9223} --user-data-dir=${TMPDIR:-/tmp}/vwing-chrome-visual --no-first-run --no-default-browser-check http://localhost:${VWING_WEB_PORT:-3110}",
-    "build": "rm -rf dist && bun build ./src/index.html --outdir dist --minify --sourcemap=linked --asset-naming=[name]-[hash].[ext]",
+    "build": "bun run scripts/build.ts",
     "preview": "bun run scripts/preview.ts",
     "test": "bun test",
     "format": "biome check --write",
