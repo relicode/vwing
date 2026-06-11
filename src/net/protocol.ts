@@ -12,7 +12,6 @@ export type PlayerInfo = {
   id: number
   name: string
   score: number // points (CAMPAIGN) / frags (DEATHMATCH)
-  lives: number | null // null = endless respawns (Infinity doesn't survive JSON)
   connected: boolean
 }
 
@@ -46,11 +45,6 @@ export type ServerMessage =
   | { t: MsgType.WELCOME; selfId: number; game: string; tickRate: number }
   | { t: MsgType.SNAPSHOT; world: WorldSnapshot; players: PlayerInfo[]; events: DeathEvent[] }
   | { t: MsgType.REJECTED; reason: string }
-
-// Lives are Number.POSITIVE_INFINITY in-sim (endless respawns); JSON can't carry that, so
-// the wire uses null and the client treats null as "endless".
-export const livesToWire = (lives: number): number | null => (Number.isFinite(lives) ? lives : null)
-export const livesFromWire = (wire: number | null): number => (wire === null ? Number.POSITIVE_INFINITY : wire)
 
 export const encode = (message: ServerMessage | ClientMessage): string => JSON.stringify(message)
 

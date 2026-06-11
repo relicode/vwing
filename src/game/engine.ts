@@ -6,7 +6,6 @@ import {
   PLAYER_ID,
   SECONDARY_MAX_CHARGE,
   SHAKE_DECAY,
-  SHIP_START_LIVES,
   ShipKind,
   SimMode,
   type WeaponKind,
@@ -53,8 +52,9 @@ export const createEngine = async (): Promise<Engine> => {
   let best = readBest()
   let forcedWeapon: WeaponKind | undefined // debug: pins every ship's secondary when set
 
-  // The offline campaign: the keyboard-driven player (finite lives, point score) versus an
-  // endlessly respawning AI bot, both running through the shared authoritative sim.
+  // The offline campaign: the keyboard-driven player versus the AI bot, both running through
+  // the shared authoritative sim. Respawns are unlimited but compound in wait — the run only
+  // ends when a side dies holding no base (see sim.ts).
   const buildSim = (): Sim => {
     const world = createWorld(makeSeed())
     const player = createShip(ShipKind.PLAYER, PLAYER_SPAWN_X, PLAYER_SPAWN_Y, PLAYER_ID, world.rng, forcedWeapon)
@@ -65,7 +65,6 @@ export const createEngine = async (): Promise<Engine> => {
         input,
         name: 'You',
         score: 0,
-        lives: SHIP_START_LIVES,
         spawn: { x: PLAYER_SPAWN_X, y: PLAYER_SPAWN_Y },
       },
       {
@@ -73,7 +72,6 @@ export const createEngine = async (): Promise<Engine> => {
         input: createBotInput(bot, () => world),
         name: 'Bot',
         score: 0,
-        lives: Number.POSITIVE_INFINITY,
         spawn: { x: BOT_SPAWN_X, y: BOT_SPAWN_Y },
       },
     ]
@@ -95,7 +93,6 @@ export const createEngine = async (): Promise<Engine> => {
     return {
       phase,
       score: Math.floor(p.score),
-      lives: p.lives,
       best,
       weapon: p.ship.weapon,
       charge: chargePct(p.ship),
@@ -113,7 +110,6 @@ export const createEngine = async (): Promise<Engine> => {
     if (
       status.phase === next.phase &&
       status.score === next.score &&
-      status.lives === next.lives &&
       status.best === next.best &&
       status.weapon === next.weapon &&
       status.charge === next.charge &&

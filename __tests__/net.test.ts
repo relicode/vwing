@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { StructureType } from '$/game/constants'
-import { decodeClient, gameNameKey, livesFromWire, livesToWire, MsgType, sanitizeGameName } from '$/net/protocol'
+import { decodeClient, gameNameKey, MsgType, sanitizeGameName } from '$/net/protocol'
 import { createRoom, parseRestore } from '$/server/room'
 import { createStore } from '$/server/store'
 
@@ -11,13 +11,6 @@ describe('protocol helpers', () => {
     expect(sanitizeGameName('drop/these*chars!', 24)).toBe('dropthesechars')
     expect(sanitizeGameName('way too long a name for the cap', 8)).toHaveLength(8)
     expect(sanitizeGameName('   ', 24)).toBe('')
-  })
-
-  test('lives round-trip through the wire (Infinity ⇄ null)', () => {
-    expect(livesToWire(Number.POSITIVE_INFINITY)).toBeNull()
-    expect(livesToWire(3)).toBe(3)
-    expect(livesFromWire(null)).toBe(Number.POSITIVE_INFINITY)
-    expect(livesFromWire(3)).toBe(3)
   })
 })
 

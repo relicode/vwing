@@ -4,7 +4,7 @@ import { createShip } from '$/game/ship'
 import { type Combatant, chooseSpawn, createSim, createWorld, type DeathEvent, type Sim } from '$/game/sim'
 import type { WaterBody } from '$/game/types'
 import type { VoxelSnapshot } from '$/game/voxel'
-import { livesToWire, MsgType, type PlayerInfo, type ServerMessage } from '$/net/protocol'
+import { MsgType, type PlayerInfo, type ServerMessage } from '$/net/protocol'
 
 // A connected player's mutable control state — the room mutates this object from inbound
 // INPUT messages and the sim reads it live each tick through inputFromSnapshot.
@@ -100,7 +100,6 @@ export const createRoom = (name: string, restore?: RoomRestore): Room => {
       input: inputFromSnapshot(input),
       name: displayName,
       score: 0,
-      lives: Number.POSITIVE_INFINITY, // endless respawns in PvP
       spawn,
     }
     sim.addCombatant(combatant)
@@ -123,7 +122,6 @@ export const createRoom = (name: string, restore?: RoomRestore): Room => {
       id: c.ship.id,
       name: c.name,
       score: c.score,
-      lives: livesToWire(c.lives),
       connected: members.has(c.ship.id),
     }))
 
