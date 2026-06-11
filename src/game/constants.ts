@@ -187,6 +187,12 @@ export const SPAWN_ALTITUDE = 320 // px above its pad top where a campaign ship 
 // (see sim.ts).
 export const BASE_GARRISON_CAP = 12 // troopers a barracks can house (housed + fielded guards)
 export const BASE_GARRISON_START = 8 // housed at match start
+// The building has a body: ship weaponry striking the bunker grinds the housed garrison down
+// through the armor (never below the guard reserve — the last men must be stormed out by
+// infantry). Shelling softens a base; only troops can take it.
+export const BASE_BUILDING_HALF_WIDTH = 60 // px — the bunker's half-width (hitbox = drawn body)
+export const BASE_BUILDING_HEIGHT = 52 // px the bunker rises above the pad line (hitbox = drawn body)
+export const BASE_STRUCTURE_ARMOR = 400 // weapon hit-points the walls soak per housed trooper lost (~0.44 men/s under point-blank primary fire)
 export const BASE_GARRISON_REGEN = 1 / 15 // troopers/s regrown while uncaptured (one man every 15 s)
 export const BASE_LOAD_RADIUS = 140 // px from the pad within which a slow owner ship throws the doors open to board
 export const BASE_PAD_METAL_CELLS = 2 // thickness (cells) of the indestructible metal slab the barracks stands on

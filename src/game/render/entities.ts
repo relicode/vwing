@@ -1,6 +1,13 @@
 import type { Graphics } from 'pixi.js'
 
-import { Color, DeviceKind, SHIP_MAX_HEALTH, SHIP_MAX_SHIELDS } from '$/game/constants'
+import {
+  BASE_BUILDING_HALF_WIDTH,
+  BASE_BUILDING_HEIGHT,
+  Color,
+  DeviceKind,
+  SHIP_MAX_HEALTH,
+  SHIP_MAX_SHIELDS,
+} from '$/game/constants'
 import { clamp } from '$/game/math'
 import { drawInfantry } from '$/game/render/infantry'
 import { ownerHex, type PaletteSlots } from '$/game/render/owner-colors'
@@ -67,8 +74,8 @@ export const drawBars = (g: Graphics, ship: Ship): void => {
 export const drawBase = (g: Graphics, base: Base, time: number, selfId: number, slots?: PaletteSlots): void => {
   const holder = base.capture >= 1 && base.capturedBy !== undefined ? base.capturedBy : base.owner
   const body = ownerHex(holder, selfId, slots)
-  const w = 120
-  const h = 52
+  const w = BASE_BUILDING_HALF_WIDTH * 2 // the drawn body IS the shelling hitbox (see damageBase)
+  const h = BASE_BUILDING_HEIGHT
   const x = base.x - w / 2
   const y = base.y - h
   g.roundRect(x, y, w, h, 8).fill({ color: body, alpha: 0.26 }).stroke({ width: 2, color: body })

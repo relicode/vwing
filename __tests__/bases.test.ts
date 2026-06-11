@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { createCampaignBases, stepBases } from '$/game/bases'
+import { createCampaignBases, damageBase, stepBases } from '$/game/bases'
 import {
   BASE_CAPTURE_RADIUS,
   BASE_CAPTURE_TIME,
@@ -8,6 +8,7 @@ import {
   BASE_GARRISON_START,
   BASE_GUARD_PATROL,
   BASE_GUARD_RESERVE,
+  BASE_STRUCTURE_ARMOR,
   BaseAlarm,
   BOT_ID,
   DeviceKind,
@@ -289,5 +290,57 @@ describe('stepBases — the garrison in the flesh', () => {
     for (let i = 0; i < 20; i += 1) stepBases(world, 0.5)
     expect(guardsOf(world, base)).toBe(0)
     expect(base.garrison).toBe(5) // frozen — no regen, no fielding, no storming needed (already fallen)
+  })
+})
+
+describe('damageBase — shelling the building', () => {
+  test('weapon damage grinds the housed garrison through the armor', () => {
+    const base = makeBase({})
+    damageBase(makeWorld([], [], [base]), base, BASE_STRUCTURE_ARMOR) // exactly one man's worth
+    expect(base.garrison).toBeCloseTo(BASE_GARRISON_START - 1, 5)
+  })
+
+  test('gunfire never grinds below the guard reserve — the last men must be stormed out', () => {
+    const base = makeBase({})
+    const world = makeWorld([], [], [base])
+    for (let i = 0; i < 50; i += 1) damageBase(world, base, BASE_STRUCTURE_ARMOR)
+    expect(base.garrison).toBe(BASE_GUARD_RESERVE)
+  })
+
+  test('a garrison already stormed under the reserve is neither chipped further nor topped up', () => {
+    const base = makeBase({ garrison: 0.5 })
+    damageBase(makeWorld([], [], [base]), base, BASE_STRUCTURE_ARMOR * 10)
+    expect(base.garrison).toBe(0.5)
+  })
+
+  test('a fallen barracks is past hurting', () => {
+    const base = makeBase({ capture: 1, capturedBy: BOT_ID, garrison: 5 })
+    damageBase(makeWorld([], [], [base]), base, BASE_STRUCTURE_ARMOR * 10)
+    expect(base.garrison).toBe(5)
+  })
+
+  test('a mine blast by the building chips the garrison through the same armor — but not the owner side`s own', () => {
+    const tripper = makeShip({ id: PLAYER_ID, x: 1000, y: 2940 }) // walks into the enemy mine by the pad
+    const mine: Device = {
+      kind: DeviceKind.MINE,
+      x: 1000,
+      y: 2940,
+      owner: BOT_ID,
+      radius: 6,
+      armTime: 0,
+      life: 5,
+      triggerRadius: 60,
+      blastRadius: 90,
+      damage: 40,
+    }
+    const shelled = makeBase({}) // player barracks at (1000, 3000): building center ~34 px from the blast
+    const world = makeWorld([tripper], [mine], [shelled])
+    updateDevices(world, 0.016)
+    expect(shelled.garrison).toBeCloseTo(BASE_GARRISON_START - 40 / BASE_STRUCTURE_ARMOR, 5)
+
+    const own = makeBase({ owner: BOT_ID }) // the blast owner's own base shrugs the same splash off
+    const friendly = makeWorld([makeShip({ id: PLAYER_ID, x: 1000, y: 2940 })], [{ ...mine }], [own])
+    updateDevices(friendly, 0.016)
+    expect(own.garrison).toBe(BASE_GARRISON_START)
   })
 })

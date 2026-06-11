@@ -1,3 +1,4 @@
+import { damageBase } from '$/game/bases'
 import { castRail } from '$/game/beams'
 import { pushBullet } from '$/game/bullets'
 import { circleRectContact, circlesOverlap, segmentIntersectsRect } from '$/game/collision'
@@ -5,6 +6,7 @@ import { applyDamage, applyDisable, isDead } from '$/game/combat'
 import {
   AFTERBURNER_IGNITE_LEN,
   AFTERBURNER_IGNITE_RADIUS,
+  BASE_BUILDING_HEIGHT,
   BASE_DOOR_RADIUS,
   BASE_GARRISON_CAP,
   BaseAlarm,
@@ -223,6 +225,14 @@ const areaDamage = (
     if (Math.hypot(device.x - x, device.y - y) > radius) continue
     spawnExplosion(world.particles, device.x, device.y, Color.BLOOD, world.rng, 6)
     deadDevices.add(device)
+  }
+  // A blast rocks the barracks too: splash within the radius of the building's body grinds the
+  // housed garrison through the walls' armor (never below the reserve — see damageBase). The
+  // blast owner's own base is spared, mirroring the ship exemption above.
+  for (const base of world.bases) {
+    if (base.owner === ownerId) continue
+    if (Math.hypot(base.x - x, base.y - BASE_BUILDING_HEIGHT / 2 - y) > radius) continue
+    damageBase(world, base, damage)
   }
 }
 

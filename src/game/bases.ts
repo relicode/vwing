@@ -12,6 +12,7 @@ import {
   BASE_LOAD_RADIUS,
   BASE_REVERT_TIME,
   BASE_SORTIE_RANGE,
+  BASE_STRUCTURE_ARMOR,
   BaseAlarm,
   BOT_ID,
   Color,
@@ -49,6 +50,21 @@ export const createCampaignBases = (): Base[] => {
       door: 0,
     },
   ]
+}
+
+// Ship weaponry shelling the building: `amount` weapon hit-points grind the housed garrison
+// down through the walls' armor — but never below the guard reserve, and never once the
+// garrison is already at or under it. The last men can only be stormed out by landed infantry
+// (stepBases), so shelling softens a base without ever starting the capture clock by itself.
+// A fallen barracks is past hurting; a whole housed trooper lost flashes red at the door.
+export const damageBase = (world: World, base: Base, amount: number): void => {
+  if (base.capture >= 1) return
+  const floor = Math.min(base.garrison, BASE_GUARD_RESERVE)
+  const before = base.garrison
+  base.garrison = Math.max(floor, base.garrison - amount / BASE_STRUCTURE_ARMOR)
+  if (Math.floor(before) > Math.floor(base.garrison)) {
+    spawnExplosion(world.particles, base.x, base.y - 12, Color.BLOOD, world.rng, 6)
+  }
 }
 
 // Advance every barracks one frame: threat posture + guard fielding (including throwing the

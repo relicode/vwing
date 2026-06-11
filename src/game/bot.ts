@@ -1,5 +1,6 @@
 import { closestPointOnRect } from '$/game/collision'
 import {
+  BASE_GUARD_PATROL,
   BASE_GUARD_RESERVE,
   BaseAlarm,
   BOT_AIM_DEADBAND,
@@ -221,6 +222,14 @@ export const nextGoal = (prev: BotGoal, self: Ship, world: World, target: Ship |
   // troops aboard to drop.
   if (home.capture > 0) return BotGoal.DEFEND
   if (home.alarm === BaseAlarm.SORTIE && self.troops >= 1) return BotGoal.DEFEND
+  // 2b. The barracks under the guns: shelling reads HIDE (everyone bunkered), not SORTIE — so
+  // once the housed count is ground toward the reserve with an enemy ship overhead, fly home
+  // and answer the siege (no troops needed: the ship itself is the answer to a shelling ship).
+  if (
+    home.alarm === BaseAlarm.HIDE &&
+    home.garrison + guardCount(world, self.id) < BASE_GUARD_PATROL + BASE_GUARD_RESERVE
+  )
+    return BotGoal.DEFEND
   // 3. Sticky rearm: keep loading until topped up. Supply = housed + the fielded watch (loading
   // boards both), but the bot never strips its base below the reserve — emptying the whole
   // garrison is a gamble only the human is allowed to take.

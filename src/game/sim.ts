@@ -1,9 +1,11 @@
-import { createCampaignBases, stepBases } from '$/game/bases'
+import { createCampaignBases, damageBase, stepBases } from '$/game/bases'
 import { updateBeams } from '$/game/beams'
 import { spawnBullet, updateBullets } from '$/game/bullets'
 import { circleRectContact, circlesOverlap } from '$/game/collision'
 import { applyDamage, applyKnockback, isDead } from '$/game/combat'
 import {
+  BASE_BUILDING_HALF_WIDTH,
+  BASE_BUILDING_HEIGHT,
   BOT_KILL_SCORE,
   CARVE_RADIUS_BASE,
   CARVE_RADIUS_SCALE,
@@ -397,6 +399,22 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
           spawnExplosion(world.particles, inf.x, inf.y, Color.BLOOD, world.rng, 6)
           world.devices.splice(unit, 1)
         }
+        continue
+      }
+      // Ship fire vs the barracks building: a hit grinds the housed garrison through the walls'
+      // armor (never below the guard reserve — see damageBase). The owner's own fire is exempt
+      // (no shelling yourself into elimination) and the water cannon passes (nothing to douse).
+      const struckBase = world.bases.find(
+        (b) =>
+          b.owner !== bullet.owner &&
+          !bullet.wet &&
+          Math.abs(bullet.x - b.x) <= BASE_BUILDING_HALF_WIDTH + bullet.radius &&
+          bullet.y >= b.y - BASE_BUILDING_HEIGHT - bullet.radius &&
+          bullet.y <= b.y
+      )
+      if (struckBase) {
+        damageBase(world, struckBase, bullet.damage)
+        spawnExplosion(world.particles, bullet.x, bullet.y, Color.SPARK, world.rng, 5)
         continue
       }
       // Prefer a destructible (EARTH) contact: blocks list bedrock first, so taking the first

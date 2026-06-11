@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import {
+  BASE_STRUCTURE_ARMOR,
   BOT_KILL_SCORE,
   DEATHMATCH_FRAG_SCORE,
   DeviceKind,
@@ -213,6 +214,28 @@ describe('createSim — base capture cuts respawns', () => {
       (b) => b.structure === StructureType.METAL && home.x >= b.x && home.x < b.x + b.w && b.y === home.y
     )
     expect(slab).toBeDefined() // the indestructible slab moved with the barracks line
+  })
+
+  test('an enemy shell into the building grinds the garrison through the armor; your own fire is exempt', () => {
+    // Identical worlds, with and without the shell: the garrison delta isolates the shelling
+    // from the same-frame door cadence and regen.
+    const garrisonAfterStep = (shell: boolean, owner: number): { garrison: number; bullets: number } => {
+      const world = createWorld(31)
+      const player = combatant(0, 500, 400)
+      const enemy = combatant(1, 1500, 400)
+      const sim = createSim(world, [player, enemy], { mode: SimMode.CAMPAIGN })
+      const home = world.bases.find((b) => b.owner === 0)
+      if (!home) throw new Error('no player base seeded')
+      if (shell) world.bullets.push({ x: home.x, y: home.y - 20, vx: 0, vy: 0, radius: 3, life: 1, owner, damage: 50 })
+      sim.step(1 / 60)
+      return { garrison: home.garrison, bullets: world.bullets.length }
+    }
+    const control = garrisonAfterStep(false, 0)
+    const shelled = garrisonAfterStep(true, 1)
+    expect(control.garrison - shelled.garrison).toBeCloseTo(50 / BASE_STRUCTURE_ARMOR, 5)
+    expect(shelled.bullets).toBe(0) // the walls stop the shell
+    const ownFire = garrisonAfterStep(true, 0)
+    expect(ownFire.garrison).toBeCloseTo(control.garrison, 10) // no shelling yourself into elimination
   })
 
   test('an uncaptured base means a normal respawn (the noose only closes when the base falls)', () => {
