@@ -11,7 +11,7 @@ lands. If a session dies mid-phase, the feature branch holds the WIP.
 
 ## Status
 
-- [ ] Phase 1 — Online state resurrection — branch `feature/online-state-resurrection`
+- [x] Phase 1 — Online state resurrection — branch `feature/online-state-resurrection` (merged `5dae0b5`)
 - [ ] Phase 2 — Per-player colors — branch `feature/online-player-colors`
 - [ ] Phase 3 — Reconnect + kill feed + logging — branch `feature/online-reconnect-ux`
 
