@@ -288,7 +288,7 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
   }
 
   // Blow up a downed ship: credit the killer, then queue its respawn (or, in CAMPAIGN,
-  // eliminate it once its lives run out). Guarded so a ship already reaped this frame isn't
+  // eliminate it once it holds no base). Guarded so a ship already reaped this frame isn't
   // killed twice.
   const killShip = (victim: Ship, killerId: number | undefined, events: DeathEvent[]): void => {
     if (eliminated.has(victim.id) || awaiting.has(victim.id)) return
