@@ -304,7 +304,7 @@ export const RESPAWN_DELAY_GROWTH = 5 // s added per prior death (uncapped)
 export const BULLET_SPEED = 600 // muzzle speed
 export const BULLET_RADIUS = 3
 export const BULLET_LIFETIME = 1.5 // s
-export const BULLET_DAMAGE = 22 // hit points removed per shot
+export const BULLET_DAMAGE = 30 // hit points removed per shot (5 bare shots / 6 with regen to down a full ship)
 
 // Ship combat: shields soak damage first and regenerate; hull is the real pool.
 // Terrain uses the land/bounce/crash model; only gunfire is graded against shields/hull.
