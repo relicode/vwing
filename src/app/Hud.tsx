@@ -159,7 +159,7 @@ const Hud = ({ status }: HudProps) => {
             textShadow: '0 0 16px currentColor',
           }}
         >
-          REINFORCEMENT IN {status.respawnIn}
+          SPAWNING IN {status.respawnIn}
         </Typography>
       ) : null}
     </>
