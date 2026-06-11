@@ -27,7 +27,7 @@ const destructibleArea = (blocks: Block[]): number =>
 const combatant = (id: number, x: number, y: number): Combatant => {
   const ship = createShip(ShipKind.PLAYER, x, y, id)
   ship.invuln = 0 // drop spawn invulnerability so the test shot connects
-  return { ship, input: inputFromSnapshot({ ...NEUTRAL_INPUT }), name: `p${id}`, score: 0, spawn: { x, y } }
+  return { ship, input: inputFromSnapshot({ ...NEUTRAL_INPUT }), name: `p${id}`, score: 0, deaths: 0, spawn: { x, y } }
 }
 
 const lethalShot = (x: number, y: number, owner: number): Bullet => ({
@@ -365,6 +365,32 @@ describe('createSim — water', () => {
 })
 
 describe('createSim — membership', () => {
+  const trooperOf = (owner: number): Device => ({
+    kind: DeviceKind.INFANTRY,
+    x: 700,
+    y: 300,
+    vx: 0,
+    vy: 0,
+    owner,
+    radius: 9,
+    guard: false,
+    attached: false,
+    swim: 0,
+    sinking: 0,
+    chute: -1,
+    pickupLock: 0,
+    walkDir: 1,
+    facing: 1,
+    groundLeft: 0,
+    groundRight: 0,
+    fireCooldown: 99,
+    kneel: 0,
+    running: false,
+    slide: 0,
+    burning: 0,
+    stun: 0,
+  })
+
   test('addCombatant / removeCombatant keep world.ships in lockstep', () => {
     const world = createWorld(4)
     const a = combatant(0, 500, 400)
@@ -380,6 +406,40 @@ describe('createSim — membership', () => {
     expect(world.ships).toHaveLength(1)
     expect(world.ships[0].id).toBe(1)
     expect(sim.getCombatant(0)).toBeUndefined()
+  })
+
+  test('removeCombatant(keepDevices) leaves the seat’s troopers fighting; the default drops them', () => {
+    const world = createWorld(43)
+    const sim = createSim(world, [combatant(0, 500, 400), combatant(1, 700, 400)], { mode: SimMode.DEATHMATCH })
+    const benched = trooperOf(0)
+    const gone = trooperOf(1)
+    world.devices.push(benched, gone)
+    sim.removeCombatant(0, true) // benched seat — its man fights on
+    expect(world.devices).toContain(benched)
+    sim.removeCombatant(1) // gone for good — orphans dropped
+    expect(world.devices).not.toContain(gone)
+  })
+
+  test('addCombatant with respawnIn keeps the ship out of the world until the clock elapses', () => {
+    const world = createWorld(41)
+    const sim = createSim(world, [], { mode: SimMode.DEATHMATCH })
+    sim.addCombatant(combatant(0, 500, 400), { respawnIn: 2 })
+    expect(world.ships).toHaveLength(0) // mid-respawn seat: registered, not flying
+    expect(sim.respawnIn(0)).toBeCloseTo(2, 1)
+    for (let i = 0; i < Math.ceil(2.2 * 60); i += 1) sim.step(1 / 60)
+    expect(world.ships.some((s) => s.id === 0)).toBe(true) // the normal reinforcement path seated it
+  })
+
+  test('restored deaths drive the compounding delay (the attrition clock survives a restore)', () => {
+    const world = createWorld(42)
+    const shooter = combatant(0, 500, 400)
+    const victim = combatant(1, 520, 400)
+    victim.deaths = 3 // as if read back from a persisted seat
+    const sim = createSim(world, [shooter, victim], { mode: SimMode.DEATHMATCH })
+    victim.ship.health = 10
+    world.bullets.push(lethalShot(victim.ship.x, victim.ship.y, shooter.ship.id))
+    sim.step(1 / 60)
+    expect(sim.respawnIn(1)).toBeCloseTo(RESPAWN_DELAY_BASE + 3 * RESPAWN_DELAY_GROWTH, 1)
   })
 })
 

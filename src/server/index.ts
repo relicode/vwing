@@ -9,7 +9,8 @@ import {
   NET_TICK_RATE,
 } from '$/game/constants'
 import { decodeClient, encode, gameNameKey, JoinIntent, MsgType, sanitizeGameName } from '$/net/protocol'
-import { createRoom, parseRestore, type Room, type RoomRestore } from '$/server/room'
+import { parsePersisted, type RoomRestore } from '$/server/restore'
+import { createRoom, JoinRefusal, type Room } from '$/server/room'
 import type { Store } from '$/server/store'
 
 // Per-connection data carried on each WebSocket (assigned at upgrade, finalized on open).
@@ -38,33 +39,44 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
   let tickCount = 0
 
   // Creates a room indexed by its canonical key (and topic); the caller decides whether that's
-  // allowed — host into a free key, join into an existing one. With `restore` the room is
-  // resurrected from a persisted state (same seed, carved terrain overlaid) instead of fresh.
-  const createRoomState = (key: string, displayName: string, restore?: RoomRestore): RoomState => {
+  // allowed — host into a free key, join into an existing one. With `restored` the room is
+  // resurrected from a persisted state (full session: seats benched, devices live, carved
+  // terrain overlaid) instead of fresh.
+  const createRoomState = (
+    key: string,
+    displayName: string,
+    restored?: { restore: RoomRestore; degraded: string[] }
+  ): RoomState => {
     const created: RoomState = {
-      room: createRoom(displayName, restore),
+      room: createRoom(displayName, restored?.restore),
       topic: `game:${key}`,
       persistTick: 0,
       emptySince: undefined,
     }
     rooms.set(key, created)
     void store.registerGame(key, { name: displayName, players: 0, maxPlayers: NET_MAX_PLAYERS })
-    console.log(`[server] room ${restore ? 'resumed from persisted state' : 'created'}: "${displayName}"`)
+    const detail = restored
+      ? `: ${restored.restore.roster?.length ?? 0} benched pilots, ${restored.restore.devices?.length ?? 0} devices` +
+        (restored.degraded.length > 0 ? ` (degraded: ${restored.degraded.join(', ')})` : '')
+      : ''
+    console.log(`[server] room ${restored ? 'resumed' : 'created'}: "${displayName}"${detail}`)
     return created
   }
 
-  // The persisted state for a key, parsed into a restore — undefined when none exists or the
-  // blob is foreign/corrupt. This is what makes carved terrain survive a server restart.
-  const loadRestore = async (key: string): Promise<RoomRestore | undefined> => {
+  // The persisted state for a key, validated into a restore — undefined when none exists or the
+  // blob is unusable. This is what makes a whole game session survive a server restart.
+  const loadRestore = async (key: string): Promise<{ restore: RoomRestore; degraded: string[] } | undefined> => {
     const json = await store.loadState(key)
-    return json ? parseRestore(json) : undefined
+    return json ? parsePersisted(json) : undefined
   }
 
   const disposeRoom = (key: string, rs: RoomState): void => {
     rooms.delete(key)
     void store.unregisterGame(key)
-    void store.deleteState(key)
-    console.log(`[server] room disposed: "${rs.room.name}"`)
+    // Hibernate, don't delete: the final write leaves the room resurrectable until the store's
+    // state TTL lapses — the single authority on when a game is truly gone.
+    void store.saveState(key, rs.room.persisted())
+    console.log(`[server] room hibernated: "${rs.room.name}"`)
   }
 
   // ── Static serving (production single-origin): everything that isn't /api or /ws falls
@@ -115,27 +127,37 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
           ws.close()
           return
         }
-        let restore: RoomRestore | undefined
+        let restored: { restore: RoomRestore; degraded: string[] } | undefined
         if (!existing) {
-          restore = await loadRestore(key)
+          restored = await loadRestore(key)
           existing = rooms.get(key) // a parallel open may have created the room during the await
-          if (intent === JoinIntent.JOIN && !existing && !restore) {
+          if (intent === JoinIntent.JOIN && !existing && !restored) {
             ws.send(encode({ t: MsgType.REJECTED, reason: 'That game is no longer open.' }))
             ws.close()
             return
           }
         }
-        const rs = existing ?? createRoomState(key, game, restore)
-        const shipId = rs.room.join(ws.data.name)
-        if (shipId === undefined) {
-          ws.send(encode({ t: MsgType.REJECTED, reason: 'Game is full' }))
+        const rs = existing ?? createRoomState(key, game, restored)
+        const seat = rs.room.join(ws.data.name)
+        if ('refusal' in seat) {
+          const reason =
+            seat.refusal === JoinRefusal.NAME_TAKEN ? 'That pilot is already flying in this game.' : 'Game is full'
+          ws.send(encode({ t: MsgType.REJECTED, reason }))
           ws.close()
           return
         }
-        ws.data.shipId = shipId
+        ws.data.shipId = seat.shipId
         rs.emptySince = undefined
         ws.subscribe(rs.topic)
-        ws.send(encode({ t: MsgType.WELCOME, selfId: shipId, game: rs.room.name, tickRate: NET_TICK_RATE }))
+        ws.send(
+          encode({
+            t: MsgType.WELCOME,
+            selfId: seat.shipId,
+            game: rs.room.name,
+            tickRate: NET_TICK_RATE,
+            reclaimed: seat.reclaimed,
+          })
+        )
         void store.registerGame(key, {
           name: rs.room.name,
           players: rs.room.playerCount(),
@@ -143,7 +165,7 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
         })
         const verb = intent === JoinIntent.HOST ? 'hosted' : 'joined'
         console.log(
-          `[server] "${ws.data.name}" ${verb} "${rs.room.name}" as #${shipId} (${rs.room.playerCount()} in room)`
+          `[server] "${ws.data.name}" ${verb} "${rs.room.name}" as #${seat.shipId}${seat.reclaimed ? ' (reclaimed seat)' : ''} (${rs.room.playerCount()} in room)`
         )
       },
       message: (ws: ServerWebSocket<ConnData>, raw) => {
@@ -201,6 +223,10 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
     server,
     stop: async () => {
       clearInterval(loop)
+      // A graceful shutdown checkpoints every live room, so a restart resumes mid-match games
+      // (SIGINT/SIGTERM route here via scripts/server.ts). allSettled: one room's failed
+      // write must not cost every other room its final state.
+      await Promise.allSettled([...rooms].map(([key, rs]) => store.saveState(key, rs.room.persisted())))
       await server.stop(true)
       await store.close()
     },

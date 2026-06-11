@@ -106,6 +106,8 @@ export const NET_MAX_PLAYERS = 8 // combatants per game room
 export const NET_PERSIST_EVERY = 15 // ticks between full-state writes to Redis (2×/s at 30 Hz)
 export const NET_EMPTY_ROOM_TTL = 30 // s an emptied room lingers (state kept in Redis) before disposal
 export const NET_GAME_NAME_MAX = 24 // max characters in a hosted game name
+export const NET_BENCH_MAX = 32 // disconnected seats a room remembers for same-name reclaim (oldest evicted)
+export const NET_PERSIST_MAX_DEVICES = 512 // cap on devices read back from a persisted blob (hostile-blob bound)
 
 // Minimap (renderer.ts): a corner overview of the whole arena — terrain silhouette, water,
 // both bases, and every ship, tinted with the same owner colors as the world (self cyan,
