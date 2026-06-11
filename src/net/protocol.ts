@@ -13,6 +13,7 @@ export type PlayerInfo = {
   name: string
   score: number // points (CAMPAIGN) / frags (DEATHMATCH)
   palette: number // PLAYER_PALETTE slot the server assigned this seat (clients clamp, fallback 1)
+  respawnIn: number // s until the seat's ship re-enters (0 = flying, or benched)
   connected: boolean
 }
 
@@ -39,6 +40,11 @@ export enum JoinIntent {
   HOST = 'HOST',
   JOIN = 'JOIN',
 }
+
+// The exact REJECTED reason for a live duplicate pilot name. Shared as a constant because the
+// reconnecting client treats THIS refusal as retryable — its own stale socket simply hasn't been
+// benched server-side yet — while every other refusal is terminal.
+export const NAME_TAKEN_REASON = 'That pilot is already flying in this game.'
 
 export type ClientMessage = { t: MsgType.INPUT; input: InputSnapshot }
 

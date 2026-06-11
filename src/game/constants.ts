@@ -108,6 +108,13 @@ export const NET_EMPTY_ROOM_TTL = 30 // s an emptied room lingers (state kept in
 export const NET_GAME_NAME_MAX = 24 // max characters in a hosted game name
 export const NET_BENCH_MAX = 32 // disconnected seats a room remembers for same-name reclaim (oldest evicted)
 export const NET_PERSIST_MAX_DEVICES = 512 // cap on devices read back from a persisted blob (hostile-blob bound)
+// Client self-healing: an unexpected close after a WELCOME re-dials with intent=JOIN on this
+// backoff (JOIN also resurrects a hibernated room, so blips and server restarts heal through
+// the same reclaim path); the schedule exhausted = genuinely disconnected.
+export const NET_RECONNECT_DELAYS_MS: readonly number[] = [1000, 2000, 4000, 8000, 8000]
+export const NET_FEED_MAX = 4 // kill-feed lines shown at once (oldest dropped)
+export const NET_FEED_TTL = 6 // s a kill-feed line lives
+export const NET_SNAPSHOT_STALL_MS = 2000 // no SNAPSHOT for this long while PLAYING → the UNSTABLE chip
 
 // Minimap (renderer.ts): a corner overview of the whole arena — terrain silhouette, water,
 // both bases, and every ship, tinted with the same owner colors as the world (self cyan,
