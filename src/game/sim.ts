@@ -78,6 +78,7 @@ export type Combatant = {
   input: Input
   name: string
   score: number // points (CAMPAIGN) / frags (DEATHMATCH)
+  deaths: number // deaths this run — drives the compounding respawn delay (survives a bench/restore)
   spawn: Vec2 // CAMPAIGN home respawn point
 }
 
@@ -103,8 +104,11 @@ export type Sim = {
   combatants: Combatant[]
   config: SimConfig
   step: (dt: number) => DeathEvent[]
-  addCombatant: (combatant: Combatant) => void
-  removeCombatant: (id: number) => void
+  // Seat a combatant; respawnIn > 0 keeps its ship out of the world until the clock elapses
+  // (a reclaimed or restored seat that was mid-respawn). keepDevices leaves the combatant's
+  // deployed troopers/mines fighting on (a benched seat, not a gone one).
+  addCombatant: (combatant: Combatant, opts?: { respawnIn?: number }) => void
+  removeCombatant: (id: number, keepDevices?: boolean) => void
   getCombatant: (id: number) => Combatant | undefined
   respawnIn: (id: number) => number // s until the combatant's ship re-enters; 0 = alive (or gone)
   // Terrain persistence: the carved voxel state as plain JSON, and its overlay onto a sim
@@ -183,7 +187,6 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
   // delay that grows with every death already suffered (the reinforcement clock).
   const awaiting = new Set<number>() // ids whose ships are out of the world, waiting to respawn
   const pending: { combatant: Combatant; at: number }[] = []
-  const deathCounts = new Map<number, number>()
   // Read `water` live: pooling can replace world.water with a new array mid-run, so a one-time
   // snapshot would go stale and ship buoyancy would miss freshly pooled water.
   const env: ShipEnv = {
@@ -315,9 +318,8 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     } else {
       // The reinforcement clock: the wreck leaves the sky and the respawn waits — 5 s more for
       // every death already suffered this run, without ceiling. Attrition IS the cost of dying.
-      const deaths = (deathCounts.get(victim.id) ?? 0) + 1
-      deathCounts.set(victim.id, deaths)
-      const delay = RESPAWN_DELAY_BASE + (deaths - 1) * RESPAWN_DELAY_GROWTH
+      vc.deaths += 1
+      const delay = RESPAWN_DELAY_BASE + (vc.deaths - 1) * RESPAWN_DELAY_GROWTH
       awaiting.add(victim.id)
       pending.push({ combatant: vc, at: world.time + delay })
       world.ships = world.ships.filter((ship) => ship.id !== victim.id)
@@ -547,22 +549,30 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     return events
   }
 
-  const addCombatant = (combatant: Combatant): void => {
-    refillBay(combatant.ship, config.mode)
+  const addCombatant = (combatant: Combatant, opts?: { respawnIn?: number }): void => {
     combatants.push(combatant)
+    const wait = opts?.respawnIn ?? 0
+    if (wait > 0) {
+      // The seat re-enters mid-wait: keep the ship out of the world and let the normal
+      // reinforcement dequeue respawn it when the remaining clock elapses.
+      awaiting.add(combatant.ship.id)
+      pending.push({ combatant, at: world.time + wait })
+      return
+    }
+    refillBay(combatant.ship, config.mode)
     world.ships.push(combatant.ship)
   }
 
-  const removeCombatant = (id: number): void => {
+  const removeCombatant = (id: number, keepDevices = false): void => {
     const index = combatants.findIndex((c) => c.ship.id === id)
     if (index < 0) return
     combatants.splice(index, 1)
     world.ships = world.ships.filter((ship) => ship.id !== id)
-    world.devices = world.devices.filter((device) => device.owner !== id) // drop orphaned mines/troopers
+    // A benched seat's troopers/mines keep fighting (keepDevices); a gone combatant's are dropped.
+    if (!keepDevices) world.devices = world.devices.filter((device) => device.owner !== id)
     eliminated.delete(id)
     submergedShips.delete(id)
     awaiting.delete(id)
-    deathCounts.delete(id)
     const queued = pending.findIndex((p) => p.combatant.ship.id === id)
     if (queued >= 0) pending.splice(queued, 1)
   }

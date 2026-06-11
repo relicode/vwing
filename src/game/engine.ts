@@ -65,6 +65,7 @@ export const createEngine = async (): Promise<Engine> => {
         input,
         name: 'You',
         score: 0,
+        deaths: 0,
         spawn: { x: PLAYER_SPAWN_X, y: PLAYER_SPAWN_Y },
       },
       {
@@ -72,6 +73,7 @@ export const createEngine = async (): Promise<Engine> => {
         input: createBotInput(bot, () => world),
         name: 'Bot',
         score: 0,
+        deaths: 0,
         spawn: { x: BOT_SPAWN_X, y: BOT_SPAWN_Y },
       },
     ]
