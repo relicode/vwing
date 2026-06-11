@@ -11,6 +11,11 @@ const INITIAL_STATUS: NetStatus = {
   score: 0,
   weapon: WeaponKind.SCATTERGUN,
   charge: 0,
+  attempt: 0,
+  reclaims: 0,
+  feed: [],
+  respawnIn: 0,
+  stalled: false,
   error: undefined,
 }
 
