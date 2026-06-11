@@ -178,7 +178,14 @@ export const connectGame = async (game: string, name: string, intent: JoinIntent
     publish()
     reconnectTimer = setTimeout(() => {
       reconnectTimer = undefined
-      openSocket(JoinIntent.JOIN)
+      try {
+        openSocket(JoinIntent.JOIN)
+      } catch (cause) {
+        // A re-dial whose WebSocket constructor throws (bad URL / SecurityError) would otherwise
+        // strand us in RECONNECTING with no socket and no pending timer. Ride the backoff instead.
+        console.warn('[net] re-dial failed to open a socket — retrying', cause)
+        scheduleReconnect()
+      }
     }, delay)
   }
 
@@ -198,6 +205,7 @@ export const connectGame = async (game: string, name: string, intent: JoinIntent
         attempt = 0
         error = undefined // a stale outage reason must not resurface on the next real drop
         lastSnapshotMs = Date.now()
+        sinceSentMs = HEARTBEAT_MS + 1 // the fresh socket gets the current input on the next frame, guaranteed
         if (message.reclaimed) reclaims += 1
         console.info(`[net] welcome — ship #${message.selfId}${message.reclaimed ? ' (seat reclaimed)' : ''}`)
         publish()
