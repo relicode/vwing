@@ -224,8 +224,9 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
     stop: async () => {
       clearInterval(loop)
       // A graceful shutdown checkpoints every live room, so a restart resumes mid-match games
-      // (SIGINT/SIGTERM route here via scripts/server.ts).
-      await Promise.all([...rooms].map(([key, rs]) => store.saveState(key, rs.room.persisted())))
+      // (SIGINT/SIGTERM route here via scripts/server.ts). allSettled: one room's failed
+      // write must not cost every other room its final state.
+      await Promise.allSettled([...rooms].map(([key, rs]) => store.saveState(key, rs.room.persisted())))
       await server.stop(true)
       await store.close()
     },

@@ -49,7 +49,81 @@ export type RoomRestore = {
 
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
 
-const DEVICE_KINDS = new Set<string>(Object.values(DeviceKind))
+// Every numeric field the sim reads off a device, per kind. A persisted device that is missing
+// (or non-finite in) any of these would NaN-poison updateDevices the first tick after restore —
+// `device.x += device.vx * dt` with `vx === undefined` makes `x` NaN forever, and the broken
+// device then rides every snapshot to every client. So a row is admitted only when ALL of its
+// kind's numeric fields are finite (booleans/optional-enum fields like `guard`/`heavy` aren't
+// gating — the sim tolerates their absence). Keep this in lockstep with the Device union in
+// types.ts; PERSIST_VERSION must bump if a kind's required numeric surface changes.
+const DEVICE_NUMERIC_FIELDS: Record<DeviceKind, readonly string[]> = {
+  [DeviceKind.MISSILE]: [
+    'x',
+    'y',
+    'vx',
+    'vy',
+    'life',
+    'owner',
+    'radius',
+    'turnRate',
+    'speed',
+    'damage',
+    'blastRadius',
+    'blastDamage',
+    'disableTime',
+    'shieldDrain',
+    'color',
+  ],
+  [DeviceKind.MINE]: ['x', 'y', 'owner', 'radius', 'armTime', 'life', 'triggerRadius', 'blastRadius', 'damage'],
+  [DeviceKind.INFANTRY]: [
+    'x',
+    'y',
+    'vx',
+    'vy',
+    'owner',
+    'radius',
+    'swim',
+    'sinking',
+    'chute',
+    'pickupLock',
+    'walkDir',
+    'facing',
+    'groundLeft',
+    'groundRight',
+    'fireCooldown',
+    'kneel',
+    'slide',
+    'burning',
+    'stun',
+  ],
+  [DeviceKind.GRENADE]: ['x', 'y', 'vx', 'vy', 'owner', 'radius', 'fuse'],
+  [DeviceKind.FLAK]: ['x', 'y', 'vx', 'vy', 'owner', 'radius', 'fuse'],
+  [DeviceKind.WELL]: ['x', 'y', 'owner', 'radius', 'life', 'strength', 'pullRadius'],
+}
+
+// Every numeric field the sim/renderer reads off a ship. A reclaimed seat whose ship is missing
+// any of these poisons updateShip the same way (a ship with no `vx`/`angle`/`radius` goes to NaN
+// and breaks collision, camera, and render for the whole room) — so the row is dropped, not seated.
+const SHIP_NUMERIC_FIELDS: readonly (keyof Ship)[] = [
+  'x',
+  'y',
+  'vx',
+  'vy',
+  'angle',
+  'radius',
+  'fireCooldown',
+  'invuln',
+  'health',
+  'shields',
+  'charge',
+  'altCooldown',
+  'disabled',
+  'troops',
+  'deployCooldown',
+]
+
+const allFinite = (obj: Record<string, unknown>, fields: readonly string[]): boolean =>
+  fields.every((field) => finite(obj[field]))
 
 const validWater = (raw: unknown): WaterBody[] | undefined => {
   if (!Array.isArray(raw)) return undefined
@@ -60,21 +134,20 @@ const validWater = (raw: unknown): WaterBody[] | undefined => {
   return bodies.length === raw.length ? bodies : undefined
 }
 
-// Row-validate the device list: unknown kinds and non-finite positions/owners are dropped
-// individually; the list is capped so a hostile blob can't seed an unbounded device array.
+// Row-validate the device list: unknown kinds and rows missing any of their kind's numeric
+// fields are dropped individually (a partial device NaN-poisons the sim — see the field table
+// above); the list is capped so a hostile blob can't seed an unbounded device array.
+const validDevice = (d: unknown): d is Device => {
+  if (d === null || typeof d !== 'object') return false
+  const kind = (d as { kind?: unknown }).kind
+  if (typeof kind !== 'string' || !(kind in DEVICE_NUMERIC_FIELDS)) return false
+  return allFinite(d as Record<string, unknown>, DEVICE_NUMERIC_FIELDS[kind as DeviceKind])
+}
+
 const validDevices = (raw: unknown): { devices: Device[]; dropped: boolean } | undefined => {
   if (!Array.isArray(raw)) return undefined
   const rows = raw.slice(0, NET_PERSIST_MAX_DEVICES)
-  const devices = rows.filter(
-    (d): d is Device =>
-      d !== null &&
-      typeof d === 'object' &&
-      typeof d.kind === 'string' &&
-      DEVICE_KINDS.has(d.kind) &&
-      finite(d.x) &&
-      finite(d.y) &&
-      finite(d.owner)
-  )
+  const devices = rows.filter(validDevice)
   return { devices, dropped: devices.length !== raw.length }
 }
 
@@ -91,7 +164,14 @@ const validSeat = (raw: unknown, seenIds: Set<number>, seenKeys: Set<string>): P
   if (seenKeys.has(key)) return undefined
   if (!finite(seat.score) || !finite(seat.deaths) || !finite(seat.respawnIn)) return undefined
   const ship = seat.ship
-  if (ship === null || typeof ship !== 'object' || !finite(ship.x) || !finite(ship.y) || !finite(ship.health)) {
+  // A reclaimed ship is read live by updateShip/collision/render: every numeric field must be
+  // finite or the seat is dropped (a half-shaped ship goes to NaN and breaks the whole room).
+  if (
+    ship === null ||
+    typeof ship !== 'object' ||
+    Array.isArray(ship) ||
+    !allFinite(ship as Record<string, unknown>, SHIP_NUMERIC_FIELDS as readonly string[])
+  ) {
     return undefined
   }
   seenIds.add(seat.id)

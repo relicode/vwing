@@ -143,7 +143,9 @@ export const createRoom = (name: string, restore?: RoomRestore): Room => {
       const troops = benched.ship.troops
       sim.addCombatant(combatant, { respawnIn: benched.respawnIn })
       // Reassigned AFTER addCombatant: seating refills a DEATHMATCH bay, which would clobber
-      // the bay the pilot disconnected with.
+      // the bay the pilot disconnected with. Load-bearing only for an ALIVE reclaim — a seat
+      // still mid-respawn re-enters through the normal dequeue, which re-kits the ship
+      // (fresh bay, fresh weapon) like any other respawn, by design.
       benched.ship.troops = troops
       benched.ship.invuln = Math.max(benched.ship.invuln, 1) // re-entry grace
       members.set(benched.ship.id, { shipId: benched.ship.id, name: displayName, input })

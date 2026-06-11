@@ -375,6 +375,45 @@ describe('parsePersisted (hostile/corrupt/stale blobs degrade per section, never
     expect(parsed?.restore.devices?.every((d) => d.kind !== ('NUKE' as DeviceKind))).toBe(true)
   })
 
+  test('a device carrying only the position/owner fields is dropped (no NaN-poisoned sim)', () => {
+    const { doc } = freshDoc()
+    const raw = JSON.parse(doc)
+    // A MISSILE and an INFANTRY with the position/owner present but every kind-specific numeric
+    // field (vx/vy/speed/turnRate, swim/chute/…) missing — admitting either makes device.x NaN
+    // on the first tick and rides every snapshot to every client.
+    raw.devices = [
+      { kind: DeviceKind.MISSILE, x: 500, y: 400, owner: 0 },
+      { kind: DeviceKind.INFANTRY, x: 600, y: 400, owner: 0 },
+    ]
+    const parsed = parsePersisted(JSON.stringify(raw))
+    expect(parsed?.restore.devices).toHaveLength(0)
+    expect(parsed?.degraded).toContain('devices')
+
+    // And the restore must step cleanly — no NaN leaks into the live device array.
+    const twin = createRoom('Hostile', parsed?.restore)
+    for (let i = 0; i < 5; i += 1) twin.step(1 / 30)
+    expect(twin.sim.world.devices.every((d) => Number.isFinite(d.x) && Number.isFinite(d.y))).toBe(true)
+  })
+
+  test('a roster ship missing numeric fields (or shaped as an array) is dropped, not seated as NaN', () => {
+    const { doc } = freshDoc()
+    const raw = JSON.parse(doc)
+    // Row 0: a ship object with only x/y/health — no vx/angle/radius/… → would NaN-poison updateShip.
+    raw.roster[0].ship = { x: 500, y: 400, health: 100 }
+    // Row 1: ship shaped as an array (typeof 'object', but no fields) — must also drop.
+    raw.roster[1].ship = [1, 2, 3]
+    const parsed = parsePersisted(JSON.stringify(raw))
+    expect(parsed?.restore.roster).toHaveLength(0)
+    expect(parsed?.degraded).toContain('roster')
+
+    const twin = createRoom('Hostile', parsed?.restore)
+    const back = twin.join('Maverick')
+    if ('refusal' in back) throw new Error('expected a fresh seat')
+    expect(back.reclaimed).toBe(false) // nothing to reclaim — the poisoned seat was dropped
+    for (let i = 0; i < 5; i += 1) twin.step(1 / 30)
+    expect(twin.sim.world.ships.every((s) => Number.isFinite(s.x) && Number.isFinite(s.vx))).toBe(true)
+  })
+
   test('the device list is capped (a hostile blob cannot seed an unbounded army)', () => {
     const { doc, shipId } = freshDoc()
     const raw = JSON.parse(doc)
