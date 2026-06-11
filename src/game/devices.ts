@@ -587,11 +587,17 @@ const clampToGround = (device: InfantryDevice, x: number): number => {
 // Double-time toward a target x along the supporting block (clamped to its edges, halted by a
 // wall face) to climb aboard — boarding is urgent, so the unit SPRINTS (the run pose reads the
 // dash to the hull; `running` resets at the top of every landed tick, so it clears on arrival).
-const walkToward = (world: World, device: InfantryDevice, targetX: number, dt: number): void => {
+const walkToward = (
+  world: World,
+  device: InfantryDevice,
+  targetX: number,
+  dt: number,
+  speed = INFANTRY_RUN_SPEED
+): void => {
   device.walkDir = targetX >= device.x ? 1 : -1
   device.running = true
   if (!wallAhead(world.blocks, device, device.walkDir)) {
-    device.x = clampToGround(device, device.x + device.walkDir * INFANTRY_RUN_SPEED * dt)
+    device.x = clampToGround(device, device.x + device.walkDir * speed * dt)
   }
   device.facing = device.walkDir
 }
@@ -906,12 +912,25 @@ const stepDevice = (
       }
       // Burning ground: footing on grass that's alight catches the man himself.
       if (device.burning <= 0 && ground.surface === Surface.FIRE) device.burning = INFANTRY_BURN_TIME
-      // Alight: a burning trooper has no discipline left — it flails blindly along its block
-      // at a dead sprint (reversing on a whim), shedding the fire onto anyone it brushes.
+      // Alight: a burning man bolts for his own ship — being scooped aboard is the cure (a
+      // carried troop doesn't burn; the boarding touch in resolveInfantryContacts takes him
+      // like any rescue). With no viable rescuer on his block, no discipline is left: he
+      // flails blindly at a dead sprint (reversing on a whim), shedding fire onto anyone
+      // he brushes.
       if (device.burning > 0) {
         device.slide = 0
         device.kneel = 0
         device.running = true
+        const rescuer = rescuingOwner(world, device)
+        if (
+          rescuer &&
+          rescuer.x >= device.groundLeft &&
+          rescuer.x <= device.groundRight &&
+          Math.abs(rescuer.y - device.y) <= INFANTRY_PICKUP_RADIUS + device.radius
+        ) {
+          walkToward(world, device, rescuer.x, dt, INFANTRY_BURN_RUN_SPEED)
+          return true
+        }
         if (world.rng() < INFANTRY_BURN_TURN_CHANCE) device.walkDir = -device.walkDir
         if (device.x <= device.groundLeft + device.radius) device.walkDir = 1
         else if (device.x >= device.groundRight - device.radius) device.walkDir = -1

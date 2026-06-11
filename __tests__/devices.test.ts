@@ -776,6 +776,32 @@ describe('updateDevices — fire, stun, and the heavier ordnance vs infantry', (
     expect(caught).toBe(true)
   })
 
+  test('a burning man bolts for his own ship, and the scoop aboard is what douses him', () => {
+    const owner = makeShip({ id: 0, x: 220, y: 193 }) // landed dead-still: a viable rescuer
+    const burner = infantry({
+      x: 100,
+      y: 193,
+      attached: true,
+      burning: 3,
+      groundLeft: 0,
+      groundRight: 600,
+      fireCooldown: 99,
+    })
+    const world = makeWorld([owner], [burner])
+    world.blocks = [ground]
+    updateDevices(world, 1 / 60)
+    if (burner.kind === DeviceKind.INFANTRY) {
+      expect(burner.running).toBe(true)
+      expect(burner.x).toBeGreaterThan(100) // a beeline for the hull — not the blind flail
+    }
+    for (let i = 0; i < 150 && owner.troops === 0; i += 1) {
+      updateDevices(world, 1 / 60)
+      resolveInfantryContacts(world)
+    }
+    expect(owner.troops).toBe(1) // scooped aboard — and a carried troop doesn't burn
+    expect(world.devices.some((d) => d.kind === DeviceKind.INFANTRY)).toBe(false)
+  })
+
   test('troopers flee a burning man — even one of their own', () => {
     const burner = infantry({ x: 200, y: 193, attached: true, burning: 3, groundLeft: 195, groundRight: 205 })
     const friend = infantry({ x: 260, y: 193, attached: true, groundLeft: 140, groundRight: 460, fireCooldown: 99 })
