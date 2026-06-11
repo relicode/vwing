@@ -45,6 +45,7 @@ export const spawnTrooper = (world: World, ship: Ship): void => {
     slide: 0,
     burning: 0,
     stun: 0,
+    fallen: 0,
   })
 }
 
@@ -80,5 +81,6 @@ export const spawnGuard = (world: World, base: Base, squad: WeaponKind | undefin
     slide: 0,
     burning: 0,
     stun: 0,
+    fallen: 0,
   })
 }

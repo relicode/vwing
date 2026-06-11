@@ -130,6 +130,7 @@ describe('fireRail', () => {
       slide: 0,
       burning: 0,
       stun: 0,
+      fallen: 0,
     })
     const shooter = makeShip({ id: 0, x: 0, y: 0, angle: 0 }) // facing +x
     const world = makeWorld([shooter])

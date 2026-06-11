@@ -91,6 +91,7 @@ export enum InfantryState {
   WALKING = 'WALKING', // landed, patrolling / repositioning — fires with reduced accuracy
   RUNNING = 'RUNNING', // sprinting clear of a point-blank threat — holds fire
   KNEELING = 'KNEELING', // braced to launch a heavy weapon (grenadier)
+  FALLEN = 'FALLEN', // knocked flat (blast shove / hard landing / icy pratfall) — helpless until back up
   FALLING = 'FALLING', // airborne with no canopy — holds fire
   FALLING_PARACHUTE = 'FALLING_PARACHUTE', // descending under a canopy — fires inaccurately
   SWIMMING = 'SWIMMING', // afloat — only the drifting "standby" swimmer fires (poorly)
@@ -450,6 +451,12 @@ export const INFANTRY_WALK_SPEED = 26 // px/s patrol speed on a surface
 export const INFANTRY_WALK_TURN_CHANCE = 0.012 // per-frame chance a patroller spontaneously reverses
 export const INFANTRY_PICKUP_DELAY = 2 // s after deploy before a unit can be picked up
 export const INFANTRY_FALL_LETHAL = 300 // landing impact speed (px/s) above which a unit splats
+// Knocked flat: a survivable-but-hard landing (chute not fully open), a blast's shove, or an icy
+// skid's end dumps a trooper on his back — helpless (no walking, no firing) until he scrambles up.
+export const INFANTRY_FALLEN_TIME = 2.5 // s a knocked-down trooper stays flat before getting up
+export const INFANTRY_FALL_STUN = 140 // landing impact (px/s) above which a survivable fall still knocks flat
+export const INFANTRY_KNOCKDOWN_RADIUS_SCALE = 1.6 // blast knockdown ring: kill radius × this flattens landed survivors
+export const BURST_KNOCKDOWN_RADIUS = 80 // px around a grenade/flak burst where landed troopers are knocked flat
 export const INFANTRY_SWIM_TIME = 6 // s a unit floats (can't shoot) in water before it drowns
 export const INFANTRY_SWIM_DRAG = 1.6 // horizontal damping coefficient while swimming (no rescuer near)
 export const INFANTRY_SWIM_SPEED = 34 // px/s a unit paddles toward a rescuing owner

@@ -411,6 +411,7 @@ describe('createSim — membership', () => {
     slide: 0,
     burning: 0,
     stun: 0,
+    fallen: 0,
   })
 
   test('addCombatant / removeCombatant keep world.ships in lockstep', () => {
@@ -490,6 +491,7 @@ describe('createSim — flame and water vs infantry', () => {
     slide: 0,
     burning: 0,
     stun: 0,
+    fallen: 0,
   })
 
   test('friendly fire is real: a stray same-side bullet splatters a trooper', () => {

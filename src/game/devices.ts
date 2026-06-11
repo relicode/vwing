@@ -12,6 +12,7 @@ import {
   BaseAlarm,
   BLAST_SHAKE,
   BULLET_RADIUS,
+  BURST_KNOCKDOWN_RADIUS,
   Color,
   DeviceKind,
   EMP_STUN_RADIUS,
@@ -39,6 +40,8 @@ import {
   INFANTRY_EMP_RADIUS,
   INFANTRY_EMP_SPEED,
   INFANTRY_FALL_LETHAL,
+  INFANTRY_FALL_STUN,
+  INFANTRY_FALLEN_TIME,
   INFANTRY_FIRE_CATCH_CHANCE,
   INFANTRY_FIRE_CATCH_RADIUS,
   INFANTRY_FIRE_INTERVAL,
@@ -53,6 +56,7 @@ import {
   INFANTRY_ICE_SLIP_CHANCE,
   INFANTRY_KNEEL_FIRE_AT,
   INFANTRY_KNEEL_TIME,
+  INFANTRY_KNOCKDOWN_RADIUS_SCALE,
   INFANTRY_MINE_ARM,
   INFANTRY_MINE_BLAST,
   INFANTRY_MINE_DAMAGE,
@@ -174,6 +178,7 @@ export const stateOf = (device: InfantryDevice): InfantryState => {
   if (device.sinking > 0) return InfantryState.DROWNING
   if (device.swim > 0) return InfantryState.SWIMMING
   if (!device.attached) return device.chute >= 0 ? InfantryState.FALLING_PARACHUTE : InfantryState.FALLING
+  if (device.fallen > 0) return InfantryState.FALLEN
   if (device.kneel > 0) return InfantryState.KNEELING
   if (device.running) return InfantryState.RUNNING
   // Landed: walking when there's room to patrol, otherwise standing (and dead-on).
@@ -195,6 +200,20 @@ const nearestEnemyOf = (ownerId: number, x: number, y: number, ships: Ship[]): S
     }
   }
   return best
+}
+
+// Flatten every landed trooper in the ring — a blast's shove without its shrapnel (both sides:
+// a shockwave is as indiscriminate as the blast itself). Airborne units are already falling,
+// swimmers/corpses keep their water states, and the dead are past knocking down.
+const knockdown = (world: World, x: number, y: number, radius: number, deadDevices: Set<Device>): void => {
+  for (const device of world.devices) {
+    if (device.kind !== DeviceKind.INFANTRY || deadDevices.has(device)) continue
+    if (!device.attached || device.sinking > 0) continue
+    if (Math.hypot(device.x - x, device.y - y) > radius) continue
+    device.fallen = Math.max(device.fallen, INFANTRY_FALLEN_TIME)
+    device.kneel = 0
+    device.running = false
+  }
 }
 
 // Damage every enemy ship within `radius`, collecting any that die. `exclude` skips
@@ -234,6 +253,8 @@ const areaDamage = (
     if (Math.hypot(base.x - x, base.y - BASE_BUILDING_HEIGHT / 2 - y) > radius) continue
     damageBase(world, base, damage)
   }
+  // The shove past the shrapnel: landed troopers in the wider ring are knocked flat, not killed.
+  knockdown(world, x, y, radius * INFANTRY_KNOCKDOWN_RADIUS_SCALE, deadDevices)
 }
 
 const spawnShards = (
@@ -765,6 +786,7 @@ const stepDevice = (
     case DeviceKind.INFANTRY: {
       if (device.pickupLock > 0) device.pickupLock -= dt
       if (device.stun > 0) device.stun = Math.max(0, device.stun - dt)
+      if (device.fallen > 0) device.fallen = Math.max(0, device.fallen - dt)
       // Drowned corpse: sink and fade for a moment, then vanish (no explosion).
       if (device.sinking > 0) {
         device.sinking -= dt
@@ -865,6 +887,8 @@ const stepDevice = (
               spawnExplosion(world.particles, device.x, device.y, Color.BLOOD, world.rng, 6)
               return false
             }
+            // Survivable but hard — a chute not yet fully open brakes nothing — knocks him flat.
+            if (impact > INFANTRY_FALL_STUN) device.fallen = INFANTRY_FALLEN_TIME
             device.x += c.nx * c.depth
             device.y += c.ny * c.depth
             device.vx = 0
@@ -912,6 +936,15 @@ const stepDevice = (
       }
       // Burning ground: footing on grass that's alight catches the man himself.
       if (device.burning <= 0 && ground.surface === Surface.FIRE) device.burning = INFANTRY_BURN_TIME
+      // Knocked flat: nothing to do but wait out the count and scramble back up — no walking,
+      // no firing, any brace or skid broken. (The timer ticks down at the top of the case; a
+      // burning man down on the ground burns where he lies until he's up again.)
+      if (device.fallen > 0) {
+        device.running = false
+        device.kneel = 0
+        device.slide = 0
+        return true
+      }
       // Alight: a burning man bolts for his own ship — being scooped aboard is the cure (a
       // carried troop doesn't burn; the boarding touch in resolveInfantryContacts takes him
       // like any rescue). With no viable rescuer on his block, no discipline is left: he
@@ -948,6 +981,9 @@ const stepDevice = (
         device.x = clampToGround(device, device.x + device.slide * dt)
         device.slide *= Math.exp(-INFANTRY_SLIP_FRICTION * dt)
         if (Math.abs(device.slide) < INFANTRY_SLIP_STOP_SPEED) device.slide = 0
+        // A skid that ends still on the ice ends in a pratfall — flat on his back. (A wash that
+        // peters out on plain earth doesn't floor anyone; it's the ice that takes the feet.)
+        if (device.slide === 0 && ground.surface === Surface.ICE) device.fallen = INFANTRY_FALLEN_TIME
         device.facing = device.walkDir
         device.running = false
         device.kneel = 0 // a slip breaks any brace
@@ -1094,6 +1130,8 @@ const stepDevice = (
           GRENADE_SHARD_LIFE,
           GRENADE_SHARD_DAMAGE
         )
+        // The concussion: the shards kill whoever they meet, the shove floors whoever they miss.
+        knockdown(world, device.x, device.y, BURST_KNOCKDOWN_RADIUS, deadDevices)
         spawnExplosion(world.particles, device.x, device.y, Color.GRENADE, world.rng, 20)
         return false
       }
@@ -1120,6 +1158,8 @@ const stepDevice = (
           FLAK_SHARD_LIFE,
           FLAK_SHARD_DAMAGE
         )
+        // Same concussion as the grenade: an airburst low over the ground floors the survivors.
+        knockdown(world, device.x, device.y, BURST_KNOCKDOWN_RADIUS, deadDevices)
         spawnExplosion(world.particles, device.x, device.y, Color.FLAK, world.rng, 18)
         return false
       }

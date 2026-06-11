@@ -91,6 +91,7 @@ const bracedSpecialist = (heavy: WeaponKind): World => {
         slide: 0,
         burning: 0,
         stun: 0,
+        fallen: 0,
       },
     ]
   )

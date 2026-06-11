@@ -114,6 +114,7 @@ export type Device =
       slide: number // px/s lateral slide from an ice slip or a water-jet wash (0 = firm footing); decays + holds fire
       burning: number // s of fire left before the trooper collapses (0 = not alight); water douses it
       stun: number // s of EMP seize-up remaining (a landed unit can't move or fire)
+      fallen: number // s of knocked-flat left (blast shove / hard landing / icy pratfall) — can't move or fire while down
     }
   | {
       kind: DeviceKind.GRENADE // gravity arc → shrapnel ring on fuse

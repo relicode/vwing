@@ -22,7 +22,7 @@ import { STATE_TTL } from '$/server/store'
 //
 // Bump PERSIST_VERSION whenever the Ship/Device shapes change: a version mismatch degrades the
 // blob to the legacy arena-only restore (seed + terrain + water) instead of seating stale shapes.
-export const PERSIST_VERSION = 2
+export const PERSIST_VERSION = 3
 
 // One roster row: a seat as it stood at save time — live, benched, or mid-respawn alike. The
 // ship object rides whole (mid-respawn ships are NOT in world.ships; the seat owns them), and
@@ -97,6 +97,7 @@ const DEVICE_NUMERIC_FIELDS: Record<DeviceKind, readonly string[]> = {
     'slide',
     'burning',
     'stun',
+    'fallen',
   ],
   [DeviceKind.GRENADE]: ['x', 'y', 'vx', 'vy', 'owner', 'radius', 'fuse'],
   [DeviceKind.FLAK]: ['x', 'y', 'vx', 'vy', 'owner', 'radius', 'fuse'],

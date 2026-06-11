@@ -1,7 +1,16 @@
 import { describe, expect, test } from 'bun:test'
 
 import { updateBeams } from '$/game/beams'
-import { BaseAlarm, DeviceKind, InfantryState, ShipKind, StructureType, Surface, WeaponKind } from '$/game/constants'
+import {
+  BaseAlarm,
+  DeviceKind,
+  INFANTRY_FALLEN_TIME,
+  InfantryState,
+  ShipKind,
+  StructureType,
+  Surface,
+  WeaponKind,
+} from '$/game/constants'
 import { resolveInfantryContacts, stateOf, updateDevices } from '$/game/devices'
 import { createRng } from '$/game/rng'
 import type { Base, Device, Ship, World } from '$/game/types'
@@ -223,6 +232,7 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     slide: 0,
     burning: 0,
     stun: 0,
+    fallen: 0,
     ...over,
   })
 
@@ -607,6 +617,81 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     expect(slipped).toBe(true)
   })
 
+  test('an icy skid ends in a pratfall — flat on his back at the end of the slide', () => {
+    const u = infantry({
+      owner: 0,
+      x: 200,
+      y: 120,
+      attached: true,
+      groundLeft: 140,
+      groundRight: 460,
+      fireCooldown: 99,
+    })
+    const world = makeWorld([], [u])
+    world.blocks = [{ x: 140, y: 128, w: 320, h: 40, structure: StructureType.EARTH, surface: Surface.ICE }]
+    let slid = false
+    for (let i = 0; i < 3000; i += 1) {
+      updateDevices(world, 1 / 60)
+      if (u.kind !== DeviceKind.INFANTRY) return
+      if (u.slide !== 0) slid = true
+      if (slid && u.slide === 0) break // the skid just ended
+    }
+    expect(slid).toBe(true)
+    if (u.kind === DeviceKind.INFANTRY) {
+      expect(u.fallen).toBeGreaterThan(0) // the ice took his feet
+      expect(stateOf(u)).toBe(InfantryState.FALLEN)
+    }
+  })
+
+  test('a hard but survivable landing knocks the man flat, and he gets back up', () => {
+    const world = makeWorld([], [infantry({ y: 175, vy: 200, fireCooldown: 99 })]) // impact between stun and lethal
+    world.blocks = [{ x: 0, y: 200, w: 200, h: 80, structure: StructureType.EARTH, surface: Surface.EARTH }]
+    updateDevices(world, 0.1)
+    const u = world.devices[0]
+    expect(u?.kind).toBe(DeviceKind.INFANTRY)
+    if (u?.kind !== DeviceKind.INFANTRY) return
+    expect(u.attached).toBe(true) // survived the thump…
+    expect(u.fallen).toBeGreaterThan(0) // …but went down hard
+    expect(stateOf(u)).toBe(InfantryState.FALLEN)
+    for (let i = 0; i < Math.ceil((INFANTRY_FALLEN_TIME + 0.2) * 60); i += 1) updateDevices(world, 1 / 60)
+    expect(u.fallen).toBe(0)
+    expect(stateOf(u)).not.toBe(InfantryState.FALLEN) // back on his feet
+  })
+
+  test('a downed trooper holds fire until he is back on his feet', () => {
+    const enemy = makeShip({ id: 1, kind: ShipKind.BOT, x: 260, y: 100 })
+    const u = infantry({ x: 200, y: 120, attached: true, fallen: 0.2, groundLeft: 140, groundRight: 460 })
+    const world = makeWorld([enemy], [u])
+    world.blocks = [{ x: 140, y: 128, w: 320, h: 40, structure: StructureType.EARTH, surface: Surface.EARTH }]
+    updateDevices(world, 1 / 60)
+    expect(world.bullets).toHaveLength(0) // flat on his back: no shot
+    for (let i = 0; i < 30; i += 1) updateDevices(world, 1 / 60) // 0.5 s: the count elapses
+    expect(world.bullets.length).toBeGreaterThan(0) // up and firing again
+  })
+
+  test('a blast knocks down troopers in the shove ring beyond its kill radius', () => {
+    const tripper = makeShip({ id: 1, kind: ShipKind.BOT, x: 100, y: 100 }) // walks into the mine
+    const mine: Device = {
+      kind: DeviceKind.MINE,
+      x: 100,
+      y: 100,
+      owner: 0,
+      radius: 6,
+      armTime: 0,
+      life: 5,
+      triggerRadius: 60,
+      blastRadius: 90,
+      damage: 40,
+    }
+    const close = infantry({ x: 160, y: 100, owner: 1, attached: true }) // 60 px: inside the kill radius
+    const ringed = infantry({ x: 220, y: 100, owner: 1, attached: true, groundLeft: 100, groundRight: 400 }) // 120 px out
+    const world = makeWorld([tripper], [mine, close, ringed])
+    updateDevices(world, 0.016)
+    expect(world.devices).not.toContain(close) // splattered
+    expect(world.devices).toContain(ringed) // shoved, not shredded
+    if (ringed.kind === DeviceKind.INFANTRY) expect(ringed.fallen).toBeGreaterThan(0)
+  })
+
   test('a drowning trooper is rescuable within the window, but not after', () => {
     const ownerEarly = makeShip({ id: 0, x: 100, y: 205, vx: 0, vy: 0 })
     const early = makeWorld([ownerEarly], [infantry({ owner: 0, x: 100, y: 205, sinking: 1.4, pickupLock: 0 })])
@@ -741,6 +826,7 @@ describe('updateDevices — fire, stun, and the heavier ordnance vs infantry', (
     slide: 0,
     burning: 0,
     stun: 0,
+    fallen: 0,
     ...over,
   })
   const ground = { x: 0, y: 200, w: 600, h: 60, structure: StructureType.EARTH, surface: Surface.EARTH }
