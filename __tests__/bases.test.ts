@@ -48,7 +48,12 @@ const makeShip = (over: Partial<Ship>): Ship => ({
   ...over,
 })
 
-const trooper = (owner: number, x: number, y: number, attached = true): Device => ({
+const trooper = (
+  owner: number,
+  x: number,
+  y: number,
+  attached = true
+): Extract<Device, { kind: DeviceKind.INFANTRY }> => ({
   kind: DeviceKind.INFANTRY,
   x,
   y,
@@ -225,6 +230,27 @@ describe('stepBases — capture tug-of-war', () => {
     expect(fallen.capturedBy).toBeUndefined() // dropping below 1 IS the re-liberation
     stepBases(world, 60)
     expect(fallen.capture).toBe(0)
+  })
+
+  test('a knocked-flat attacker neither storms nor captures until he scrambles up', () => {
+    const base = makeBase({ garrison: 2 })
+    const downed = { ...trooper(BOT_ID, base.x + 50, base.y), fallen: 1 }
+    const world = makeWorld([], [downed], [base])
+    stepBases(world, 1)
+    expect(base.garrison).toBe(2) // flat on his back: no storming
+    expect(base.capture).toBe(0)
+    downed.fallen = 0 // back on his feet — the assault resumes
+    stepBases(world, 1)
+    expect(base.garrison).toBeLessThan(2)
+  })
+
+  test('a knocked-flat defender holds nothing — the takeover ticks over his body', () => {
+    const base = makeBase({ garrison: 0 })
+    const raider = trooper(BOT_ID, base.x + 50, base.y)
+    const downed = { ...trooper(PLAYER_ID, base.x - 50, base.y), fallen: 1 }
+    const world = makeWorld([], [raider, downed], [base])
+    stepBases(world, 1)
+    expect(base.capture).toBeGreaterThan(0)
   })
 
   test('airborne (chuting) troopers do not count — only landed ones contest or capture', () => {

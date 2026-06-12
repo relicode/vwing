@@ -144,7 +144,9 @@ export const stepBases = (world: World, dt: number): void => {
     let defenders = 0
     let attackerId: number | undefined
     for (const d of world.devices) {
-      if (d.kind !== DeviceKind.INFANTRY || !d.attached) continue
+      // A man flat on his back neither storms the door nor holds it — a well-placed blast
+      // that floors the whole party really does interrupt the assault (or the defense).
+      if (d.kind !== DeviceKind.INFANTRY || !d.attached || d.fallen > 0) continue
       if (Math.hypot(d.x - base.x, d.y - base.y) > BASE_CAPTURE_RADIUS) continue
       if (d.owner === base.owner) {
         defenders += 1

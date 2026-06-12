@@ -454,7 +454,7 @@ export const INFANTRY_FALL_LETHAL = 300 // landing impact speed (px/s) above whi
 // Knocked flat: a survivable-but-hard landing (chute not fully open), a blast's shove, or an icy
 // skid's end dumps a trooper on his back — helpless (no walking, no firing) until he scrambles up.
 export const INFANTRY_FALLEN_TIME = 2.5 // s a knocked-down trooper stays flat before getting up
-export const INFANTRY_FALL_STUN = 140 // landing impact (px/s) above which a survivable fall still knocks flat
+export const INFANTRY_FALL_KNOCKDOWN = 140 // landing impact (px/s) above which a survivable fall still knocks flat (sets `fallen`, not `stun`)
 export const INFANTRY_KNOCKDOWN_RADIUS_SCALE = 1.6 // blast knockdown ring: kill radius × this flattens landed survivors
 export const BURST_KNOCKDOWN_RADIUS = 80 // px around a grenade/flak burst where landed troopers are knocked flat
 export const INFANTRY_SWIM_TIME = 6 // s a unit floats (can't shoot) in water before it drowns

@@ -39,8 +39,8 @@ import {
   INFANTRY_EMP_LIFE,
   INFANTRY_EMP_RADIUS,
   INFANTRY_EMP_SPEED,
+  INFANTRY_FALL_KNOCKDOWN,
   INFANTRY_FALL_LETHAL,
-  INFANTRY_FALL_STUN,
   INFANTRY_FALLEN_TIME,
   INFANTRY_FIRE_CATCH_CHANCE,
   INFANTRY_FIRE_CATCH_RADIUS,
@@ -888,7 +888,7 @@ const stepDevice = (
               return false
             }
             // Survivable but hard — a chute not yet fully open brakes nothing — knocks him flat.
-            if (impact > INFANTRY_FALL_STUN) device.fallen = INFANTRY_FALLEN_TIME
+            if (impact > INFANTRY_FALL_KNOCKDOWN) device.fallen = INFANTRY_FALLEN_TIME
             device.x += c.nx * c.depth
             device.y += c.ny * c.depth
             device.vx = 0
