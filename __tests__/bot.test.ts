@@ -231,6 +231,18 @@ describe('nextGoal (the campaign goal ladder)', () => {
     expect(nextGoal(BotGoal.DOGFIGHT, empty, world, undefined)).not.toBe(BotGoal.DEFEND)
   })
 
+  test('a HIDE alarm over a ground-down supply calls the bot home — but the bay counts as supply', () => {
+    // Ground down by real shelling: 3 housed + nobody fielded + nothing aboard < patrol + reserve.
+    const empty = makeShip({})
+    const shelled = baseWorld([homeBase({ alarm: BaseAlarm.HIDE, garrison: 3 }), enemyBase({})], [empty])
+    expect(nextGoal(BotGoal.DOGFIGHT, empty, shelled, undefined)).toBe(BotGoal.DEFEND)
+    // The same housed count drained by the bot's OWN loading: the men sit in the bay, not under
+    // rubble — a mere flyby mid-REARM must not spook the bot into dumping them over the pad.
+    const loaded = makeShip({ troops: 3 })
+    const loading = baseWorld([homeBase({ alarm: BaseAlarm.HIDE, garrison: 3 }), enemyBase({})], [loaded])
+    expect(nextGoal(BotGoal.REARM, loaded, loading, undefined)).toBe(BotGoal.REARM)
+  })
+
   test('a low bay sends the bot to REARM, which sticks until topped up', () => {
     const low = makeShip({ troops: 1 })
     const world = baseWorld([homeBase({}), enemyBase({})], [low])
