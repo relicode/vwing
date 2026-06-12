@@ -4,10 +4,16 @@
      re-copy it from dist/ when the artwork changes. -->
 [![V-Wing — Gravity Dogfighter](./docs/og-image.png)](https://mccall.kapsi.fi/vwing/)
 
+**[▶ Play the demo](https://relicode.github.io/vwing/)** — the offline campaign, deployed from
+`main` by GitHub Pages (static hosting, so no online lobby there).
+
 A collision of two beloved old genres: the **2D gravity dogfighter** — its DOS-era namesake
-V-Wing, [XPilot](https://simple.wikipedia.org/wiki/XPilot) — and the **god game of wilful little
-people** in the Populous II / Settlers / Dungeon Keeper tradition. You get direct control of
-exactly one thing: your ship. Everything that actually wins the war walks.
+[V-Wing](https://classicreload.com/v-wing.html), [XPilot](https://en.wikipedia.org/wiki/XPilot) —
+and the **god game of wilful little people** in the
+[Populous II](https://en.wikipedia.org/wiki/Populous_II:_Trials_of_the_Olympian_Gods) /
+[Settlers](https://en.wikipedia.org/wiki/The_Settlers) /
+[Dungeon Keeper](https://en.wikipedia.org/wiki/Dungeon_Keeper) tradition. You get direct control
+of exactly one thing: your ship. Everything that actually wins the war walks.
 
 The flying is honest Newtonian business — thrust, rotation, inertia, a constant pull of gravity —
 over a large **destructible voxel-terrain** arena of grasslands, rock, caves, ice, seas and
