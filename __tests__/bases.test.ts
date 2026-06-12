@@ -253,6 +253,37 @@ describe('stepBases — capture tug-of-war', () => {
     expect(base.capture).toBeGreaterThan(0)
   })
 
+  test('an EMP-seized man is as helpless as a fallen one — no storming, no holding', () => {
+    const base = makeBase({ garrison: 2 })
+    const seized = { ...trooper(BOT_ID, base.x + 50, base.y), stun: 1 }
+    const world = makeWorld([], [seized], [base])
+    stepBases(world, 1)
+    expect(base.garrison).toBe(2) // a seized attacker doesn't storm
+    expect(base.capture).toBe(0)
+    const held = makeBase({ garrison: 0, capture: 0.4 })
+    const frozen = { ...trooper(PLAYER_ID, held.x - 50, held.y), stun: 1 }
+    const raider = trooper(BOT_ID, held.x + 50, held.y)
+    stepBases(makeWorld([], [raider, frozen], [held]), 1)
+    expect(held.capture).toBeGreaterThan(0.4) // a seized defender freezes nothing
+  })
+
+  test('a downed occupier still occupies: one knockdown blast cannot un-capture a won pad', () => {
+    // The capture-war exclusion must not reach a completed capture — the knockdown ring is
+    // side-blind, so a single grenade over the muster pad would otherwise clear capturedBy in
+    // one frame and (mid-respawn-wait) eliminate a capturer whose men are merely flat.
+    const taken = makeBase({ capture: 1, capturedBy: BOT_ID, garrison: 0 })
+    const occupier = { ...trooper(BOT_ID, taken.x + 30, taken.y), fallen: 2.5 }
+    const world = makeWorld([], [occupier], [taken])
+    stepBases(world, 1 / 60)
+    expect(taken.capture).toBe(1)
+    expect(taken.capturedBy).toBe(BOT_ID) // the flag still flies while he scrambles up
+    occupier.fallen = 0
+    occupier.attached = false // scooped away — NOW the pad really is unheld
+    stepBases(world, 1 / 60)
+    expect(taken.capture).toBeLessThan(1)
+    expect(taken.capturedBy).toBeUndefined()
+  })
+
   test('airborne (chuting) troopers do not count — only landed ones contest or capture', () => {
     const base = makeBase({})
     const world = makeWorld([], [trooper(BOT_ID, base.x, base.y - 100, false)], [base])
