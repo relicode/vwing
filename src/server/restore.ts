@@ -56,8 +56,10 @@ const finite = (value: unknown): value is number => typeof value === 'number' &&
 // `device.x += device.vx * dt` with `vx === undefined` makes `x` NaN forever, and the broken
 // device then rides every snapshot to every client. So a row is admitted only when ALL of its
 // kind's numeric fields are finite (booleans/optional-enum fields like `guard`/`heavy` aren't
-// gating — the sim tolerates their absence). Keep this in lockstep with the Device union in
-// types.ts; PERSIST_VERSION must bump if a kind's required numeric surface changes.
+// gating — the sim tolerates their absence; required booleans added after a blob was written —
+// `running`, `storming` — stay undefined on its restored rows for the room's life, so every
+// reader must treat them as falsy). Keep this in lockstep with the Device union in types.ts;
+// PERSIST_VERSION must bump if a kind's required numeric surface changes.
 const DEVICE_NUMERIC_FIELDS: Record<DeviceKind, readonly string[]> = {
   [DeviceKind.MISSILE]: [
     'x',

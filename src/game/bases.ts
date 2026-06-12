@@ -24,7 +24,7 @@ import {
 import { spawnExplosion } from '$/game/particles'
 import { basePadCenters } from '$/game/terrain-map'
 import { spawnGuard } from '$/game/troops'
-import type { Base, Device, World } from '$/game/types'
+import type { Base, InfantryDevice, World } from '$/game/types'
 
 // The campaign's two home barracks, seated on the generator's flat pads (west = player,
 // east = bot). DEATHMATCH never calls this — world.bases stays [] and every base rule is a no-op.
@@ -83,8 +83,9 @@ export const damageBase = (world: World, base: Base, amount: number): void => {
 // the disc, and they never pathfind toward it.
 export const stepBases = (world: World, dt: number): void => {
   if (world.bases.length === 0) return
-  // Last frame's storming marks expire — the capture war below re-marks the men still at it
-  // (the flag is a pure render cue; nothing in the sim reads it back).
+  // Last frame's storming marks expire — the capture war below re-marks the men still at it.
+  // The flag drives the renderer's pounding pose AND plants the man (patrolInfantry holds a
+  // marked man at the door instead of wandering him around the disc).
   for (const d of world.devices) {
     if (d.kind === DeviceKind.INFANTRY) d.storming = false
   }
@@ -156,7 +157,7 @@ export const stepBases = (world: World, dt: number): void => {
     let attackersDown = 0
     let defenders = 0
     let attackerId: number | undefined
-    const stormers: Extract<Device, { kind: DeviceKind.INFANTRY }>[] = []
+    const stormers: InfantryDevice[] = []
     for (const d of world.devices) {
       if (d.kind !== DeviceKind.INFANTRY || !d.attached) continue
       if (Math.hypot(d.x - base.x, d.y - base.y) > BASE_CAPTURE_RADIUS) continue
@@ -177,13 +178,18 @@ export const stepBases = (world: World, dt: number): void => {
       }
     }
     if (attackers > 0 && defenders === 0) {
-      // The men at work taking the building — grinding the garrison or running the clock — turn
-      // to face the door and mark for the renderer's comic pounding. Occupiers of an already-won
-      // pad (this same branch, forever after capture) are holding it, not storming it.
+      // The men at work taking the building — grinding the garrison or running the clock — mark
+      // for the renderer's comic pounding. Occupiers of an already-won pad (this same branch,
+      // forever after capture) are holding it, not storming it. The turn-to-the-door applies
+      // only in the poses the renderer actually swaps (kneel ≤ 0 && !running && no slide ⟺
+      // stateOf WALKING/STANDING for a marked man): a kneeling specialist keeps squaring up to
+      // his target and a bolting or skidding man keeps the heading his legs are selling.
       if (!captured) {
         for (const s of stormers) {
           s.storming = true
-          if (s.x !== base.x) s.facing = s.x < base.x ? 1 : -1
+          if (s.kneel <= 0 && !s.running && s.slide === 0 && s.x !== base.x) {
+            s.facing = s.x < base.x ? 1 : -1
+          }
         }
       }
       // Storming only matters while the base still stands — a fallen barracks' count is frozen.

@@ -2,7 +2,6 @@ import type { Graphics } from 'pixi.js'
 
 import {
   Color,
-  type DeviceKind,
   INFANTRY_FIRE_INTERVAL,
   INFANTRY_KNEEL_FIRE_AT,
   INFANTRY_SINK_TIME,
@@ -13,9 +12,9 @@ import {
 import { stateOf } from '$/game/devices'
 import { clamp } from '$/game/math'
 import { darken, PALETTE_FLASH, PALETTE_RIM, type PaletteSlots } from '$/game/render/owner-colors'
-import type { Device } from '$/game/types'
+import type { InfantryDevice } from '$/game/types'
 
-export type InfantrySprite = Extract<Device, { kind: DeviceKind.INFANTRY }>
+export type InfantrySprite = InfantryDevice
 
 // ── Cannon-Fodder troopers ───────────────────────────────────────────────────
 // A big-headed little soldier built from one standing pose that every state deforms. THREE colour
@@ -81,9 +80,10 @@ const shadow = (g: Graphics, d: InfantrySprite, r: number, alpha: number): void 
   g.ellipse(d.x, d.y + r, r * 0.9, r * 0.22).fill({ color: Color.SHADOW, alpha: 0.22 * alpha })
 }
 
-// The khaki pack on the rear side — a back/front asymmetry that makes heading legible.
-const pack = (g: Graphics, d: InfantrySprite, r: number, f: number, alpha: number): void => {
-  const cx = d.x - f * r * 0.45
+// The khaki pack on the rear side — a back/front asymmetry that makes heading legible. dx lets
+// a pose that shifts the whole body off d.x (the storming lunge) keep the pack on its back.
+const pack = (g: Graphics, d: InfantrySprite, r: number, f: number, alpha: number, dx = 0): void => {
+  const cx = d.x + dx - f * r * 0.45
   g.roundRect(cx - r * 0.17, d.y - r * 0.5, r * 0.34, r * 0.7, r * 0.14).fill({ color: PACK_COLOR, alpha })
 }
 
@@ -274,55 +274,18 @@ const drawStanding = (g: Graphics, d: InfantrySprite, kit: Kit, time: number, f:
   }
 }
 
-// STORMING — the capture war's quiet grind made legible: unopposed attackers turn on the building
-// and riot at it. A standing man works a wind-up-and-slam cycle — rears back fuming, then lunges
-// to hammer both fists home under a cartoon WHACK star — while a patrolling one marches with both
-// fists pumping overhead, pitchfork-mob style. Angry brow + gritted teeth throughout. No weapon
-// drawn: both hands are busy with the door (the sim still fires; the round itself renders).
-const drawStorming = (g: Graphics, d: InfantrySprite, kit: Kit, time: number, f: number, walking: boolean): void => {
+// STORMING — the capture war's quiet grind made legible: an unopposed attacker plants himself
+// (the sim halts his patrol), turns on the building, and riots at it with a wind-up-and-slam
+// cycle — rears back fuming, then lunges to hammer both fists home under a cartoon WHACK star.
+// Angry brow + gritted teeth; no weapon drawn (both hands are busy with the door — the sim still
+// fires, the round itself renders). Phase keys off x so a squad pounds out of step, like any
+// proper mob.
+const drawStorming = (g: Graphics, d: InfantrySprite, kit: Kit, time: number, f: number): void => {
   const r = d.radius
   const a = 1
   const footY = d.y + r
-  shadow(g, d, r, a)
-  pack(g, d, r, f, a)
-  if (walking) {
-    // The WALKING gait, same phase formula, so the patrol translation still reads — only the
-    // rifle arm is traded for two fists shaken at the sky.
-    const phase = time * 6 + d.x * 0.05
-    const legA = Math.sin(phase)
-    const legB = Math.sin(phase + Math.PI)
-    const cy = d.y - Math.abs(legA) * r * 0.06
-    const hipY = cy + r * 0.7
-    const ff = d.x + f * r * 0.25 + legA * f * r * 0.4
-    const rf = d.x - f * r * 0.2 + legB * f * r * 0.4
-    const fy = footY - Math.max(0, legA) * r * 0.18
-    g.moveTo(d.x - f * r * 0.2, hipY)
-      .lineTo(rf, footY)
-      .stroke({ width: r * 0.34, color: kit.body, alpha: a })
-    boot(g, rf, footY, f, r, a)
-    g.moveTo(d.x + f * r * 0.25, hipY)
-      .lineTo(ff, fy)
-      .stroke({ width: r * 0.34, color: kit.body, alpha: a })
-    boot(g, ff, fy, f, r, a)
-    torso(g, d.x, cy - r * 0.55, r, kit, a)
-    const pump = time * 12 + d.x * 0.11
-    for (const [off, dx] of [
-      [0, 0.4],
-      [Math.PI, -0.1],
-    ] as const) {
-      const fx = d.x + f * r * dx
-      const fistY = cy - r * (1.45 + Math.sin(pump + off) * 0.3)
-      g.moveTo(d.x + f * r * 0.1, cy - r * 0.25)
-        .lineTo(fx, fistY)
-        .stroke({ width: r * 0.28, color: kit.body, alpha: a })
-      g.circle(fx, fistY, r * 0.2).fill({ color: kit.body, alpha: a })
-    }
-    head(g, d.x, cy - r * 0.95, r, f, kit, a, Mood.GRIT, 1.15, true)
-    g.circle(d.x - f * r * 0.6, cy - r * 1.8, r * 0.11).fill({ color: Color.SMOKE, alpha: 0.4 }) // fuming
-    return
-  }
-  // The wind-up-and-slam: sin's positive lobe (squared, for snap) is the forward blow, the
-  // negative lobe the rear-back. Boots stay planted; hips, torso, head and fists ride the rock.
+  // sin's positive lobe (squared, for snap) is the forward blow, the negative lobe the
+  // rear-back. Boots stay planted; hips, torso, head, pack and fists ride the rock (bx).
   const phase = time * 8 + d.x * 0.13
   const s = Math.sin(phase)
   const slam = Math.max(0, s) ** 2
@@ -330,6 +293,8 @@ const drawStorming = (g: Graphics, d: InfantrySprite, kit: Kit, time: number, f:
   const bx = f * r * (slam * 0.5 - wind * 0.3)
   const cy = d.y + slam * r * 0.1 - wind * r * 0.12 // squash into the blow, rise on the wind-up
   const hipY = cy + r * 0.7
+  shadow(g, d, r, a)
+  pack(g, d, r, f, a, bx)
   g.moveTo(d.x + bx + f * r * 0.2, hipY)
     .lineTo(d.x + f * r * 0.55, footY)
     .stroke({ width: r * 0.34, color: kit.body, alpha: a })
@@ -339,6 +304,9 @@ const drawStorming = (g: Graphics, d: InfantrySprite, kit: Kit, time: number, f:
     .stroke({ width: r * 0.34, color: kit.body, alpha: a })
   boot(g, d.x - f * r * 0.45, footY, f, r, a)
   torso(g, d.x + bx, cy - r * 0.55, r, kit, a)
+  // Head BEFORE the fists: the overhead swing must ride over the helmet dome — drawn after,
+  // the dome buries the wind-up and the "both fists" read collapses to one flickering fist.
+  head(g, d.x + bx, cy - r * 0.95, r, f, kit, a, Mood.GRIT, 1.15, true)
   // Both fists ride one swing: overhead and a touch behind on the wind-up, hammered out front
   // at the slam.
   for (const [ox, oy] of [
@@ -346,7 +314,7 @@ const drawStorming = (g: Graphics, d: InfantrySprite, kit: Kit, time: number, f:
     [-0.08, 0.14],
   ] as const) {
     const fx = d.x + bx + f * r * (ox - 0.15 - wind * 0.3 + slam * 1.45)
-    const fistY = cy + r * (oy - 1.6 + slam * 1.45)
+    const fistY = cy + r * (oy - 1.75 + slam * 1.45)
     g.moveTo(d.x + bx + f * r * 0.15, cy - r * 0.3)
       .lineTo(fx, fistY)
       .stroke({ width: r * 0.28, color: kit.body, alpha: a })
@@ -355,17 +323,16 @@ const drawStorming = (g: Graphics, d: InfantrySprite, kit: Kit, time: number, f:
   // The cartoon WHACK + a dust puff where the blow lands.
   const pulse = clamp((slam - 0.7) / 0.3, 0, 1)
   if (pulse > 0) {
-    g.star(d.x + bx + f * r * 2.1, cy - r * 0.2, 4, r * 0.75 * pulse, r * 0.28 * pulse).fill({
+    g.star(d.x + bx + f * r * 2.1, cy - r * 0.35, 4, r * 0.75 * pulse, r * 0.28 * pulse).fill({
       color: Color.SHIP_CORE,
       alpha: 0.85 * pulse,
     })
-    g.circle(d.x + bx + f * r * 1.7, cy - r * 0.65, r * 0.16).fill({ color: Color.SMOKE, alpha: 0.5 * pulse })
+    g.circle(d.x + bx + f * r * 1.7, cy - r * 0.8, r * 0.16).fill({ color: Color.SMOKE, alpha: 0.5 * pulse })
   }
-  head(g, d.x + bx, cy - r * 0.95, r, f, kit, a, Mood.GRIT, 1.15, true)
   if (wind > 0.3) {
     // Fuming on the wind-up: steam puffs popping off the helmet.
-    g.circle(d.x + bx - f * r * 0.45, cy - r * 1.75, r * 0.12).fill({ color: Color.SMOKE, alpha: 0.5 * wind })
-    g.circle(d.x + bx - f * r * 0.7, cy - r * 2.0, r * 0.08).fill({ color: Color.SMOKE, alpha: 0.35 * wind })
+    g.circle(d.x + bx - f * r * 0.45, cy - r * 1.95, r * 0.12).fill({ color: Color.SMOKE, alpha: 0.5 * wind })
+    g.circle(d.x + bx - f * r * 0.7, cy - r * 2.2, r * 0.08).fill({ color: Color.SMOKE, alpha: 0.35 * wind })
   }
 }
 
@@ -658,7 +625,7 @@ const drawInfantryPose = (g: Graphics, d: InfantrySprite, kit: Kit, time: number
   }
   const state = stateOf(d)
   if (d.storming && (state === InfantryState.WALKING || state === InfantryState.STANDING)) {
-    drawStorming(g, d, kit, time, f, state === InfantryState.WALKING)
+    drawStorming(g, d, kit, time, f)
     return
   }
   switch (state) {

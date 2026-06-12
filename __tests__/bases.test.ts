@@ -350,6 +350,21 @@ describe('stepBases — the storming render cue', () => {
     expect(occupier.storming).toBe(false)
     expect(taken.capture).toBe(1) // still pinned by his presence
   })
+
+  test('a kneeling specialist or a bolting man still marks, but keeps his own facing', () => {
+    // The renderer only swaps the pounding pose in for WALKING/STANDING — a kneeler renders his
+    // wind-up and a runner his bolt, so flipping their facing to the door would point a firing
+    // bazooka or a sprint the wrong way. The mark itself stays (they storm like everyone else).
+    const base = makeBase({ garrison: BASE_GUARD_RESERVE })
+    const kneeler = { ...trooper(BOT_ID, base.x - 60, base.y), kneel: 1, facing: -1 }
+    const runner = { ...trooper(BOT_ID, base.x + 60, base.y), running: true, facing: 1 }
+    const world = makeWorld([], [kneeler, runner], [base])
+    stepBases(world, 1 / 60)
+    expect(kneeler.storming).toBe(true)
+    expect(runner.storming).toBe(true)
+    expect(kneeler.facing).toBe(-1) // squared up to his target, not the door
+    expect(runner.facing).toBe(1) // his legs keep selling the direction he runs
+  })
 })
 
 describe('stepBases — the garrison in the flesh', () => {
