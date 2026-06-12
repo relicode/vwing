@@ -4,17 +4,30 @@
      re-copy it from dist/ when the artwork changes. -->
 [![V-Wing — Gravity Dogfighter](./docs/og-image.png)](https://mccall.kapsi.fi/vwing/)
 
-An [XPilot](https://simple.wikipedia.org/wiki/XPilot)-style 2D gravity dogfighter turned
-**indirect-minion war game** (Settlers/Populous lineage): Newtonian flight — thrust, rotation,
-inertia — under constant gravity, over a large **destructible voxel-terrain** arena of grasslands,
-rock, caves, ice, and seas.
+A collision of two beloved old genres: the **2D gravity dogfighter** — its DOS-era namesake
+V-Wing, [XPilot](https://simple.wikipedia.org/wiki/XPilot) — and the **god game of wilful little
+people** in the Populous II / Settlers / Dungeon Keeper tradition. You get direct control of
+exactly one thing: your ship. Everything that actually wins the war walks.
 
-**Infantry is the heart of the game.** Your ship carries a troop bay loaded at your home barracks.
-Paradrop autonomous troopers (riflemen, plus one-in-five specialists shouldering a man-portable
-version of the squad's heavy weapon), rescue your own from drowning and recruit the enemy's by slow
-contact — and win by capturing the enemy barracks: a captured base cuts respawns, so dying then is
-elimination. The offline campaign pits you against an AI bot playing the same game (REARM / ASSAULT
-/ DEFEND goals); **online multiplayer** is a server-authoritative deathmatch over WebSockets.
+The flying is honest Newtonian business — thrust, rotation, inertia, a constant pull of gravity —
+over a large **destructible voxel-terrain** arena of grasslands, rock, caves, ice, seas and
+floating sky isles. Fire carves the world: craters, falling debris, water that pools into basins,
+grass that burns in a creeping front and grows back. Each life rolls a random secondary weapon
+(scattergun, water cannon, flamethrower, seeker, rail, grenades, mines, flak, EMP, singularity)
+off a recharging energy bar.
+
+**The troopers are the heart of the game, and they do not take orders.** Land on your barracks
+pad and they board on their own short legs; paradrop them where you think the war is, and that is
+the last instruction they accept. From there they patrol, take cover, kneel to fire, slip on ice,
+and swim with more courage than skill. Most are riflemen; one in five shoulders a man-portable
+version of the squad's heavy weapon. Your job is logistics and rescue — ferry them forward, fish
+swimmers out before they drown, recruit the enemy's by slow, patient contact — until your infantry
+storms the enemy barracks. Respawns are free but each one takes a little longer; lose every base
+your side holds and the next death is the last.
+
+The offline campaign pits you against an AI bot playing the same game you are — rearming,
+assaulting and defending with a ship and wilful infantry of its own. **Online multiplayer** is a
+server-authoritative deathmatch over WebSockets: no barracks, no babysitting, just the dogfight.
 
 Built with [PixiJS](https://pixijs.com) (WebGL) for the game canvas and **React + MUI** for the
 shell (title, lobby, HUD, game-over). Bundled and served by [Bun](https://bun.sh); linted by
@@ -37,11 +50,7 @@ bun run dev:all  # web client + game server (:8787) for online play
 | Secondary weapon | `K` / `Left Shift` |
 | Deploy troops | `X` / `L` |
 
-Each life rolls a random secondary (scattergun, water cannon, flamethrower, seeker, rail, grenades,
-mines, flak, EMP, singularity) off a recharging energy bar. Terrain carves under fire: craters,
-falling debris, water that pools into basins, grass that burns and regrows. Land on your barracks
-pad to load troopers; touch a swimmer to rescue him. Best campaign score is saved to
-`localStorage`.
+Best campaign score is saved to `localStorage`.
 
 ## Scripts
 
@@ -67,7 +76,7 @@ This repo uses **git-flow** (`main` + `develop`, standard `feature/` `release/` 
   state machine (`devices`, `troops`), barracks and capture (`bases`), the bot's goal layer
   (`bot`), weapons/bullets/beams, and a seeded RNG so every run is deterministic and testable.
   The same sim steps headlessly on the server — nothing in it touches the DOM or PixiJS.
-- **`src/game/renderer.ts` + `view.ts`** — the PixiJS presentation: camera-offset world layer,
+- **`src/game/render/` + `view.ts`** — the PixiJS presentation: camera-offset world layer,
   parallax stars, procedural vector art for ships and the Cannon-Fodder troopers, minimap.
 - **`src/net/` + `src/server/`** — the JSON WebSocket protocol, the thin snapshot-drawing client,
   and the authoritative Bun server (rooms, lobby, Redis-or-memory state).
@@ -75,4 +84,4 @@ This repo uses **git-flow** (`main` + `develop`, standard `feature/` `release/` 
   renders HUD and menus on top.
 
 See [`CLAUDE.md`](./CLAUDE.md) for architecture and conventions, and [`PLAN.md`](./PLAN.md) for
-the in-flight migration of the presentation layer to PixiJS v8 built-ins.
+the record of the presentation layer's migration to PixiJS v8 built-ins.
