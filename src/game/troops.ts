@@ -42,9 +42,11 @@ export const spawnTrooper = (world: World, ship: Ship): void => {
     fireCooldown: randRange(world.rng, 0, INFANTRY_FIRE_INTERVAL),
     kneel: 0,
     running: false,
+    storming: false,
     slide: 0,
     burning: 0,
     stun: 0,
+    fallen: 0,
   })
 }
 
@@ -77,8 +79,10 @@ export const spawnGuard = (world: World, base: Base, squad: WeaponKind | undefin
     fireCooldown: randRange(world.rng, 0, INFANTRY_FIRE_INTERVAL),
     kneel: 0,
     running: false,
+    storming: false,
     slide: 0,
     burning: 0,
     stun: 0,
+    fallen: 0,
   })
 }

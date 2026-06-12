@@ -12,6 +12,7 @@ import {
   BASE_LOAD_RADIUS,
   BASE_REVERT_TIME,
   BASE_SORTIE_RANGE,
+  BASE_STRUCTURE_ARMOR,
   BaseAlarm,
   BOT_ID,
   Color,
@@ -23,7 +24,7 @@ import {
 import { spawnExplosion } from '$/game/particles'
 import { basePadCenters } from '$/game/terrain-map'
 import { spawnGuard } from '$/game/troops'
-import type { Base, World } from '$/game/types'
+import type { Base, InfantryDevice, World } from '$/game/types'
 
 // The campaign's two home barracks, seated on the generator's flat pads (west = player,
 // east = bot). DEATHMATCH never calls this — world.bases stays [] and every base rule is a no-op.
@@ -51,6 +52,27 @@ export const createCampaignBases = (): Base[] => {
   ]
 }
 
+// The side a base currently answers to: the capturer once fully taken, the original owner
+// otherwise. The renderer paints the building this color, so the holder is who the building
+// *is* in play — shelling exemptions and occlusion key off this, never off the deed.
+export const baseHolder = (base: Base): number =>
+  base.capture >= 1 && base.capturedBy !== undefined ? base.capturedBy : base.owner
+
+// Ship weaponry shelling the building: `amount` weapon hit-points grind the housed garrison
+// down through the walls' armor — but never below the guard reserve, and never once the
+// garrison is already at or under it. The last men can only be stormed out by landed infantry
+// (stepBases), so shelling softens a base without ever starting the capture clock by itself.
+// A fallen barracks is past hurting; a whole housed trooper lost flashes red at the door.
+export const damageBase = (world: World, base: Base, amount: number): void => {
+  if (base.capture >= 1) return
+  const floor = Math.min(base.garrison, BASE_GUARD_RESERVE)
+  const before = base.garrison
+  base.garrison = Math.max(floor, base.garrison - amount / BASE_STRUCTURE_ARMOR)
+  if (Math.floor(before) > Math.floor(base.garrison)) {
+    spawnExplosion(world.particles, base.x, base.y - 12, Color.BLOOD, world.rng, 6)
+  }
+}
+
 // Advance every barracks one frame: threat posture + guard fielding (including throwing the
 // doors open for a boarding owner), garrison regen, and the capture war. The garrison is the
 // base's hitpoints — it walks its own pad as live guards (who hide indoors from ships and sortie
@@ -60,6 +82,13 @@ export const createCampaignBases = (): Base[] => {
 // devices.ts). Drop placement is still the whole skill — troopers only count while landed inside
 // the disc, and they never pathfind toward it.
 export const stepBases = (world: World, dt: number): void => {
+  if (world.bases.length === 0) return
+  // Last frame's storming marks expire — the capture war below re-marks the men still at it.
+  // The flag drives the renderer's pounding pose AND plants the man (patrolInfantry holds a
+  // marked man at the door instead of wandering him around the disc).
+  for (const d of world.devices) {
+    if (d.kind === DeviceKind.INFANTRY) d.storming = false
+  }
   for (const base of world.bases) {
     const captured = base.capture >= 1
 
@@ -125,19 +154,44 @@ export const stepBases = (world: World, dt: number): void => {
     // a base is re-liberated (dropping below 1 clears capturedBy), so purging the zone with
     // ship guns alone wins the base back too.
     let attackers = 0
+    let attackersDown = 0
     let defenders = 0
     let attackerId: number | undefined
+    const stormers: InfantryDevice[] = []
     for (const d of world.devices) {
       if (d.kind !== DeviceKind.INFANTRY || !d.attached) continue
       if (Math.hypot(d.x - base.x, d.y - base.y) > BASE_CAPTURE_RADIUS) continue
+      // A man flat on his back (or EMP-seized) neither storms the door nor holds it — a blast
+      // that floors the whole party really does interrupt the assault (or the defense). But a
+      // downed man still OCCUPIES: he's counted apart so a won pad isn't un-captured (and a
+      // dead-waiting capturer isn't eliminated) by one knockdown ring over men who are alive
+      // and about to stand back up.
+      const down = d.fallen > 0 || d.stun > 0
       if (d.owner === base.owner) {
-        defenders += 1
+        if (!down) defenders += 1
+      } else if (down) {
+        attackersDown += 1
       } else {
         attackers += 1
         attackerId = d.owner
+        stormers.push(d)
       }
     }
     if (attackers > 0 && defenders === 0) {
+      // The men at work taking the building — grinding the garrison or running the clock — mark
+      // for the renderer's comic pounding. Occupiers of an already-won pad (this same branch,
+      // forever after capture) are holding it, not storming it. The turn-to-the-door applies
+      // only in the poses the renderer actually swaps (kneel ≤ 0 && !running && no slide ⟺
+      // stateOf WALKING/STANDING for a marked man): a kneeling specialist keeps squaring up to
+      // his target and a bolting or skidding man keeps the heading his legs are selling.
+      if (!captured) {
+        for (const s of stormers) {
+          s.storming = true
+          if (s.kneel <= 0 && !s.running && s.slide === 0 && s.x !== base.x) {
+            s.facing = s.x < base.x ? 1 : -1
+          }
+        }
+      }
       // Storming only matters while the base still stands — a fallen barracks' count is frozen.
       if (!captured && base.garrison > 0) {
         const before = base.garrison
@@ -153,7 +207,7 @@ export const stepBases = (world: World, dt: number): void => {
         base.capture = Math.min(1, base.capture + dt / BASE_CAPTURE_TIME)
         if (base.capture >= 1) base.capturedBy = attackerId
       }
-    } else if (attackers === 0 && base.capture > 0) {
+    } else if (attackers === 0 && attackersDown === 0 && base.capture > 0) {
       base.capture = Math.max(0, base.capture - dt / BASE_REVERT_TIME)
       if (base.capture < 1) base.capturedBy = undefined
     }

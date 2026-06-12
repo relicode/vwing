@@ -354,14 +354,25 @@ export const createTerrain = (rng: Rng): { blocks: Block[]; water: WaterBody[] }
   }
 
   // ── Floating islands (the only ungrounded earth — auto-pinned aloft), kept off the spawn discs.
-  // The smaller sky is busier: more of them, starting higher. ──
-  for (let i = 0; i < randInt(rng, 4, 8); i += 1) {
-    for (let attempt = 0; attempt < 8; attempt += 1) {
+  // The smaller sky is busier: more of them, starting higher — but never touching: two isles
+  // welding into one wide slab (cell-adjacency merges them in the voxel grid) builds a ceiling
+  // past what the bot's dodge can slip around (~470 px), right in its ferry cruise band. ──
+  const skyIsles: { x: number; y: number; w: number; h: number }[] = []
+  const SKY_GAP = 4 * cell // min air kept between sky isles, per axis
+  const skyBlocked = (x: number, y: number, w: number, h: number): boolean =>
+    skyIsles.some(
+      (p) => x < p.x + p.w + SKY_GAP && p.x < x + w + SKY_GAP && y < p.y + p.h + SKY_GAP && p.y < y + h + SKY_GAP
+    )
+  const nSkyIsles = randInt(rng, 9, 16) // hoisted: a loop-condition draw would re-roll every pass
+  for (let i = 0; i < nSkyIsles; i += 1) {
+    for (let attempt = 0; attempt < 16; attempt += 1) {
       const iw = randInt(rng, 12, 26) * cell
       const ih = randInt(rng, 4, 7) * cell
       const ix = snap(randRange(rng, x0 + 4 * cell, W - t - iw - 4 * cell))
       const iy = snap(randRange(rng, H * 0.06, skyBottom - ih - 2 * cell))
+      if (skyBlocked(ix, iy, iw, ih)) continue
       if (nearSpawn(ix + iw / 2, iy + ih / 2, Math.max(iw, ih))) continue
+      skyIsles.push({ x: ix, y: iy, w: iw, h: ih })
       earth(ix, iy, iw, ih)
       cap(ix, iy, iw, rng() < 0.5 ? Surface.GRASS : Surface.ICE)
       break
@@ -390,13 +401,21 @@ export const createTerrain = (rng: Rng): { blocks: Block[]; water: WaterBody[] }
     isles.some(
       (p) => x < p.x + p.w + ISLE_GAP && p.x < x + w + ISLE_GAP && y < p.y + p.h + ISLE_GAP && p.y < y + h + ISLE_GAP
     )
-  const nIsles = randInt(rng, 7, 11) // hoisted: a loop-condition draw would re-roll every pass
+  const nIsles = randInt(rng, 14, 21) // hoisted: a loop-condition draw would re-roll every pass
+  // Round-robin the gulf's height in three strata so the isles blanket it top-to-bottom instead
+  // of clumping — a uniform draw left whole bands of the crossing empty.
+  const gulfTopMin = minTop
+  const gulfTopMax = seaSpill - 3 * cell
+  const stratum = (gulfTopMax - gulfTopMin) / 3
   for (let i = 0; i < nIsles; i += 1) {
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      const iw = randInt(rng, 10, 24) * cell
-      const ih = randInt(rng, 3, 7) * cell
+    for (let attempt = 0; attempt < 24; attempt += 1) {
+      const iw = randInt(rng, 12, 25) * cell
+      const ih = randInt(rng, 4, 9) * cell
       const ix = snap(randRange(rng, gulfX0, gulfX1 - iw))
-      const iy = snap(randRange(rng, minTop, seaSpill - ih - 3 * cell))
+      const lo = gulfTopMin + (i % 3) * stratum
+      const hi = Math.min(lo + stratum, seaSpill - ih - 3 * cell) // bottoms stay clear of the water
+      if (hi <= lo) continue
+      const iy = snap(randRange(rng, lo, hi))
       if (isleBlocked(ix, iy, iw, ih)) continue
       if (nearSpawn(ix + iw / 2, iy + ih / 2, Math.max(iw, ih))) continue
       if (Math.hypot(ix + iw / 2 - W / 2, iy + ih / 2 - H / 2) < SPAWN_KEEPOUT_RADIUS + Math.max(iw, ih)) continue

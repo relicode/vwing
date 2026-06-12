@@ -1,7 +1,16 @@
+import { baseHolder, damageBase } from '$/game/bases'
 import { applyDamage } from '$/game/combat'
-import { Color, DeviceKind, RAIL_BEAM_LIFE, RAIL_DAMAGE, RAIL_RANGE } from '$/game/constants'
+import {
+  BASE_BUILDING_HALF_WIDTH,
+  BASE_BUILDING_HEIGHT,
+  Color,
+  DeviceKind,
+  RAIL_BEAM_LIFE,
+  RAIL_DAMAGE,
+  RAIL_RANGE,
+} from '$/game/constants'
 import { spawnExplosion } from '$/game/particles'
-import type { Block, Device, Ship, World } from '$/game/types'
+import type { Base, Device, Ship, World } from '$/game/types'
 
 // Age out spent rail beams (damage was applied when they were fired).
 export const updateBeams = (world: World, dt: number): void => {
@@ -11,7 +20,13 @@ export const updateBeams = (world: World, dt: number): void => {
 
 // Distance along a ray (origin + t·dir, t >= 0) to its entry into a rect, or undefined if the
 // ray misses. Slab method; an origin already inside returns 0 (a muzzle pressed to the rock).
-const rayRectEntry = (x: number, y: number, dirX: number, dirY: number, b: Block): number | undefined => {
+const rayRectEntry = (
+  x: number,
+  y: number,
+  dirX: number,
+  dirY: number,
+  b: { x: number; y: number; w: number; h: number }
+): number | undefined => {
   let tMin = 0
   let tMax = Number.POSITIVE_INFINITY
   for (const [origin, dir, lo, hi] of [
@@ -33,7 +48,8 @@ const rayRectEntry = (x: number, y: number, dirX: number, dirY: number, b: Block
 // Shared rail hitscan: damage the nearest enemy ship lying along the ray from (x, y), draw the
 // transient beam to that ship (or to the first terrain face, or to max range), and return the
 // struck ship so the caller can reap it if the hull is gone. Terrain blocks the lance — it
-// burns into the first wall it meets, never through a mountain — but flesh doesn't: EVERY
+// burns into the first wall it meets, never through a mountain, and an enemy barracks counts
+// as (and is shelled like) a wall — but flesh doesn't: EVERY
 // trooper along the beam dies, either side's (friendly fire is real; `self` exempts only the
 // kneeling sniper's own body from its own lance). Killed troopers are marked into
 // `deadTroopers` — the caller removes them, because the device array may be mid-iteration.
@@ -59,6 +75,26 @@ export const castRail = (
     const t = rayRectEntry(x, y, dirX, dirY, block)
     if (t !== undefined && t < hitDist) hitDist = t // the beam stops at the nearest terrain face
   }
+  // The barracks building stops the SHIP's lance like any wall — and takes the shelling
+  // (through the walls' armor, see damageBase) like any other ship weapon; the holder's own
+  // building is transparent to its own fire, matching the bullet path's exemption. A kneeling
+  // trooper's man-portable lance (`self` set) is small arms like every other infantry round:
+  // it passes the band untouched — the door fight happens inside this box, and a storming rail
+  // specialist standing in it would otherwise fire a zero-length lance into the wall at his nose.
+  let struckBase: Base | undefined
+  for (const base of self === undefined ? world.bases : []) {
+    if (baseHolder(base) === ownerId) continue
+    const t = rayRectEntry(x, y, dirX, dirY, {
+      x: base.x - BASE_BUILDING_HALF_WIDTH,
+      y: base.y - BASE_BUILDING_HEIGHT,
+      w: BASE_BUILDING_HALF_WIDTH * 2,
+      h: BASE_BUILDING_HEIGHT,
+    })
+    if (t !== undefined && t < hitDist) {
+      hitDist = t
+      struckBase = base
+    }
+  }
   for (const other of world.ships) {
     if (other.id === ownerId || other.invuln > 0) continue
     const relX = other.x - x
@@ -69,6 +105,7 @@ export const castRail = (
     if (perp > other.radius) continue
     hit = other
     hitDist = along
+    struckBase = undefined // a ship in front soaks the lance before it reaches the wall
   }
   // The lance pierces infantry: every trooper lying on the beam (up to whatever stopped it —
   // terrain face or struck ship) dies where it stands, whichever side it fights for.
@@ -95,6 +132,10 @@ export const castRail = (
   if (hit) {
     applyDamage(hit, damage)
     hit.lastHitBy = ownerId
+  }
+  if (struckBase) {
+    damageBase(world, struckBase, damage)
+    spawnExplosion(world.particles, x + dirX * hitDist, y + dirY * hitDist, Color.SPARK, world.rng, 5)
   }
   return hit
 }

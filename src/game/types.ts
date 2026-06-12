@@ -8,7 +8,7 @@ export type Rng = () => number
 // A Newtonian body in the dogfight. PvP-ready: the world holds a list of ships.
 export type Ship = {
   id: number // owner tag matched against bullets so shots skip their firer
-  kind: ShipKind // PLAYER (camera + lives) vs BOT (AI), drives render + death rules
+  kind: ShipKind // PLAYER (the camera-followed human) vs BOT (AI), drives render + victory rules
   x: number
   y: number
   vx: number
@@ -43,6 +43,7 @@ export type Bullet = {
   push?: number // knockback impulse applied to a hit ship (water cannon); washes a trooper into a skid
   burn?: boolean // flamethrower: scorches grass→earth on terrain hit (no carve), sets a hit trooper alight
   wet?: boolean // water cannon: wets earth→grass + pools on terrain hit (no carve), douses a burning trooper
+  infantry?: boolean // small-arms round (rifle / specialist burst): passes the barracks band — only ship weaponry shells the building
   color?: number // render tint override (undefined = owner-based default)
 }
 
@@ -114,6 +115,8 @@ export type Device =
       slide: number // px/s lateral slide from an ice slip or a water-jet wash (0 = firm footing); decays + holds fire
       burning: number // s of fire left before the trooper collapses (0 = not alight); water douses it
       stun: number // s of EMP seize-up remaining (a landed unit can't move or fire)
+      fallen: number // s of knocked-flat left (blast shove / hard landing / icy pratfall) — can't move or fire while down
+      storming: boolean // unopposed in an enemy base's capture disc (stepBases re-marks each frame): the man plants at the door (patrol halts) for the renderer's pounding pose; never set online (DEATHMATCH has no bases)
     }
   | {
       kind: DeviceKind.GRENADE // gravity arc → shrapnel ring on fuse
@@ -145,6 +148,9 @@ export type Device =
       strength: number
       pullRadius: number
     }
+
+// The deployed-trooper member of the union — the sim and the renderer both narrow to it.
+export type InfantryDevice = Extract<Device, { kind: DeviceKind.INFANTRY }>
 
 // Transient hitscan visual for the Rail Lance (damage is applied at spawn).
 export type Beam = {
@@ -220,7 +226,6 @@ export type EngineStatus = {
   phase: GamePhase
   score: number
   best: number
-  lives: number
   weapon: WeaponKind // the PLAYER ship's current secondary
   charge: number // the PLAYER ship's secondary energy as a 0..100 percent (for the HUD bar)
   troops: number // whole troopers aboard the PLAYER ship (bay pips)

@@ -2,12 +2,9 @@ import Box from '@mui/material/Box'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
 
-import { SECONDARY_MAX_CHARGE, SHIP_START_LIVES, TROOP_BAY_CAPACITY, WEAPON_CONFIG } from '$/game/constants'
+import { SECONDARY_MAX_CHARGE, TROOP_BAY_CAPACITY, WEAPON_CONFIG } from '$/game/constants'
 import type { EngineStatus } from '$/game/types'
 
-// Stable per-slot keys (lives only ever counts down from the max), so the life pips
-// never use an array index as their React key.
-const LIFE_SLOTS = Array.from({ length: SHIP_START_LIVES }, (_, index) => `life-${index}`)
 const TROOP_SLOTS = Array.from({ length: TROOP_BAY_CAPACITY }, (_, index) => `troop-${index}`)
 
 type StatProps = {
@@ -33,18 +30,6 @@ const Stat = ({ label, value, align = 'left' }: StatProps) => (
       {value}
     </Typography>
   </Box>
-)
-
-const ShipPip = () => (
-  <Box
-    sx={{
-      width: 13,
-      height: 15,
-      bgcolor: 'secondary.main',
-      clipPath: 'polygon(50% 0%, 100% 100%, 0% 100%)',
-      filter: 'drop-shadow(0 0 4px rgba(143,227,255,0.85))',
-    }}
-  />
 )
 
 // One helmet-dome per bay slot: filled = a trooper aboard, hollow = empty rack.
@@ -84,11 +69,6 @@ const Hud = ({ status }: HudProps) => {
       >
         <Stat label="SCORE" value={status.score.toLocaleString()} />
         <Stack spacing={0.5} sx={{ alignItems: 'center', pt: 0.25 }}>
-          <Stack direction="row" spacing={0.75} aria-label={`${status.lives} lives`}>
-            {LIFE_SLOTS.slice(0, status.lives).map((slot) => (
-              <ShipPip key={slot} />
-            ))}
-          </Stack>
           <Typography
             sx={{
               fontSize: 13,
@@ -179,7 +159,7 @@ const Hud = ({ status }: HudProps) => {
             textShadow: '0 0 16px currentColor',
           }}
         >
-          REINFORCEMENT IN {status.respawnIn}
+          SPAWNING IN {status.respawnIn}
         </Typography>
       ) : null}
     </>

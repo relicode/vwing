@@ -8,15 +8,15 @@ export enum GamePhase {
   VICTORY = 'VICTORY', // the campaign won: the bot eliminated (base captured + ship downed)
 }
 
-// Who controls a ship. PLAYER is the camera-followed, life-counted human; BOT is AI.
+// Who controls a ship. PLAYER is the camera-followed human; BOT is AI.
 export enum ShipKind {
   PLAYER = 'PLAYER',
   BOT = 'BOT',
 }
 
-// How a simulation scores and respawns. CAMPAIGN is the offline run (the human has a
-// finite life count + a point score, bots respawn endlessly); DEATHMATCH is online PvP
-// (everyone respawns endlessly and a kill is worth one frag to its shooter).
+// How a simulation scores and respawns. CAMPAIGN is the offline base war (respawns flow from
+// holding a base — lose every base and death is elimination); DEATHMATCH is online PvP
+// (baseless: everyone respawns endlessly and a kill is worth one frag to its shooter).
 export enum SimMode {
   CAMPAIGN = 'CAMPAIGN',
   DEATHMATCH = 'DEATHMATCH',
@@ -47,9 +47,10 @@ export enum WeaponKind {
 // Terrain is two independent layers. STRUCTURE is the material body: EARTH is destructible
 // (voxelized, carves into craters), METAL is indestructible (an out-of-grid anchor that never
 // falls and grounds the floating-island flood-fill). SURFACE is the cover on top, which
-// transforms without touching the structure: GRASS burns to bare EARTH, bare EARTH regrows to
-// GRASS when wetted, ICE is slippery. WATER is a surface in the design vocabulary but is modeled
-// as WaterBody overlays (see water.ts), never a stored grid cell.
+// transforms without touching the structure: flame sets GRASS alight (FIRE — it creeps to
+// adjacent grass, then burns out to bare EARTH), bare EARTH regrows to GRASS when wetted, ICE
+// is slippery. WATER is a surface in the design vocabulary but is modeled as WaterBody overlays
+// (see water.ts), never a stored grid cell.
 export enum StructureType {
   EARTH = 'EARTH',
   METAL = 'METAL',
@@ -60,6 +61,7 @@ export enum Surface {
   GRASS = 'GRASS',
   ICE = 'ICE',
   WATER = 'WATER',
+  FIRE = 'FIRE', // grass that is currently alight (transient: douse → GRASS, burn out → EARTH)
 }
 
 // Deployed, world-resident entities spawned by some weapons (one Device[] array, switched on kind).
@@ -89,6 +91,7 @@ export enum InfantryState {
   WALKING = 'WALKING', // landed, patrolling / repositioning — fires with reduced accuracy
   RUNNING = 'RUNNING', // sprinting clear of a point-blank threat — holds fire
   KNEELING = 'KNEELING', // braced to launch a heavy weapon (grenadier)
+  FALLEN = 'FALLEN', // knocked flat (blast shove / hard landing / icy pratfall) — helpless until back up
   FALLING = 'FALLING', // airborne with no canopy — holds fire
   FALLING_PARACHUTE = 'FALLING_PARACHUTE', // descending under a canopy — fires inaccurately
   SWIMMING = 'SWIMMING', // afloat — only the drifting "standby" swimmer fires (poorly)
@@ -104,6 +107,15 @@ export const NET_MAX_PLAYERS = 8 // combatants per game room
 export const NET_PERSIST_EVERY = 15 // ticks between full-state writes to Redis (2×/s at 30 Hz)
 export const NET_EMPTY_ROOM_TTL = 30 // s an emptied room lingers (state kept in Redis) before disposal
 export const NET_GAME_NAME_MAX = 24 // max characters in a hosted game name
+export const NET_BENCH_MAX = 32 // disconnected seats a room remembers for same-name reclaim (oldest evicted)
+export const NET_PERSIST_MAX_DEVICES = 512 // cap on devices read back from a persisted blob (hostile-blob bound)
+// Client self-healing: an unexpected close after a WELCOME re-dials with intent=JOIN on this
+// backoff (JOIN also resurrects a hibernated room, so blips and server restarts heal through
+// the same reclaim path); the schedule exhausted = genuinely disconnected.
+export const NET_RECONNECT_DELAYS_MS: readonly number[] = [1000, 2000, 4000, 8000, 8000]
+export const NET_FEED_MAX = 4 // kill-feed lines shown at once (oldest dropped)
+export const NET_FEED_TTL = 6 // s a kill-feed line lives
+export const NET_SNAPSHOT_STALL_MS = 2000 // no SNAPSHOT for this long while PLAYING → the UNSTABLE chip
 
 // Minimap (renderer.ts): a corner overview of the whole arena — terrain silhouette, water,
 // both bases, and every ship, tinted with the same owner colors as the world (self cyan,
@@ -145,8 +157,8 @@ export const SPAWN_KEEPOUT_RADIUS = 400 // px disc around every spawn kept free 
 export const BAND_SKY_BOTTOM = 0.3 // fraction of WORLD_HEIGHT: open airspace above this (DM anchors live here)
 // The central sea (LOW band): column span as fractions of the play width, surface + floor as
 // fractions of WORLD_HEIGHT. Shared with the tests so the gulf geometry can't drift apart.
-export const SEA_WEST_FRAC = 0.34
-export const SEA_EAST_FRAC = 0.66
+export const SEA_WEST_FRAC = 0.4
+export const SEA_EAST_FRAC = 0.62
 export const SEA_SPILL_FRAC = 0.74 // the water surface (spill level below the containing lips)
 export const SEA_FLOOR_FRAC = 0.9
 export const PLATEAU_MIN_CELLS = 8 // min flat-run width (cells) so plateau tops are wide patrol ledges
@@ -176,6 +188,12 @@ export const SPAWN_ALTITUDE = 320 // px above its pad top where a campaign ship 
 // (see sim.ts).
 export const BASE_GARRISON_CAP = 12 // troopers a barracks can house (housed + fielded guards)
 export const BASE_GARRISON_START = 8 // housed at match start
+// The building has a body: ship weaponry striking the bunker grinds the housed garrison down
+// through the armor (never below the guard reserve — the last men must be stormed out by
+// infantry). Shelling softens a base; only troops can take it.
+export const BASE_BUILDING_HALF_WIDTH = 60 // px — the bunker's half-width (hitbox = drawn body)
+export const BASE_BUILDING_HEIGHT = 52 // px the bunker rises above the pad line (hitbox = drawn body)
+export const BASE_STRUCTURE_ARMOR = 400 // weapon hit-points the walls soak per housed trooper lost (~0.44 men/s under point-blank primary fire)
 export const BASE_GARRISON_REGEN = 1 / 15 // troopers/s regrown while uncaptured (one man every 15 s)
 export const BASE_LOAD_RADIUS = 140 // px from the pad within which a slow owner ship throws the doors open to board
 export const BASE_PAD_METAL_CELLS = 2 // thickness (cells) of the indestructible metal slab the barracks stands on
@@ -240,7 +258,28 @@ export const Color = {
   GRASS_EDGE: 0x77c95f,
   ICE: 0x8fd0e8,
   ICE_EDGE: 0xd9f4ff,
+  FIRE: 0xb5461b, // grass alight — ember-orange body
+  FIRE_EDGE: 0xff9e3f,
 } as const
+
+// One distinct hull color per online seat, assigned by the server as a SLOT index that rides
+// the wire (PlayerInfo.palette), the bench, and the persisted roster — so every client agrees
+// who is amber. Slots 0/1 equal the legacy SHIP/ENEMY hues, so a 1v1 looks like it always has,
+// and the offline campaign (which passes no palette map to the renderer) is untouched.
+// Constraints on the hexes: pairwise distinct, length === NET_MAX_PLAYERS, and clear of the
+// FX/terrain hues they'd be confused with (EXPLOSION/MISSILE 0xffd166, BULLET_ENEMY 0xff9d5c,
+// THRUST 0xffb347, WATER_EDGE 0x7fc8ff, FIRE_EDGE 0xff9e3f, GRASS_EDGE 0x77c95f) — pinned by
+// __tests__/net.test.ts. The most-separated hues come first so small games read best.
+export const PLAYER_PALETTE: readonly number[] = [
+  0x8fe3ff, // 0 cyan — the legacy self hue
+  0xff6b8b, // 1 rose — the legacy enemy hue
+  0xffd76a, // 2 gold
+  0xb38bff, // 3 violet
+  0xc6f25a, // 4 lime
+  0xff7ae0, // 5 magenta
+  0x7d8cff, // 6 indigo
+  0xdde6f2, // 7 silver
+]
 
 // Global gravity: a constant downward pull. Thrust must beat it to climb.
 export const GRAVITY = 200 // px/s^2
@@ -259,22 +298,20 @@ export const SHIP_THRUST = 580 // px/s^2 along the nose
 export const SHIP_REVERSE_THRUST = 260 // px/s^2 opposite the nose while the retros burn
 export const SHIP_TURN_RATE = 3.6 // rad/s
 export const SHIP_DRAG = 0.22 // gentle velocity damping coefficient (per second)
-export const SHIP_START_LIVES = 3
 export const SHIP_FIRE_INTERVAL = 0.17 // s between shots
 export const SHIP_RESPAWN_INVULN = 2.5 // s of invulnerability after (re)spawn
 export const SHIP_SPAWN_CLEAR_RADIUS = 260 // rocks within this of a respawn are cleared
-// Dying costs time, and it compounds: the first death waits RESPAWN_DELAY_BASE before the
-// ship re-enters, and every death already suffered this run adds RESPAWN_DELAY_GROWTH (capped) —
-// a side being worn down reinforces slower and slower.
+// Respawns are unlimited, but dying costs time and it compounds without ceiling: the waits run
+// 5, 10, 15, … — a side being worn down reinforces ever slower. The only hard stop is the base
+// war: a side holding NO base (its own lost, none captured) has no respawns at all (sim.ts).
 export const RESPAWN_DELAY_BASE = 5 // s the first respawn waits
-export const RESPAWN_DELAY_GROWTH = 2.5 // s added per prior death
-export const RESPAWN_DELAY_MAX = 15 // ceiling on the wait
+export const RESPAWN_DELAY_GROWTH = 5 // s added per prior death (uncapped)
 
 // Projectiles fly straight (no gravity), inheriting the ship's velocity.
 export const BULLET_SPEED = 600 // muzzle speed
 export const BULLET_RADIUS = 3
 export const BULLET_LIFETIME = 1.5 // s
-export const BULLET_DAMAGE = 22 // hit points removed per shot
+export const BULLET_DAMAGE = 30 // hit points removed per shot (5 bare shots / 6 with regen to down a full ship)
 
 // Ship combat: shields soak damage first and regenerate; hull is the real pool.
 // Terrain uses the land/bounce/crash model; only gunfire is graded against shields/hull.
@@ -373,14 +410,15 @@ export const WATER_CANNON_LIFE = 0.5
 export const WATER_CANNON_SPREAD = 0.05 // rad jitter
 export const WATER_CANNON_WET_RADIUS = 26 // px radius of earth→grass wetting on a terrain hit
 
-// Flamethrower — a held-down stream of short-lived flame gouts: scorches grass→earth, lightly
-// burns ships, and SETS INFANTRY ALIGHT (see INFANTRY_BURN_*). Short reach, murder up close.
+// Flamethrower — a held-down stream of short-lived flame gouts: sets grass ALIGHT (the fire
+// then creeps on its own — see GRASS_BURN_TIME / GRASS_FIRE_SPREAD_AFTER), lightly burns ships,
+// and SETS INFANTRY ALIGHT (see INFANTRY_BURN_*). Short reach, murder up close.
 export const FLAMETHROWER_PELLETS = 2 // gouts per pulse (the stream is the cooldown cadence)
 export const FLAMETHROWER_SPREAD = 0.18 // rad half-cone
 export const FLAMETHROWER_DAMAGE = 3
 export const FLAMETHROWER_SPEED = 340
 export const FLAMETHROWER_LIFE = 0.5
-export const FLAMETHROWER_BURN_RADIUS = 22 // px radius of grass→earth scorch on a terrain hit
+export const FLAMETHROWER_BURN_RADIUS = 22 // px radius of grass ignition on a terrain hit
 
 // ── Infantry (troop bay) ────────────────────────────────────────────────────
 // Every ship carries a troop bay: it loads troopers from its barracks, then the deploy key
@@ -413,6 +451,12 @@ export const INFANTRY_WALK_SPEED = 26 // px/s patrol speed on a surface
 export const INFANTRY_WALK_TURN_CHANCE = 0.012 // per-frame chance a patroller spontaneously reverses
 export const INFANTRY_PICKUP_DELAY = 2 // s after deploy before a unit can be picked up
 export const INFANTRY_FALL_LETHAL = 300 // landing impact speed (px/s) above which a unit splats
+// Knocked flat: a survivable-but-hard landing (chute not fully open), a blast's shove, or an icy
+// skid's end dumps a trooper on his back — helpless (no walking, no firing) until he scrambles up.
+export const INFANTRY_FALLEN_TIME = 2.5 // s a knocked-down trooper stays flat before getting up
+export const INFANTRY_FALL_KNOCKDOWN = 140 // landing impact (px/s) above which a survivable fall still knocks flat (sets `fallen`, not `stun`)
+export const INFANTRY_KNOCKDOWN_RADIUS_SCALE = 1.6 // blast knockdown ring: kill radius × this flattens landed survivors
+export const BURST_KNOCKDOWN_RADIUS = 80 // px around a grenade/flak burst where landed troopers are knocked flat
 export const INFANTRY_SWIM_TIME = 6 // s a unit floats (can't shoot) in water before it drowns
 export const INFANTRY_SWIM_DRAG = 1.6 // horizontal damping coefficient while swimming (no rescuer near)
 export const INFANTRY_SWIM_SPEED = 34 // px/s a unit paddles toward a rescuing owner
@@ -430,7 +474,7 @@ export const INFANTRY_SINK_SPEED = 36 // px/s it descends while sinking
 // idle swim is wild. Spread is drawn from world.rng so it stays deterministic across the network.
 export const INFANTRY_SPREAD_STANDING = 0 // aimed from a dead halt
 export const INFANTRY_SPREAD_WALKING = 0.06 // fires on the move, less accurate
-export const INFANTRY_SPREAD_PARACHUTE = 0.22 // swinging under the canopy
+export const INFANTRY_SPREAD_PARACHUTE = 0.7 // swinging under the canopy — the worst aim in the game
 export const INFANTRY_SPREAD_SWIM = 0.34 // treading water, barely aimed
 export const INFANTRY_SWIM_FIRE_INTERVAL = 2.4 // s between shots while drifting (standby — slow)
 // Running: a landed trooper sprints clear of a point-blank threat, and never fires while running.
@@ -438,6 +482,7 @@ export const INFANTRY_RUN_SPEED = 60 // px/s flee speed (faster than the walk pa
 export const INFANTRY_PANIC_DIST = 80 // px: an enemy this close makes a landed trooper bolt
 // Ice: a trooper on an icy surface occasionally loses its footing and slides a little.
 export const INFANTRY_ICE_SLIP_CHANCE = 0.015 // per-frame chance to slip while standing on ice
+export const INFANTRY_ICE_FALL_CHANCE = 0.45 // chance an icy skid ends in a pratfall (always-fall made ice unwalkable)
 export const INFANTRY_SLIP_SPEED = 70 // px/s the slide starts at when a slip triggers
 export const INFANTRY_SLIP_FRICTION = 1.2 // s^-1 decay of the slide (low → it glides for a moment)
 export const INFANTRY_SLIP_STOP_SPEED = 4 // px/s below which a slide ends (snaps back to firm footing)
@@ -642,9 +687,15 @@ export const CARVE_RADIUS_BASE = 5 // px crater radius floor (even a tiny pellet
 export const CARVE_RADIUS_SCALE = 2.4 // crater radius = projectile radius × this + base (bigger shot → bigger hole)
 export const DEBRIS_TERMINAL = 520 // px/s terminal fall speed of a loosed chunk
 export const DEBRIS_MAX_BODIES = 32 // safety cap on simultaneous falling chunks (excess is discarded)
-// Surfaces transform without touching structure: a flamethrower scorches grass→bare earth on hit;
-// the water cannon wets bare earth, which regrows grass after SURFACE_REGROW_TIME of being wet.
+// Surfaces transform without touching structure: a flame gout SETS grass ALIGHT rather than
+// scorching it outright — the burning cell creeps fire to adjacent exposed grass (a deterministic
+// wavefront, no rng) and only burns out to bare earth once its own timer is spent; a water hit
+// douses burning cells back to grass; the water cannon wets bare earth, which regrows grass
+// after SURFACE_REGROW_TIME of being wet.
 export const SURFACE_REGROW_TIME = 6 // s a wetted bare-earth cell takes to regrow grass
+export const GRASS_BURN_TIME = 3 // s a grass cell stays alight before it is spent to bare earth
+export const GRASS_FIRE_SPREAD_AFTER = 0.8 // s into a cell's burn at which the fire jumps to adjacent grass
+export const GRASS_FIRE_EMBERS = 3 // ember puffs sampled per frame across ALL burning cells (particle budget)
 
 // ── Terrain landing model ─────────────────────────────────────────────────
 // On contact the ship is classified by `impact` = closing speed (px/s) along the
@@ -662,4 +713,5 @@ export const SURFACE_FRICTION: Record<Surface, number> = {
   [Surface.GRASS]: 7,
   [Surface.ICE]: 0.3,
   [Surface.WATER]: 0,
+  [Surface.FIRE]: 7, // still grass underfoot — it grips like grass while it burns
 }

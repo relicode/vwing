@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 
-import { GamePhase, SHIP_START_LIVES, WeaponKind } from '$/game/constants'
+import { GamePhase, WeaponKind } from '$/game/constants'
 import { createEngine, type Engine } from '$/game/engine'
 import type { EngineStatus } from '$/game/types'
 
@@ -8,7 +8,6 @@ const INITIAL_STATUS: EngineStatus = {
   phase: GamePhase.TITLE,
   score: 0,
   best: 0,
-  lives: SHIP_START_LIVES,
   weapon: WeaponKind.SCATTERGUN,
   charge: 0,
   troops: 0,
@@ -48,7 +47,7 @@ export const useEngine = (): EngineBoot => {
   return { engine, error }
 }
 
-// Subscribes the React tree to HUD-relevant engine state (score, lives, phase, best).
+// Subscribes the React tree to HUD-relevant engine state (score, phase, best).
 export const useEngineStatus = (engine: Engine | undefined): EngineStatus => {
   const subscribe = useCallback((onChange: () => void) => (engine ? engine.subscribe(onChange) : () => {}), [engine])
   const getSnapshot = useCallback(() => (engine ? engine.getStatus() : INITIAL_STATUS), [engine])

@@ -1,6 +1,8 @@
 import type { Graphics } from 'pixi.js'
 
+import { baseHolder } from '$/game/bases'
 import { Color, MINIMAP_WIDTH, VIEW_HEIGHT, VIEW_WIDTH, WORLD_HEIGHT, WORLD_WIDTH } from '$/game/constants'
+import { ownerHex, type PaletteSlots } from '$/game/render/owner-colors'
 import { blockStyle } from '$/game/render/terrain'
 import type { RenderWorld, Vec2 } from '$/game/types'
 
@@ -33,19 +35,25 @@ export const drawMapTerrain = (g: Graphics, world: RenderWorld): void => {
 }
 
 // Live markers, redrawn each frame: bases as owner-tinted bunkers (the tint flips to the
-// capturer when one falls), ships as dots — self gets a brighter core — plus the viewport box.
-export const drawMapMarkers = (g: Graphics, world: RenderWorld, camera: Vec2, selfId: number): void => {
+// capturer when one falls), ships as palette-tinted dots — self gets a brighter core — plus
+// the viewport box.
+export const drawMapMarkers = (
+  g: Graphics,
+  world: RenderWorld,
+  camera: Vec2,
+  selfId: number,
+  slots?: PaletteSlots
+): void => {
   g.clear()
   for (const base of world.bases) {
-    const holder = base.capture >= 1 && base.capturedBy !== undefined ? base.capturedBy : base.owner
-    const color = holder === selfId ? Color.SHIP : Color.ENEMY
+    const color = ownerHex(baseHolder(base), selfId, slots)
     g.rect(base.x * MAP_SCALE - 3.5, base.y * MAP_SCALE - 5, 7, 5)
       .fill({ color, alpha: 0.9 })
       .stroke({ width: 1, color, alpha: 1 })
   }
   for (const ship of world.ships) {
     const own = ship.id === selfId
-    const color = own ? Color.SHIP : Color.ENEMY
+    const color = ownerHex(ship.id, selfId, slots)
     g.circle(ship.x * MAP_SCALE, ship.y * MAP_SCALE, own ? 3 : 2.4).fill({ color })
     if (own) g.circle(ship.x * MAP_SCALE, ship.y * MAP_SCALE, 1.2).fill({ color: Color.SHIP_CORE })
   }

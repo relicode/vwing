@@ -30,6 +30,15 @@ elimination → VICTORY). The campaign pits the player vs. an AI bot that plays 
 Commands: `bun run dev`, `bun run build`, `bun run preview`, `bun test`, `bun run lint`,
 `bun run format`. Always finish a change with `bun run lint` and `bun test` green.
 
+**Build / PWA** — `bun run build` runs `scripts/build.ts`: the app bundle, then the PWA layer —
+procedurally baked icons + og:image (`scripts/pwa/artwork.ts`, no native image deps),
+`manifest.webmanifest`, head metadata (PWA links, Open Graph/Twitter, VideoGame JSON-LD), and a
+precaching service worker (`src/pwa/sw.ts`, compiled to `dist/sw.js` with the precache list
+injected via `define`). Absolute-URL fields resolve against `--site <url>` > `$VWING_SITE_URL` >
+the default `https://mccall.kapsi.fi/vwing/`; for local PWA QA build with
+`--site http://localhost:3111/` and `bun run preview`. The worker registers in production only
+(`src/pwa/register-sw.ts`, NODE_ENV-gated) — the dev server never serves one.
+
 **Dev ports** are pinned to the `31xx` block so this repo's runner never collides with a
 sibling dev server (e.g. `mapifest-builder-astro` on `43xx`) and the browser keeps their
 PWA/localStorage origins separate: `dev` (web client) → **3110** (`$VWING_WEB_PORT`), `preview`
@@ -77,11 +86,16 @@ src/
                       # camera-view — migrating to v8 built-ins, see PLAN.md
     view.ts           # PixiJS Application boot (shared by the engine and the net client)
     engine.ts         # game loop + phase machine + status pub/sub (offline campaign vs. bot)
+  pwa/                # sw.ts (precache service worker, bundled standalone by the build) +
+                      # register-sw.ts (prod-only registration from main.tsx)
   net/                # protocol.ts (JSON wire format) + client.ts (snapshot-drawing online client)
   server/             # authoritative Bun server: index.ts (HTTP + WS), room.ts, store.ts (Redis
                       # state with in-memory fallback)
-scripts/              # server.ts (game-server entry), preview.ts
-__tests__/            # bun:test specs for the pure logic (sim only — never imports pixi.js)
+scripts/              # server.ts (game-server entry), preview.ts, build.ts (bundle + PWA layer)
+  pwa/                # build-time generators: identity.ts (site base + naming), manifest.ts,
+                      # head.ts (OG/Twitter/JSON-LD), artwork.ts + png.ts (SDF icon/og bake)
+__tests__/            # bun:test specs for the pure logic (sim + build-time PWA generators —
+                      # never imports pixi.js)
 ```
 
 ## Architecture notes
