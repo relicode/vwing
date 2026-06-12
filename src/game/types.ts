@@ -116,6 +116,7 @@ export type Device =
       burning: number // s of fire left before the trooper collapses (0 = not alight); water douses it
       stun: number // s of EMP seize-up remaining (a landed unit can't move or fire)
       fallen: number // s of knocked-flat left (blast shove / hard landing / icy pratfall) — can't move or fire while down
+      storming: boolean // unopposed in an enemy base's capture disc (stepBases re-marks each frame) — pure render cue for the door-pounding pose; never set online (DEATHMATCH has no bases)
     }
   | {
       kind: DeviceKind.GRENADE // gravity arc → shrapnel ring on fuse

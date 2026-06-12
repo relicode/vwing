@@ -274,6 +274,101 @@ const drawStanding = (g: Graphics, d: InfantrySprite, kit: Kit, time: number, f:
   }
 }
 
+// STORMING — the capture war's quiet grind made legible: unopposed attackers turn on the building
+// and riot at it. A standing man works a wind-up-and-slam cycle — rears back fuming, then lunges
+// to hammer both fists home under a cartoon WHACK star — while a patrolling one marches with both
+// fists pumping overhead, pitchfork-mob style. Angry brow + gritted teeth throughout. No weapon
+// drawn: both hands are busy with the door (the sim still fires; the round itself renders).
+const drawStorming = (g: Graphics, d: InfantrySprite, kit: Kit, time: number, f: number, walking: boolean): void => {
+  const r = d.radius
+  const a = 1
+  const footY = d.y + r
+  shadow(g, d, r, a)
+  pack(g, d, r, f, a)
+  if (walking) {
+    // The WALKING gait, same phase formula, so the patrol translation still reads — only the
+    // rifle arm is traded for two fists shaken at the sky.
+    const phase = time * 6 + d.x * 0.05
+    const legA = Math.sin(phase)
+    const legB = Math.sin(phase + Math.PI)
+    const cy = d.y - Math.abs(legA) * r * 0.06
+    const hipY = cy + r * 0.7
+    const ff = d.x + f * r * 0.25 + legA * f * r * 0.4
+    const rf = d.x - f * r * 0.2 + legB * f * r * 0.4
+    const fy = footY - Math.max(0, legA) * r * 0.18
+    g.moveTo(d.x - f * r * 0.2, hipY)
+      .lineTo(rf, footY)
+      .stroke({ width: r * 0.34, color: kit.body, alpha: a })
+    boot(g, rf, footY, f, r, a)
+    g.moveTo(d.x + f * r * 0.25, hipY)
+      .lineTo(ff, fy)
+      .stroke({ width: r * 0.34, color: kit.body, alpha: a })
+    boot(g, ff, fy, f, r, a)
+    torso(g, d.x, cy - r * 0.55, r, kit, a)
+    const pump = time * 12 + d.x * 0.11
+    for (const [off, dx] of [
+      [0, 0.4],
+      [Math.PI, -0.1],
+    ] as const) {
+      const fx = d.x + f * r * dx
+      const fistY = cy - r * (1.45 + Math.sin(pump + off) * 0.3)
+      g.moveTo(d.x + f * r * 0.1, cy - r * 0.25)
+        .lineTo(fx, fistY)
+        .stroke({ width: r * 0.28, color: kit.body, alpha: a })
+      g.circle(fx, fistY, r * 0.2).fill({ color: kit.body, alpha: a })
+    }
+    head(g, d.x, cy - r * 0.95, r, f, kit, a, Mood.GRIT, 1.15, true)
+    g.circle(d.x - f * r * 0.6, cy - r * 1.8, r * 0.11).fill({ color: Color.SMOKE, alpha: 0.4 }) // fuming
+    return
+  }
+  // The wind-up-and-slam: sin's positive lobe (squared, for snap) is the forward blow, the
+  // negative lobe the rear-back. Boots stay planted; hips, torso, head and fists ride the rock.
+  const phase = time * 8 + d.x * 0.13
+  const s = Math.sin(phase)
+  const slam = Math.max(0, s) ** 2
+  const wind = Math.max(0, -s)
+  const bx = f * r * (slam * 0.5 - wind * 0.3)
+  const cy = d.y + slam * r * 0.1 - wind * r * 0.12 // squash into the blow, rise on the wind-up
+  const hipY = cy + r * 0.7
+  g.moveTo(d.x + bx + f * r * 0.2, hipY)
+    .lineTo(d.x + f * r * 0.55, footY)
+    .stroke({ width: r * 0.34, color: kit.body, alpha: a })
+  boot(g, d.x + f * r * 0.55, footY, f, r, a)
+  g.moveTo(d.x + bx - f * r * 0.15, hipY)
+    .lineTo(d.x - f * r * 0.45, footY)
+    .stroke({ width: r * 0.34, color: kit.body, alpha: a })
+  boot(g, d.x - f * r * 0.45, footY, f, r, a)
+  torso(g, d.x + bx, cy - r * 0.55, r, kit, a)
+  // Both fists ride one swing: overhead and a touch behind on the wind-up, hammered out front
+  // at the slam.
+  for (const [ox, oy] of [
+    [0.18, -0.1],
+    [-0.08, 0.14],
+  ] as const) {
+    const fx = d.x + bx + f * r * (ox - 0.15 - wind * 0.3 + slam * 1.45)
+    const fistY = cy + r * (oy - 1.6 + slam * 1.45)
+    g.moveTo(d.x + bx + f * r * 0.15, cy - r * 0.3)
+      .lineTo(fx, fistY)
+      .stroke({ width: r * 0.28, color: kit.body, alpha: a })
+    g.circle(fx, fistY, r * 0.2).fill({ color: kit.body, alpha: a })
+  }
+  // The cartoon WHACK + a dust puff where the blow lands.
+  const pulse = clamp((slam - 0.7) / 0.3, 0, 1)
+  if (pulse > 0) {
+    g.star(d.x + bx + f * r * 2.1, cy - r * 0.2, 4, r * 0.75 * pulse, r * 0.28 * pulse).fill({
+      color: Color.SHIP_CORE,
+      alpha: 0.85 * pulse,
+    })
+    g.circle(d.x + bx + f * r * 1.7, cy - r * 0.65, r * 0.16).fill({ color: Color.SMOKE, alpha: 0.5 * pulse })
+  }
+  head(g, d.x + bx, cy - r * 0.95, r, f, kit, a, Mood.GRIT, 1.15, true)
+  if (wind > 0.3) {
+    // Fuming on the wind-up: steam puffs popping off the helmet.
+    g.circle(d.x + bx - f * r * 0.45, cy - r * 1.75, r * 0.12).fill({ color: Color.SMOKE, alpha: 0.5 * wind })
+    g.circle(d.x + bx - f * r * 0.7, cy - r * 2.0, r * 0.08).fill({ color: Color.SMOKE, alpha: 0.35 * wind })
+  }
+}
+
 // RUNNING — a comedic panic bolt (wide eyes + open mouth, scissoring legs, pumping arm, no weapon),
 // or the stiff-legged ice slide variant (d.slide) with an alarmed mouth + a skid tick.
 const drawRunning = (g: Graphics, d: InfantrySprite, kit: Kit, time: number, f: number): void => {
@@ -553,13 +648,20 @@ const drawStunned = (g: Graphics, d: InfantrySprite, time: number): void => {
 // A trooper's state pose. stateOf (devices.ts) is the single source of truth for the behavioural
 // state, so the pose ladder never drifts from the sim. The ice slide is a transient stateOf
 // intentionally doesn't model (it would otherwise read as WALKING/STANDING), so it's caught
-// first and routed to drawRunning's skid branch.
+// first and routed to drawRunning's skid branch; the storming riot is the same kind of transient,
+// and it replaces only the two idle ground poses — any state with real business (kneeling to
+// fire, bolting, knocked flat…) outranks the theatrics.
 const drawInfantryPose = (g: Graphics, d: InfantrySprite, kit: Kit, time: number, f: number): void => {
   if (d.attached && d.slide !== 0 && !d.running) {
     drawRunning(g, d, kit, time, f)
     return
   }
-  switch (stateOf(d)) {
+  const state = stateOf(d)
+  if (d.storming && (state === InfantryState.WALKING || state === InfantryState.STANDING)) {
+    drawStorming(g, d, kit, time, f, state === InfantryState.WALKING)
+    return
+  }
+  switch (state) {
     case InfantryState.DROWNING:
       drawDrowning(g, d, kit, time, f)
       break
