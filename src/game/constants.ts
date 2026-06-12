@@ -482,6 +482,7 @@ export const INFANTRY_RUN_SPEED = 60 // px/s flee speed (faster than the walk pa
 export const INFANTRY_PANIC_DIST = 80 // px: an enemy this close makes a landed trooper bolt
 // Ice: a trooper on an icy surface occasionally loses its footing and slides a little.
 export const INFANTRY_ICE_SLIP_CHANCE = 0.015 // per-frame chance to slip while standing on ice
+export const INFANTRY_ICE_FALL_CHANCE = 0.45 // chance an icy skid ends in a pratfall (always-fall made ice unwalkable)
 export const INFANTRY_SLIP_SPEED = 70 // px/s the slide starts at when a slip triggers
 export const INFANTRY_SLIP_FRICTION = 1.2 // s^-1 decay of the slide (low → it glides for a moment)
 export const INFANTRY_SLIP_STOP_SPEED = 4 // px/s below which a slide ends (snaps back to firm footing)

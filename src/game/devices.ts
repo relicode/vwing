@@ -54,6 +54,7 @@ import {
   INFANTRY_FLAME_SPEED,
   INFANTRY_FLAME_SPREAD,
   INFANTRY_HEAVY,
+  INFANTRY_ICE_FALL_CHANCE,
   INFANTRY_ICE_SLIP_CHANCE,
   INFANTRY_KNEEL_FIRE_AT,
   INFANTRY_KNEEL_TIME,
@@ -993,9 +994,12 @@ const stepDevice = (
         device.x = clampToGround(device, device.x + device.slide * dt)
         device.slide *= Math.exp(-INFANTRY_SLIP_FRICTION * dt)
         if (Math.abs(device.slide) < INFANTRY_SLIP_STOP_SPEED) device.slide = 0
-        // A skid that ends still on the ice ends in a pratfall — flat on his back. (A wash that
-        // peters out on plain earth doesn't floor anyone; it's the ice that takes the feet.)
-        if (device.slide === 0 && ground.surface === Surface.ICE) device.fallen = INFANTRY_FALLEN_TIME
+        // A skid that ends still on the ice sometimes ends in a pratfall — flat on his back.
+        // Chance-gated: every-skid-falls left a patroller down ~80% of the time, making ice
+        // unwalkable. (A wash that peters out on plain earth never floors anyone; it's the
+        // ice that takes the feet.)
+        if (device.slide === 0 && ground.surface === Surface.ICE && world.rng() < INFANTRY_ICE_FALL_CHANCE)
+          device.fallen = INFANTRY_FALLEN_TIME
         device.facing = device.walkDir
         device.running = false
         device.kneel = 0 // a slip breaks any brace

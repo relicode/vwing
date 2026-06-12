@@ -652,11 +652,11 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     const world = makeWorld([], [u])
     world.blocks = [{ x: 140, y: 128, w: 320, h: 40, structure: StructureType.EARTH, surface: Surface.ICE }]
     let slid = false
-    for (let i = 0; i < 3000; i += 1) {
+    for (let i = 0; i < 6000; i += 1) {
       updateDevices(world, 1 / 60)
       if (u.kind !== DeviceKind.INFANTRY) return
       if (u.slide !== 0) slid = true
-      if (slid && u.slide === 0) break // the skid just ended
+      if (u.fallen > 0) break // a skid ended in the pratfall (chance-gated — not every one does)
     }
     expect(slid).toBe(true)
     if (u.kind === DeviceKind.INFANTRY) {
