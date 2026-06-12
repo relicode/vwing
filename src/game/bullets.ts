@@ -18,6 +18,7 @@ type BulletPayload = {
   push?: number
   burn?: boolean
   wet?: boolean
+  infantry?: boolean
   color?: number
 }
 type BurstConfig = {
@@ -71,6 +72,7 @@ export const pushBullet = (
     push: payload.push,
     burn: payload.burn,
     wet: payload.wet,
+    infantry: payload.infantry,
     color: payload.color,
   })
 }

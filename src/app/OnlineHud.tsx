@@ -190,7 +190,7 @@ const OnlineHud = ({ status, onLeave }: OnlineHudProps) => {
             textShadow: '0 0 16px currentColor',
           }}
         >
-          REINFORCEMENTS IN {Math.ceil(status.respawnIn)}
+          SPAWNING IN {Math.ceil(status.respawnIn)}
         </Typography>
       ) : null}
 

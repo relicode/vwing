@@ -505,6 +505,38 @@ const drawBurning = (g: Graphics, d: InfantrySprite, time: number): void => {
   }
 }
 
+// FALLEN: flat on his back along the ground line — boots flung toward facing, head at the rear
+// resting on the dirt, helmet knocked off beside it, a pair of dizzy sparks circling where the
+// stars should be. Reads instantly as "down but not dead" (the drowned corpse keeps DEAD_X).
+const drawFallen = (g: Graphics, d: InfantrySprite, kit: Kit, time: number, f: number): void => {
+  const r = d.radius
+  const footY = d.y + r
+  shadow(g, d, r, 1)
+  // Legs kicked up toward facing, boots in the air.
+  g.moveTo(d.x + f * r * 0.3, footY - r * 0.35)
+    .lineTo(d.x + f * r * 0.95, footY - r * 0.55)
+    .stroke({ width: r * 0.3, color: kit.body, alpha: 1 })
+  boot(g, d.x + f * r * 1.05, footY - r * 0.6, f, r, 1)
+  // The barrel torso lying along the ground (belt stripe kept so the figure still reads).
+  g.roundRect(d.x - r * 0.85, footY - r * 0.72, r * 1.5, r * 0.62, r * 0.22)
+    .fill({ color: kit.body, alpha: 1 })
+    .stroke({ width: r * 0.1, color: kit.rim, alpha: 1 })
+  g.rect(d.x + f * r * 0.1 - r * 0.06, footY - r * 0.72, r * 0.12, r * 0.62).fill({ color: BELT_COLOR, alpha: 1 })
+  // Head at the rear, cheek to the dirt; the helmet rolled off just beyond it.
+  const hx = d.x - f * r * 1.05
+  const hy = footY - r * 0.42
+  head(g, hx, hy, r * 0.9, f, kit, 1, Mood.FLAT, 1, false, false)
+  dome(g, hx - f * r * 0.85, footY - r * 0.18, r * 0.55, HELMET_COLOR, 1)
+  // Dizzy stars wheeling over the upturned face.
+  const angle = time * 5 + d.x * 0.2
+  for (const phase of [0, Math.PI * 0.66, Math.PI * 1.33]) {
+    g.circle(hx + Math.cos(angle + phase) * r * 0.7, hy - r * 0.9 + Math.sin(angle + phase) * r * 0.22, r * 0.1).fill({
+      color: Color.SHIP_CORE,
+      alpha: 0.8,
+    })
+  }
+}
+
 // EMP seize-up: a pair of cyan sparks orbiting the helmet while the jolt lasts.
 const drawStunned = (g: Graphics, d: InfantrySprite, time: number): void => {
   const r = d.radius
@@ -539,6 +571,9 @@ const drawInfantryPose = (g: Graphics, d: InfantrySprite, kit: Kit, time: number
       break
     case InfantryState.FALLING:
       drawFalling(g, d, kit, time, f)
+      break
+    case InfantryState.FALLEN:
+      drawFallen(g, d, kit, time, f)
       break
     case InfantryState.KNEELING:
       drawKneeling(g, d, kit, f)

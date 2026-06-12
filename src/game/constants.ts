@@ -91,6 +91,7 @@ export enum InfantryState {
   WALKING = 'WALKING', // landed, patrolling / repositioning — fires with reduced accuracy
   RUNNING = 'RUNNING', // sprinting clear of a point-blank threat — holds fire
   KNEELING = 'KNEELING', // braced to launch a heavy weapon (grenadier)
+  FALLEN = 'FALLEN', // knocked flat (blast shove / hard landing / icy pratfall) — helpless until back up
   FALLING = 'FALLING', // airborne with no canopy — holds fire
   FALLING_PARACHUTE = 'FALLING_PARACHUTE', // descending under a canopy — fires inaccurately
   SWIMMING = 'SWIMMING', // afloat — only the drifting "standby" swimmer fires (poorly)
@@ -156,8 +157,8 @@ export const SPAWN_KEEPOUT_RADIUS = 400 // px disc around every spawn kept free 
 export const BAND_SKY_BOTTOM = 0.3 // fraction of WORLD_HEIGHT: open airspace above this (DM anchors live here)
 // The central sea (LOW band): column span as fractions of the play width, surface + floor as
 // fractions of WORLD_HEIGHT. Shared with the tests so the gulf geometry can't drift apart.
-export const SEA_WEST_FRAC = 0.34
-export const SEA_EAST_FRAC = 0.66
+export const SEA_WEST_FRAC = 0.4
+export const SEA_EAST_FRAC = 0.62
 export const SEA_SPILL_FRAC = 0.74 // the water surface (spill level below the containing lips)
 export const SEA_FLOOR_FRAC = 0.9
 export const PLATEAU_MIN_CELLS = 8 // min flat-run width (cells) so plateau tops are wide patrol ledges
@@ -187,6 +188,12 @@ export const SPAWN_ALTITUDE = 320 // px above its pad top where a campaign ship 
 // (see sim.ts).
 export const BASE_GARRISON_CAP = 12 // troopers a barracks can house (housed + fielded guards)
 export const BASE_GARRISON_START = 8 // housed at match start
+// The building has a body: ship weaponry striking the bunker grinds the housed garrison down
+// through the armor (never below the guard reserve — the last men must be stormed out by
+// infantry). Shelling softens a base; only troops can take it.
+export const BASE_BUILDING_HALF_WIDTH = 60 // px — the bunker's half-width (hitbox = drawn body)
+export const BASE_BUILDING_HEIGHT = 52 // px the bunker rises above the pad line (hitbox = drawn body)
+export const BASE_STRUCTURE_ARMOR = 400 // weapon hit-points the walls soak per housed trooper lost (~0.44 men/s under point-blank primary fire)
 export const BASE_GARRISON_REGEN = 1 / 15 // troopers/s regrown while uncaptured (one man every 15 s)
 export const BASE_LOAD_RADIUS = 140 // px from the pad within which a slow owner ship throws the doors open to board
 export const BASE_PAD_METAL_CELLS = 2 // thickness (cells) of the indestructible metal slab the barracks stands on
@@ -304,7 +311,7 @@ export const RESPAWN_DELAY_GROWTH = 5 // s added per prior death (uncapped)
 export const BULLET_SPEED = 600 // muzzle speed
 export const BULLET_RADIUS = 3
 export const BULLET_LIFETIME = 1.5 // s
-export const BULLET_DAMAGE = 22 // hit points removed per shot
+export const BULLET_DAMAGE = 30 // hit points removed per shot (5 bare shots / 6 with regen to down a full ship)
 
 // Ship combat: shields soak damage first and regenerate; hull is the real pool.
 // Terrain uses the land/bounce/crash model; only gunfire is graded against shields/hull.
@@ -444,6 +451,12 @@ export const INFANTRY_WALK_SPEED = 26 // px/s patrol speed on a surface
 export const INFANTRY_WALK_TURN_CHANCE = 0.012 // per-frame chance a patroller spontaneously reverses
 export const INFANTRY_PICKUP_DELAY = 2 // s after deploy before a unit can be picked up
 export const INFANTRY_FALL_LETHAL = 300 // landing impact speed (px/s) above which a unit splats
+// Knocked flat: a survivable-but-hard landing (chute not fully open), a blast's shove, or an icy
+// skid's end dumps a trooper on his back — helpless (no walking, no firing) until he scrambles up.
+export const INFANTRY_FALLEN_TIME = 2.5 // s a knocked-down trooper stays flat before getting up
+export const INFANTRY_FALL_KNOCKDOWN = 140 // landing impact (px/s) above which a survivable fall still knocks flat (sets `fallen`, not `stun`)
+export const INFANTRY_KNOCKDOWN_RADIUS_SCALE = 1.6 // blast knockdown ring: kill radius × this flattens landed survivors
+export const BURST_KNOCKDOWN_RADIUS = 80 // px around a grenade/flak burst where landed troopers are knocked flat
 export const INFANTRY_SWIM_TIME = 6 // s a unit floats (can't shoot) in water before it drowns
 export const INFANTRY_SWIM_DRAG = 1.6 // horizontal damping coefficient while swimming (no rescuer near)
 export const INFANTRY_SWIM_SPEED = 34 // px/s a unit paddles toward a rescuing owner
@@ -461,7 +474,7 @@ export const INFANTRY_SINK_SPEED = 36 // px/s it descends while sinking
 // idle swim is wild. Spread is drawn from world.rng so it stays deterministic across the network.
 export const INFANTRY_SPREAD_STANDING = 0 // aimed from a dead halt
 export const INFANTRY_SPREAD_WALKING = 0.06 // fires on the move, less accurate
-export const INFANTRY_SPREAD_PARACHUTE = 0.22 // swinging under the canopy
+export const INFANTRY_SPREAD_PARACHUTE = 0.7 // swinging under the canopy — the worst aim in the game
 export const INFANTRY_SPREAD_SWIM = 0.34 // treading water, barely aimed
 export const INFANTRY_SWIM_FIRE_INTERVAL = 2.4 // s between shots while drifting (standby — slow)
 // Running: a landed trooper sprints clear of a point-blank threat, and never fires while running.
@@ -469,6 +482,7 @@ export const INFANTRY_RUN_SPEED = 60 // px/s flee speed (faster than the walk pa
 export const INFANTRY_PANIC_DIST = 80 // px: an enemy this close makes a landed trooper bolt
 // Ice: a trooper on an icy surface occasionally loses its footing and slides a little.
 export const INFANTRY_ICE_SLIP_CHANCE = 0.015 // per-frame chance to slip while standing on ice
+export const INFANTRY_ICE_FALL_CHANCE = 0.45 // chance an icy skid ends in a pratfall (always-fall made ice unwalkable)
 export const INFANTRY_SLIP_SPEED = 70 // px/s the slide starts at when a slip triggers
 export const INFANTRY_SLIP_FRICTION = 1.2 // s^-1 decay of the slide (low → it glides for a moment)
 export const INFANTRY_SLIP_STOP_SPEED = 4 // px/s below which a slide ends (snaps back to firm footing)

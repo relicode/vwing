@@ -1,6 +1,8 @@
 import { closestPointOnRect } from '$/game/collision'
 import {
+  BASE_GUARD_PATROL,
   BASE_GUARD_RESERVE,
+  BASE_LOAD_RADIUS,
   BaseAlarm,
   BOT_AIM_DEADBAND,
   BOT_ARRIVAL_RADIUS,
@@ -221,6 +223,20 @@ export const nextGoal = (prev: BotGoal, self: Ship, world: World, target: Ship |
   // troops aboard to drop.
   if (home.capture > 0) return BotGoal.DEFEND
   if (home.alarm === BaseAlarm.SORTIE && self.troops >= 1) return BotGoal.DEFEND
+  // 2b. The barracks under the guns: shelling reads HIDE (everyone bunkered), not SORTIE — so
+  // once the housed count is ground toward the reserve with an enemy ship overhead, fly home
+  // and answer the siege (no troops needed: the ship itself is the answer to a shelling ship).
+  // The bay counts as supply only while the bot is the one draining the pad (mid-REARM, or
+  // sitting at the door where loading happens): those men were withdrawn, not lost to shells,
+  // so a mere flyby can't spook the bot into dumping its just-loaded troops back over the pad.
+  // A stocked bay FAR from home is no alibi — a garrison really ground down calls the ship back.
+  const loadingDrain = prev === BotGoal.REARM || Math.hypot(self.x - home.x, self.y - (home.y - 40)) <= BASE_LOAD_RADIUS
+  if (
+    home.alarm === BaseAlarm.HIDE &&
+    home.garrison + guardCount(world, self.id) + (loadingDrain ? self.troops : 0) <
+      BASE_GUARD_PATROL + BASE_GUARD_RESERVE
+  )
+    return BotGoal.DEFEND
   // 3. Sticky rearm: keep loading until topped up. Supply = housed + the fielded watch (loading
   // boards both), but the bot never strips its base below the reserve — emptying the whole
   // garrison is a gamble only the human is allowed to take.

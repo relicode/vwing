@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import {
+  BASE_STRUCTURE_ARMOR,
   BOT_KILL_SCORE,
   DEATHMATCH_FRAG_SCORE,
   DeviceKind,
@@ -178,7 +179,7 @@ describe('createSim — base capture cuts respawns', () => {
     expect(musterY).toBeCloseTo(taken.y - SPAWN_ALTITUDE, 0)
   })
 
-  test('losing your last base while the clock runs cancels the respawn (eliminated at muster)', () => {
+  test('losing your last base while the clock runs is immediate elimination (no doomed countdown)', () => {
     const world = createWorld(27)
     const player = combatant(0, 500, 400)
     const enemy = combatant(1, 1500, 400)
@@ -189,13 +190,13 @@ describe('createSim — base capture cuts respawns', () => {
     const home = world.bases.find((b) => b.owner === 0)
     expect(home).toBeDefined()
     if (!home) return
-    let eliminatedMidWait = false
-    for (let i = 0; i < Math.ceil((RESPAWN_DELAY_BASE + 0.2) * 60); i += 1) {
-      home.capture = 1 // the assault completes while the wreck waits
-      home.capturedBy = 1
-      if (sim.step(1 / 60).some((e) => e.victimId === 0 && e.eliminated)) eliminatedMidWait = true
-    }
-    expect(eliminatedMidWait).toBe(true) // the noose closing mid-wait is reported like any death
+    home.capture = 1 // the assault completes while the wreck waits
+    home.capturedBy = 1
+    // The very next frame — far inside the RESPAWN_DELAY_BASE wait — the noose closes on the
+    // spot. By design this forecloses the slim chance of surviving troopers re-liberating the
+    // pad before the timer ran out: baseless-while-dead ends it, exactly as at the moment of death.
+    const events = sim.step(1 / 60)
+    expect(events).toContainEqual(expect.objectContaining({ victimId: 0, eliminated: true }))
     expect(world.ships.some((s) => s.id === 0)).toBe(false) // the reinforcement never arrived
     expect(sim.respawnIn(0)).toBe(0)
   })
@@ -214,6 +215,76 @@ describe('createSim — base capture cuts respawns', () => {
       (b) => b.structure === StructureType.METAL && home.x >= b.x && home.x < b.x + b.w && b.y === home.y
     )
     expect(slab).toBeDefined() // the indestructible slab moved with the barracks line
+  })
+
+  test('an enemy shell into the building grinds the garrison through the armor; your own fire is exempt', () => {
+    // Identical worlds, with and without the shell: the garrison delta isolates the shelling
+    // from the same-frame door cadence and regen.
+    const garrisonAfterStep = (shell: boolean, owner: number): { garrison: number; bullets: number } => {
+      const world = createWorld(31)
+      const player = combatant(0, 500, 400)
+      const enemy = combatant(1, 1500, 400)
+      const sim = createSim(world, [player, enemy], { mode: SimMode.CAMPAIGN })
+      const home = world.bases.find((b) => b.owner === 0)
+      if (!home) throw new Error('no player base seeded')
+      if (shell) world.bullets.push({ x: home.x, y: home.y - 20, vx: 0, vy: 0, radius: 3, life: 1, owner, damage: 50 })
+      sim.step(1 / 60)
+      return { garrison: home.garrison, bullets: world.bullets.length }
+    }
+    const control = garrisonAfterStep(false, 0)
+    const shelled = garrisonAfterStep(true, 1)
+    expect(control.garrison - shelled.garrison).toBeCloseTo(50 / BASE_STRUCTURE_ARMOR, 5)
+    expect(shelled.bullets).toBe(0) // the walls stop the shell
+    const ownFire = garrisonAfterStep(true, 0)
+    expect(ownFire.garrison).toBeCloseTo(control.garrison, 10) // no shelling yourself into elimination
+  })
+
+  test('a captured building answers to its capturer: the dispossessed side`s shells are eaten, the holder`s pass', () => {
+    const bulletsAfterStep = (owner: number): number => {
+      const world = createWorld(31)
+      const player = combatant(0, 500, 400)
+      const enemy = combatant(1, 1500, 400)
+      const sim = createSim(world, [player, enemy], { mode: SimMode.CAMPAIGN })
+      const home = world.bases.find((b) => b.owner === 0)
+      if (!home) throw new Error('no player base seeded')
+      home.capture = 1 // the pad fell — the building now answers to side 1, whatever the deed says
+      home.capturedBy = 1
+      world.bullets.push({ x: home.x, y: home.y - 20, vx: 0, vy: 0, radius: 3, life: 1, owner, damage: 50 })
+      sim.step(1 / 60)
+      return world.bullets.length
+    }
+    expect(bulletsAfterStep(0)).toBe(0) // the dispossessed owner now faces an enemy wall
+    expect(bulletsAfterStep(1)).toBe(1) // the capturer shoots across its own muster pad unimpeded
+  })
+
+  test('a trooper`s rifle round passes the band — small arms neither chip the garrison nor get eaten as cover', () => {
+    const run = (shoot: boolean): { garrison: number; bullets: number } => {
+      const world = createWorld(31)
+      const player = combatant(0, 500, 400)
+      const enemy = combatant(1, 1500, 400)
+      const sim = createSim(world, [player, enemy], { mode: SimMode.CAMPAIGN })
+      const home = world.bases.find((b) => b.owner === 0)
+      if (!home) throw new Error('no player base seeded')
+      if (shoot) {
+        world.bullets.push({
+          x: home.x,
+          y: home.y - 20,
+          vx: 0,
+          vy: 0,
+          radius: 3,
+          life: 1,
+          owner: 1,
+          damage: 50,
+          infantry: true, // the same round from a rifle instead of a ship cannon
+        })
+      }
+      sim.step(1 / 60)
+      return { garrison: home.garrison, bullets: world.bullets.length }
+    }
+    const control = run(false)
+    const rifled = run(true)
+    expect(rifled.garrison).toBeCloseTo(control.garrison, 10)
+    expect(rifled.bullets).toBe(1) // the round flies on — the door fight happens inside this band
   })
 
   test('an uncaptured base means a normal respawn (the noose only closes when the base falls)', () => {
@@ -244,7 +315,9 @@ describe('createSim — troop bay + deploy', () => {
   })
 
   test('holding deploy streams troopers at the cadence and drains the bay', () => {
-    const world = createWorld(12)
+    // Seed picked for a clear column under the drop point — a trooper that meets a sky isle
+    // mid-fall splats legitimately, which is the game, not what this test is counting.
+    const world = createWorld(15)
     const carrier = combatant(0, 500, 400)
     carrier.input = deployInput
     const sim = createSim(world, [carrier], { mode: SimMode.DEATHMATCH })
@@ -389,6 +462,7 @@ describe('createSim — membership', () => {
     slide: 0,
     burning: 0,
     stun: 0,
+    fallen: 0,
   })
 
   test('addCombatant / removeCombatant keep world.ships in lockstep', () => {
@@ -468,6 +542,7 @@ describe('createSim — flame and water vs infantry', () => {
     slide: 0,
     burning: 0,
     stun: 0,
+    fallen: 0,
   })
 
   test('friendly fire is real: a stray same-side bullet splatters a trooper', () => {

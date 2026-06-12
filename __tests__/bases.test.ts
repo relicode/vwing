@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { createCampaignBases, stepBases } from '$/game/bases'
+import { createCampaignBases, damageBase, stepBases } from '$/game/bases'
 import {
   BASE_CAPTURE_RADIUS,
   BASE_CAPTURE_TIME,
@@ -8,6 +8,7 @@ import {
   BASE_GARRISON_START,
   BASE_GUARD_PATROL,
   BASE_GUARD_RESERVE,
+  BASE_STRUCTURE_ARMOR,
   BaseAlarm,
   BOT_ID,
   DeviceKind,
@@ -47,7 +48,12 @@ const makeShip = (over: Partial<Ship>): Ship => ({
   ...over,
 })
 
-const trooper = (owner: number, x: number, y: number, attached = true): Device => ({
+const trooper = (
+  owner: number,
+  x: number,
+  y: number,
+  attached = true
+): Extract<Device, { kind: DeviceKind.INFANTRY }> => ({
   kind: DeviceKind.INFANTRY,
   x,
   y,
@@ -71,6 +77,7 @@ const trooper = (owner: number, x: number, y: number, attached = true): Device =
   slide: 0,
   burning: 0,
   stun: 0,
+  fallen: 0,
 })
 
 const makeWorld = (ships: Ship[], devices: Device[], bases: Base[]): World => ({
@@ -225,6 +232,58 @@ describe('stepBases — capture tug-of-war', () => {
     expect(fallen.capture).toBe(0)
   })
 
+  test('a knocked-flat attacker neither storms nor captures until he scrambles up', () => {
+    const base = makeBase({ garrison: 2 })
+    const downed = { ...trooper(BOT_ID, base.x + 50, base.y), fallen: 1 }
+    const world = makeWorld([], [downed], [base])
+    stepBases(world, 1)
+    expect(base.garrison).toBe(2) // flat on his back: no storming
+    expect(base.capture).toBe(0)
+    downed.fallen = 0 // back on his feet — the assault resumes
+    stepBases(world, 1)
+    expect(base.garrison).toBeLessThan(2)
+  })
+
+  test('a knocked-flat defender holds nothing — the takeover ticks over his body', () => {
+    const base = makeBase({ garrison: 0 })
+    const raider = trooper(BOT_ID, base.x + 50, base.y)
+    const downed = { ...trooper(PLAYER_ID, base.x - 50, base.y), fallen: 1 }
+    const world = makeWorld([], [raider, downed], [base])
+    stepBases(world, 1)
+    expect(base.capture).toBeGreaterThan(0)
+  })
+
+  test('an EMP-seized man is as helpless as a fallen one — no storming, no holding', () => {
+    const base = makeBase({ garrison: 2 })
+    const seized = { ...trooper(BOT_ID, base.x + 50, base.y), stun: 1 }
+    const world = makeWorld([], [seized], [base])
+    stepBases(world, 1)
+    expect(base.garrison).toBe(2) // a seized attacker doesn't storm
+    expect(base.capture).toBe(0)
+    const held = makeBase({ garrison: 0, capture: 0.4 })
+    const frozen = { ...trooper(PLAYER_ID, held.x - 50, held.y), stun: 1 }
+    const raider = trooper(BOT_ID, held.x + 50, held.y)
+    stepBases(makeWorld([], [raider, frozen], [held]), 1)
+    expect(held.capture).toBeGreaterThan(0.4) // a seized defender freezes nothing
+  })
+
+  test('a downed occupier still occupies: one knockdown blast cannot un-capture a won pad', () => {
+    // The capture-war exclusion must not reach a completed capture — the knockdown ring is
+    // side-blind, so a single grenade over the muster pad would otherwise clear capturedBy in
+    // one frame and (mid-respawn-wait) eliminate a capturer whose men are merely flat.
+    const taken = makeBase({ capture: 1, capturedBy: BOT_ID, garrison: 0 })
+    const occupier = { ...trooper(BOT_ID, taken.x + 30, taken.y), fallen: 2.5 }
+    const world = makeWorld([], [occupier], [taken])
+    stepBases(world, 1 / 60)
+    expect(taken.capture).toBe(1)
+    expect(taken.capturedBy).toBe(BOT_ID) // the flag still flies while he scrambles up
+    occupier.fallen = 0
+    occupier.attached = false // scooped away — NOW the pad really is unheld
+    stepBases(world, 1 / 60)
+    expect(taken.capture).toBeLessThan(1)
+    expect(taken.capturedBy).toBeUndefined()
+  })
+
   test('airborne (chuting) troopers do not count — only landed ones contest or capture', () => {
     const base = makeBase({})
     const world = makeWorld([], [trooper(BOT_ID, base.x, base.y - 100, false)], [base])
@@ -289,5 +348,79 @@ describe('stepBases — the garrison in the flesh', () => {
     for (let i = 0; i < 20; i += 1) stepBases(world, 0.5)
     expect(guardsOf(world, base)).toBe(0)
     expect(base.garrison).toBe(5) // frozen — no regen, no fielding, no storming needed (already fallen)
+  })
+})
+
+describe('damageBase — shelling the building', () => {
+  test('weapon damage grinds the housed garrison through the armor', () => {
+    const base = makeBase({})
+    damageBase(makeWorld([], [], [base]), base, BASE_STRUCTURE_ARMOR) // exactly one man's worth
+    expect(base.garrison).toBeCloseTo(BASE_GARRISON_START - 1, 5)
+  })
+
+  test('gunfire never grinds below the guard reserve — the last men must be stormed out', () => {
+    const base = makeBase({})
+    const world = makeWorld([], [], [base])
+    for (let i = 0; i < 50; i += 1) damageBase(world, base, BASE_STRUCTURE_ARMOR)
+    expect(base.garrison).toBe(BASE_GUARD_RESERVE)
+  })
+
+  test('a garrison already stormed under the reserve is neither chipped further nor topped up', () => {
+    const base = makeBase({ garrison: 0.5 })
+    damageBase(makeWorld([], [], [base]), base, BASE_STRUCTURE_ARMOR * 10)
+    expect(base.garrison).toBe(0.5)
+  })
+
+  test('a fallen barracks is past hurting', () => {
+    const base = makeBase({ capture: 1, capturedBy: BOT_ID, garrison: 5 })
+    damageBase(makeWorld([], [], [base]), base, BASE_STRUCTURE_ARMOR * 10)
+    expect(base.garrison).toBe(5)
+  })
+
+  test('a mine blast by the building chips the garrison through the same armor — but not the owner side`s own', () => {
+    const tripper = makeShip({ id: PLAYER_ID, x: 1000, y: 2940 }) // walks into the enemy mine by the pad
+    const mine: Device = {
+      kind: DeviceKind.MINE,
+      x: 1000,
+      y: 2940,
+      owner: BOT_ID,
+      radius: 6,
+      armTime: 0,
+      life: 5,
+      triggerRadius: 60,
+      blastRadius: 90,
+      damage: 40,
+    }
+    const shelled = makeBase({}) // player barracks at (1000, 3000): building center ~34 px from the blast
+    const world = makeWorld([tripper], [mine], [shelled])
+    updateDevices(world, 0.016)
+    expect(shelled.garrison).toBeCloseTo(BASE_GARRISON_START - 40 / BASE_STRUCTURE_ARMOR, 5)
+
+    const own = makeBase({ owner: BOT_ID }) // the blast owner's own base shrugs the same splash off
+    const friendly = makeWorld([makeShip({ id: PLAYER_ID, x: 1000, y: 2940 })], [{ ...mine }], [own])
+    updateDevices(friendly, 0.016)
+    expect(own.garrison).toBe(BASE_GARRISON_START)
+  })
+
+  test('a blast hugging the building`s flank still rocks it — the body box is the hitbox, not the centroid', () => {
+    // Mine at (1115, 2995): 117 px from the building's center — outside the 90 px blast — but
+    // its circle reaches 35 px past the east wall (x = 1060). A centroid test would excuse it.
+    const tripper = makeShip({ id: PLAYER_ID, x: 1115, y: 2940 })
+    const mine: Device = {
+      kind: DeviceKind.MINE,
+      x: 1115,
+      y: 2995,
+      owner: BOT_ID,
+      radius: 6,
+      armTime: 0,
+      life: 5,
+      triggerRadius: 60,
+      blastRadius: 90,
+      damage: 40,
+    }
+    const shelled = makeBase({})
+    const world = makeWorld([tripper], [mine], [shelled])
+    updateDevices(world, 0.016)
+    expect(shelled.garrison).toBeCloseTo(BASE_GARRISON_START - 40 / BASE_STRUCTURE_ARMOR, 5)
   })
 })

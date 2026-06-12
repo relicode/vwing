@@ -12,6 +12,7 @@ import {
   BASE_LOAD_RADIUS,
   BASE_REVERT_TIME,
   BASE_SORTIE_RANGE,
+  BASE_STRUCTURE_ARMOR,
   BaseAlarm,
   BOT_ID,
   Color,
@@ -49,6 +50,27 @@ export const createCampaignBases = (): Base[] => {
       door: 0,
     },
   ]
+}
+
+// The side a base currently answers to: the capturer once fully taken, the original owner
+// otherwise. The renderer paints the building this color, so the holder is who the building
+// *is* in play — shelling exemptions and occlusion key off this, never off the deed.
+export const baseHolder = (base: Base): number =>
+  base.capture >= 1 && base.capturedBy !== undefined ? base.capturedBy : base.owner
+
+// Ship weaponry shelling the building: `amount` weapon hit-points grind the housed garrison
+// down through the walls' armor — but never below the guard reserve, and never once the
+// garrison is already at or under it. The last men can only be stormed out by landed infantry
+// (stepBases), so shelling softens a base without ever starting the capture clock by itself.
+// A fallen barracks is past hurting; a whole housed trooper lost flashes red at the door.
+export const damageBase = (world: World, base: Base, amount: number): void => {
+  if (base.capture >= 1) return
+  const floor = Math.min(base.garrison, BASE_GUARD_RESERVE)
+  const before = base.garrison
+  base.garrison = Math.max(floor, base.garrison - amount / BASE_STRUCTURE_ARMOR)
+  if (Math.floor(before) > Math.floor(base.garrison)) {
+    spawnExplosion(world.particles, base.x, base.y - 12, Color.BLOOD, world.rng, 6)
+  }
 }
 
 // Advance every barracks one frame: threat posture + guard fielding (including throwing the
@@ -125,13 +147,22 @@ export const stepBases = (world: World, dt: number): void => {
     // a base is re-liberated (dropping below 1 clears capturedBy), so purging the zone with
     // ship guns alone wins the base back too.
     let attackers = 0
+    let attackersDown = 0
     let defenders = 0
     let attackerId: number | undefined
     for (const d of world.devices) {
       if (d.kind !== DeviceKind.INFANTRY || !d.attached) continue
       if (Math.hypot(d.x - base.x, d.y - base.y) > BASE_CAPTURE_RADIUS) continue
+      // A man flat on his back (or EMP-seized) neither storms the door nor holds it — a blast
+      // that floors the whole party really does interrupt the assault (or the defense). But a
+      // downed man still OCCUPIES: he's counted apart so a won pad isn't un-captured (and a
+      // dead-waiting capturer isn't eliminated) by one knockdown ring over men who are alive
+      // and about to stand back up.
+      const down = d.fallen > 0 || d.stun > 0
       if (d.owner === base.owner) {
-        defenders += 1
+        if (!down) defenders += 1
+      } else if (down) {
+        attackersDown += 1
       } else {
         attackers += 1
         attackerId = d.owner
@@ -153,7 +184,7 @@ export const stepBases = (world: World, dt: number): void => {
         base.capture = Math.min(1, base.capture + dt / BASE_CAPTURE_TIME)
         if (base.capture >= 1) base.capturedBy = attackerId
       }
-    } else if (attackers === 0 && base.capture > 0) {
+    } else if (attackers === 0 && attackersDown === 0 && base.capture > 0) {
       base.capture = Math.max(0, base.capture - dt / BASE_REVERT_TIME)
       if (base.capture < 1) base.capturedBy = undefined
     }
