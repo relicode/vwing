@@ -354,7 +354,15 @@ export const createTerrain = (rng: Rng): { blocks: Block[]; water: WaterBody[] }
   }
 
   // ── Floating islands (the only ungrounded earth — auto-pinned aloft), kept off the spawn discs.
-  // The smaller sky is busier: more of them, starting higher. ──
+  // The smaller sky is busier: more of them, starting higher — but never touching: two isles
+  // welding into one wide slab (cell-adjacency merges them in the voxel grid) builds a ceiling
+  // past what the bot's dodge can slip around (~470 px), right in its ferry cruise band. ──
+  const skyIsles: { x: number; y: number; w: number; h: number }[] = []
+  const SKY_GAP = 4 * cell // min air kept between sky isles, per axis
+  const skyBlocked = (x: number, y: number, w: number, h: number): boolean =>
+    skyIsles.some(
+      (p) => x < p.x + p.w + SKY_GAP && p.x < x + w + SKY_GAP && y < p.y + p.h + SKY_GAP && p.y < y + h + SKY_GAP
+    )
   const nSkyIsles = randInt(rng, 9, 16) // hoisted: a loop-condition draw would re-roll every pass
   for (let i = 0; i < nSkyIsles; i += 1) {
     for (let attempt = 0; attempt < 16; attempt += 1) {
@@ -362,7 +370,9 @@ export const createTerrain = (rng: Rng): { blocks: Block[]; water: WaterBody[] }
       const ih = randInt(rng, 4, 7) * cell
       const ix = snap(randRange(rng, x0 + 4 * cell, W - t - iw - 4 * cell))
       const iy = snap(randRange(rng, H * 0.06, skyBottom - ih - 2 * cell))
+      if (skyBlocked(ix, iy, iw, ih)) continue
       if (nearSpawn(ix + iw / 2, iy + ih / 2, Math.max(iw, ih))) continue
+      skyIsles.push({ x: ix, y: iy, w: iw, h: ih })
       earth(ix, iy, iw, ih)
       cap(ix, iy, iw, rng() < 0.5 ? Surface.GRASS : Surface.ICE)
       break
