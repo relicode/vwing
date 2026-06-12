@@ -485,7 +485,9 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     world.time += dt
     // Reinforcements whose wait has elapsed re-enter (the spawn point is picked NOW, against the
     // world as it is, not as it was at the moment of death). A side whose last base falls while
-    // the clock runs doesn't get to watch a doomed countdown: it is eliminated on the spot.
+    // the clock runs is eliminated on the spot — by design, even though its surviving troopers
+    // could still have re-liberated the pad before the timer ran out: baseless-while-dead ends
+    // the run the same instant it would at the moment of death.
     for (let i = pending.length - 1; i >= 0; i -= 1) {
       const doomed = noBaseLeft(pending[i].combatant.ship.id)
       if (!doomed && world.time < pending[i].at) continue

@@ -192,8 +192,9 @@ describe('createSim — base capture cuts respawns', () => {
     if (!home) return
     home.capture = 1 // the assault completes while the wreck waits
     home.capturedBy = 1
-    // The very next frame — far inside the RESPAWN_DELAY_BASE wait — the noose closes: no
-    // sitting through a countdown whose outcome is already sealed.
+    // The very next frame — far inside the RESPAWN_DELAY_BASE wait — the noose closes on the
+    // spot. By design this forecloses the slim chance of surviving troopers re-liberating the
+    // pad before the timer ran out: baseless-while-dead ends it, exactly as at the moment of death.
     const events = sim.step(1 / 60)
     expect(events).toContainEqual(expect.objectContaining({ victimId: 0, eliminated: true }))
     expect(world.ships.some((s) => s.id === 0)).toBe(false) // the reinforcement never arrived
