@@ -229,6 +229,7 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     fireCooldown: 0,
     kneel: 0,
     running: false,
+    storming: false,
     slide: 0,
     burning: 0,
     stun: 0,
@@ -322,6 +323,23 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
       expect(u.x).toBeGreaterThanOrEqual(106) // groundLeft + radius
       expect(u.x).toBeLessThanOrEqual(154) // groundRight - radius
     }
+  })
+
+  test('a storming man plants at the door — the patrol shuffle pauses while the mark lasts', () => {
+    const world = makeWorld(
+      [],
+      [infantry({ attached: true, x: 150, y: 94, groundLeft: 100, groundRight: 160, storming: true })]
+    )
+    world.blocks = [{ x: 100, y: 102, w: 60, h: 40, structure: StructureType.EARTH, surface: Surface.EARTH }]
+    for (let i = 0; i < 120; i += 1) updateDevices(world, 1 / 60) // 2 s marked: not a step taken
+    const u = world.devices[0]
+    expect(u?.kind).toBe(DeviceKind.INFANTRY)
+    if (u?.kind === DeviceKind.INFANTRY) {
+      expect(u.x).toBe(150)
+      u.storming = false // the mark expires (a defender showed up) — the wander resumes
+    }
+    updateDevices(world, 1 / 60)
+    if (u?.kind === DeviceKind.INFANTRY) expect(u.x).not.toBe(150)
   })
 
   test('a fast fall deploys a parachute that brakes the descent', () => {
@@ -845,6 +863,7 @@ describe('updateDevices — fire, stun, and the heavier ordnance vs infantry', (
     fireCooldown: 0,
     kneel: 0,
     running: false,
+    storming: false,
     slide: 0,
     burning: 0,
     stun: 0,

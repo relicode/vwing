@@ -74,6 +74,7 @@ const trooper = (
   fireCooldown: 99, // hold fire — these tests are about presence, not shooting
   kneel: 0,
   running: false,
+  storming: false,
   slide: 0,
   burning: 0,
   stun: 0,
@@ -296,6 +297,73 @@ describe('stepBases — capture tug-of-war', () => {
     const world = makeWorld([], [trooper(BOT_ID, base.x + BASE_CAPTURE_RADIUS + 50, base.y)], [base])
     stepBases(world, 5)
     expect(base.capture).toBe(0)
+  })
+})
+
+describe('stepBases — the storming render cue', () => {
+  test('unopposed attackers on an uncaptured base mark storming and square up to the door', () => {
+    // Garrison at the cowering reserve: below the sortie commit threshold nobody steps out, so
+    // the squad really is unopposed (a fuller house fields a guard mid-step — a live defender).
+    const base = makeBase({ garrison: BASE_GUARD_RESERVE })
+    const left = { ...trooper(BOT_ID, base.x - 60, base.y), facing: -1 }
+    const right = { ...trooper(BOT_ID, base.x + 60, base.y), facing: 1 }
+    const world = makeWorld([], [left, right], [base])
+    stepBases(world, 1 / 60)
+    expect(left.storming).toBe(true)
+    expect(right.storming).toBe(true)
+    expect(left.facing).toBe(1) // turned to face the building…
+    expect(right.facing).toBe(-1) // …from either side
+  })
+
+  test('a defender in the zone stops the riot — last frame’s marks expire', () => {
+    const base = makeBase({ garrison: BASE_GUARD_RESERVE })
+    const raider = trooper(BOT_ID, base.x + 60, base.y)
+    const world = makeWorld([], [raider], [base])
+    stepBases(world, 1 / 60)
+    expect(raider.storming).toBe(true)
+    world.devices.push(trooper(PLAYER_ID, base.x - 60, base.y)) // a defender shows up
+    stepBases(world, 1 / 60)
+    expect(raider.storming).toBe(false)
+  })
+
+  test('the helpless and the spectators never mark: fallen, seized, airborne, out of the disc', () => {
+    const base = makeBase({ garrison: BASE_GUARD_RESERVE })
+    const flat = { ...trooper(BOT_ID, base.x + 40, base.y), fallen: 1 }
+    const seized = { ...trooper(BOT_ID, base.x - 40, base.y), stun: 1 }
+    const chuting = trooper(BOT_ID, base.x, base.y - 100, false)
+    const far = trooper(BOT_ID, base.x + BASE_CAPTURE_RADIUS + 50, base.y)
+    const stormer = trooper(BOT_ID, base.x + 80, base.y)
+    const world = makeWorld([], [flat, seized, chuting, far, stormer], [base])
+    stepBases(world, 1 / 60)
+    expect(stormer.storming).toBe(true) // the one man on his feet inside the disc
+    expect(flat.storming).toBe(false)
+    expect(seized.storming).toBe(false)
+    expect(chuting.storming).toBe(false)
+    expect(far.storming).toBe(false)
+  })
+
+  test('occupiers of an already-won pad hold it without the theatrics', () => {
+    const taken = makeBase({ capture: 1, capturedBy: BOT_ID, garrison: 0 })
+    const occupier = trooper(BOT_ID, taken.x + 30, taken.y)
+    const world = makeWorld([], [occupier], [taken])
+    stepBases(world, 1 / 60)
+    expect(occupier.storming).toBe(false)
+    expect(taken.capture).toBe(1) // still pinned by his presence
+  })
+
+  test('a kneeling specialist or a bolting man still marks, but keeps his own facing', () => {
+    // The renderer only swaps the pounding pose in for WALKING/STANDING — a kneeler renders his
+    // wind-up and a runner his bolt, so flipping their facing to the door would point a firing
+    // bazooka or a sprint the wrong way. The mark itself stays (they storm like everyone else).
+    const base = makeBase({ garrison: BASE_GUARD_RESERVE })
+    const kneeler = { ...trooper(BOT_ID, base.x - 60, base.y), kneel: 1, facing: -1 }
+    const runner = { ...trooper(BOT_ID, base.x + 60, base.y), running: true, facing: 1 }
+    const world = makeWorld([], [kneeler, runner], [base])
+    stepBases(world, 1 / 60)
+    expect(kneeler.storming).toBe(true)
+    expect(runner.storming).toBe(true)
+    expect(kneeler.facing).toBe(-1) // squared up to his target, not the door
+    expect(runner.facing).toBe(1) // his legs keep selling the direction he runs
   })
 })
 

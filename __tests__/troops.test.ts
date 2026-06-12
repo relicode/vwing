@@ -88,6 +88,7 @@ const bracedSpecialist = (heavy: WeaponKind): World => {
         fireCooldown: 99,
         kneel: INFANTRY_KNEEL_FIRE_AT + 0.005, // the next 1/60 s step crosses the fire moment
         running: false,
+        storming: false,
         slide: 0,
         burning: 0,
         stun: 0,

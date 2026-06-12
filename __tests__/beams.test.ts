@@ -78,6 +78,7 @@ const trooper = (x: number, owner: number): Device => ({
   fireCooldown: 99,
   kneel: 0,
   running: false,
+  storming: false,
   slide: 0,
   burning: 0,
   stun: 0,

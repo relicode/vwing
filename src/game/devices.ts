@@ -137,10 +137,8 @@ import {
 import { clamp, TWO_PI, wrapAngle } from '$/game/math'
 import { spawnExplosion, spawnPuff } from '$/game/particles'
 import { randRange } from '$/game/rng'
-import type { Block, Device, Ship, Vec2, World } from '$/game/types'
+import type { Block, Device, InfantryDevice, Ship, Vec2, World } from '$/game/types'
 import { waterSurfaceAt } from '$/game/water'
-
-type InfantryDevice = Extract<Device, { kind: DeviceKind.INFANTRY }>
 
 // True when no terrain block sits on the straight line between two points (infantry LOS).
 const hasLineOfSight = (x1: number, y1: number, x2: number, y2: number, blocks: Block[]): boolean =>
@@ -640,6 +638,9 @@ const walkToward = (
 // any wall face rising from it, and occasionally reversing on a whim. `facing` tracks the
 // movement direction for the sprite.
 const patrolInfantry = (device: InfantryDevice, world: World, dt: number): void => {
+  // A storming man (stepBases' mark, one frame stale here) plants at the door and pounds —
+  // wandering would moonwalk the planted pose and drift the squad out of the capture disc.
+  if (device.storming) return
   const min = device.groundLeft + device.radius
   const max = device.groundRight - device.radius
   if (max <= min) {
