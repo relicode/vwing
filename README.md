@@ -1,5 +1,9 @@
 # V-Wing
 
+<!-- docs/og-image.png is the PWA share card baked by `bun run build` (scripts/pwa/artwork.ts);
+     re-copy it from dist/ when the artwork changes. -->
+[![V-Wing — Gravity Dogfighter](./docs/og-image.png)](https://mccall.kapsi.fi/vwing/)
+
 An [XPilot](https://simple.wikipedia.org/wiki/XPilot)-style 2D gravity dogfighter turned
 **indirect-minion war game** (Settlers/Populous lineage): Newtonian flight — thrust, rotation,
 inertia — under constant gravity, over a large **destructible voxel-terrain** arena of grasslands,
