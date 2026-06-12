@@ -241,6 +241,18 @@ describe('nextGoal (the campaign goal ladder)', () => {
     const loaded = makeShip({ troops: 3 })
     const loading = baseWorld([homeBase({ alarm: BaseAlarm.HIDE, garrison: 3 }), enemyBase({})], [loaded])
     expect(nextGoal(BotGoal.REARM, loaded, loading, undefined)).toBe(BotGoal.REARM)
+    // …and the same loaded count sitting at the door mid-transition (REARM just flipped to
+    // ASSAULT, bot still on the pad) is loading drain too — no dumping the bay over the pad.
+    const home = homeBase({ alarm: BaseAlarm.HIDE, garrison: 3 })
+    const atDoor = makeShip({ troops: 3, x: home.x, y: home.y - 40 })
+    expect(nextGoal(BotGoal.ASSAULT, atDoor, baseWorld([home, enemyBase({})], [atDoor]), undefined)).not.toBe(
+      BotGoal.DEFEND
+    )
+    // But a stocked bay FAR from home is no alibi: with the garrison genuinely ground down by
+    // shells, the assault-ready bot still flies back to answer the siege.
+    const stocked = makeShip({ troops: 6 })
+    const sieged = baseWorld([homeBase({ alarm: BaseAlarm.HIDE, garrison: 3 }), enemyBase({})], [stocked])
+    expect(nextGoal(BotGoal.ASSAULT, stocked, sieged, undefined)).toBe(BotGoal.DEFEND)
   })
 
   test('a low bay sends the bot to REARM, which sticks until topped up', () => {
