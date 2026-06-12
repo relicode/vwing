@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { fireRail } from '$/game/beams'
+import { castRail, fireRail } from '$/game/beams'
 import {
   BASE_BUILDING_HALF_WIDTH,
   BASE_STRUCTURE_ARMOR,
@@ -189,6 +189,23 @@ describe('fireRail', () => {
     world.bases = [base]
     expect(fireRail(world, shooter)).toBe(enemy) // straight through its own wall
     expect(base.garrison).toBe(8)
+  })
+
+  test('a trooper`s man-portable lance is small arms: the building neither stops it nor takes its shelling', () => {
+    // A kneeling rail specialist storming the door stands INSIDE the building box — a wall that
+    // stopped his lance would make it zero-length at his nose. castRail marks trooper fire by
+    // its `self` param (the sniper's own body exemption); ship rail passes none.
+    const sniper = trooper(250, 0) // inside the box (240..360) — mid-storm at the door
+    const doorGuard = trooper(340, 1) // the defender he is shooting across the band
+    const base = makeBase({})
+    const world = makeWorld([])
+    world.devices = [sniper, doorGuard]
+    world.bases = [base]
+    const dead = new Set<Device>()
+    castRail(world, sniper.x, sniper.y, 0, 0, 1100, 30, dead, sniper)
+    expect(base.garrison).toBe(8) // small arms don't shell the building…
+    expect(world.beams[0].x2).toBeCloseTo(sniper.x + 1100) // …or get eaten by it
+    expect(dead.has(doorGuard)).toBe(true) // the lance reached across the band
   })
 
   test('a captured building answers to its capturer: a wall to the dispossessed, transparent to the holder', () => {

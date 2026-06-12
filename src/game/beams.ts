@@ -75,11 +75,14 @@ export const castRail = (
     const t = rayRectEntry(x, y, dirX, dirY, block)
     if (t !== undefined && t < hitDist) hitDist = t // the beam stops at the nearest terrain face
   }
-  // The barracks building stops the lance like any wall — and takes the shelling (through the
-  // walls' armor, see damageBase) like any other ship weapon. The holder's own building is
-  // transparent to its own fire, matching the bullet path's exemption.
+  // The barracks building stops the SHIP's lance like any wall — and takes the shelling
+  // (through the walls' armor, see damageBase) like any other ship weapon; the holder's own
+  // building is transparent to its own fire, matching the bullet path's exemption. A kneeling
+  // trooper's man-portable lance (`self` set) is small arms like every other infantry round:
+  // it passes the band untouched — the door fight happens inside this box, and a storming rail
+  // specialist standing in it would otherwise fire a zero-length lance into the wall at his nose.
   let struckBase: Base | undefined
-  for (const base of world.bases) {
+  for (const base of self === undefined ? world.bases : []) {
     if (baseHolder(base) === ownerId) continue
     const t = rayRectEntry(x, y, dirX, dirY, {
       x: base.x - BASE_BUILDING_HALF_WIDTH,

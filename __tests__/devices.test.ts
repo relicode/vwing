@@ -270,6 +270,28 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     expect(world.bullets.length).toBeGreaterThan(0)
   })
 
+  test('real trooper fire is tagged as small arms — rifle rounds and specialist bursts alike', () => {
+    // The barracks-band exemption (sim.ts) keys on Bullet.infantry: if an emitter or the
+    // pushBullet plumbing loses the tag, rifles silently go back to shelling the building.
+    const rifle = makeWorld(
+      [makeShip({ id: 1, kind: ShipKind.BOT, x: 200, y: 100 })],
+      [infantry({ x: 200, y: 120, attached: true })]
+    )
+    rifle.blocks = [{ x: 140, y: 128, w: 120, h: 40, structure: StructureType.EARTH, surface: Surface.EARTH }]
+    updateDevices(rifle, 0.016)
+    expect(rifle.bullets.length).toBeGreaterThan(0)
+    expect(rifle.bullets.every((b) => b.infantry === true)).toBe(true)
+
+    const burst = makeWorld(
+      [makeShip({ id: 1, kind: ShipKind.BOT, x: 200, y: 100 })],
+      [infantry({ heavy: WeaponKind.SCATTERGUN, x: 100, y: 100, attached: true })]
+    )
+    burst.blocks = [{ x: 40, y: 108, w: 120, h: 40, structure: StructureType.EARTH, surface: Surface.EARTH }]
+    for (let i = 0; i < 120; i += 1) updateDevices(burst, 1 / 60) // the kneel cycle: brace → burst
+    expect(burst.bullets.length).toBeGreaterThan(0)
+    expect(burst.bullets.every((b) => b.infantry === true)).toBe(true)
+  })
+
   test('a landed unit holds fire when terrain blocks line of sight', () => {
     const enemy = makeShip({ id: 1, kind: ShipKind.BOT, x: 300, y: 100 })
     const world = makeWorld([enemy], [infantry({ x: 100, y: 100, attached: true })])
