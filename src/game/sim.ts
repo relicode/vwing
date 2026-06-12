@@ -1,4 +1,4 @@
-import { createCampaignBases, damageBase, stepBases } from '$/game/bases'
+import { baseHolder, createCampaignBases, damageBase, stepBases } from '$/game/bases'
 import { updateBeams } from '$/game/beams'
 import { spawnBullet, updateBullets } from '$/game/bullets'
 import { circleRectContact, circlesOverlap } from '$/game/collision'
@@ -402,12 +402,16 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
         continue
       }
       // Ship fire vs the barracks building: a hit grinds the housed garrison through the walls'
-      // armor (never below the guard reserve — see damageBase). The owner's own fire is exempt
-      // (no shelling yourself into elimination) and the water cannon passes (nothing to douse).
+      // armor (never below the guard reserve — see damageBase). The HOLDER's own fire is exempt
+      // (no shelling yourself into elimination — and a captured pad guards its capturer, not the
+      // dispossessed deed-holder), the water cannon passes (nothing to douse), and so does every
+      // small-arms round: the door fight happens inside this band, so rifles neither chip the
+      // garrison nor get eaten as one-way hard cover.
       const struckBase = world.bases.find(
         (b) =>
-          b.owner !== bullet.owner &&
+          baseHolder(b) !== bullet.owner &&
           !bullet.wet &&
+          !bullet.infantry &&
           Math.abs(bullet.x - b.x) <= BASE_BUILDING_HALF_WIDTH + bullet.radius &&
           bullet.y >= b.y - BASE_BUILDING_HEIGHT - bullet.radius &&
           bullet.y <= b.y

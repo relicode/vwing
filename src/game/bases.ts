@@ -52,6 +52,12 @@ export const createCampaignBases = (): Base[] => {
   ]
 }
 
+// The side a base currently answers to: the capturer once fully taken, the original owner
+// otherwise. The renderer paints the building this color, so the holder is who the building
+// *is* in play — shelling exemptions and occlusion key off this, never off the deed.
+export const baseHolder = (base: Base): number =>
+  base.capture >= 1 && base.capturedBy !== undefined ? base.capturedBy : base.owner
+
 // Ship weaponry shelling the building: `amount` weapon hit-points grind the housed garrison
 // down through the walls' armor — but never below the guard reserve, and never once the
 // garrison is already at or under it. The last men can only be stormed out by landed infantry

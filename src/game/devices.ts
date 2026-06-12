@@ -1,4 +1,4 @@
-import { damageBase } from '$/game/bases'
+import { baseHolder, damageBase } from '$/game/bases'
 import { castRail } from '$/game/beams'
 import { pushBullet } from '$/game/bullets'
 import { circleRectContact, circlesOverlap, segmentIntersectsRect } from '$/game/collision'
@@ -6,6 +6,7 @@ import { applyDamage, applyDisable, isDead } from '$/game/combat'
 import {
   AFTERBURNER_IGNITE_LEN,
   AFTERBURNER_IGNITE_RADIUS,
+  BASE_BUILDING_HALF_WIDTH,
   BASE_BUILDING_HEIGHT,
   BASE_DOOR_RADIUS,
   BASE_GARRISON_CAP,
@@ -245,13 +246,22 @@ const areaDamage = (
     spawnExplosion(world.particles, device.x, device.y, Color.BLOOD, world.rng, 6)
     deadDevices.add(device)
   }
-  // A blast rocks the barracks too: splash within the radius of the building's body grinds the
+  // A blast rocks the barracks too: splash overlapping the building's BODY (the same box the
+  // bullet path tests — a wall-hugging mine isn't excused by missing the centroid) grinds the
   // housed garrison through the walls' armor (never below the reserve — see damageBase). The
-  // blast owner's own base is spared, mirroring the ship exemption above.
+  // holder's own base is spared, mirroring the ship exemption above.
   for (const base of world.bases) {
-    if (base.owner === ownerId) continue
-    if (Math.hypot(base.x - x, base.y - BASE_BUILDING_HEIGHT / 2 - y) > radius) continue
-    damageBase(world, base, damage)
+    if (baseHolder(base) === ownerId) continue
+    const contact = circleRectContact(
+      x,
+      y,
+      radius,
+      base.x - BASE_BUILDING_HALF_WIDTH,
+      base.y - BASE_BUILDING_HEIGHT,
+      BASE_BUILDING_HALF_WIDTH * 2,
+      BASE_BUILDING_HEIGHT
+    )
+    if (contact) damageBase(world, base, damage)
   }
   // The shove past the shrapnel: landed troopers in the wider ring are knocked flat, not killed.
   knockdown(world, x, y, radius * INFANTRY_KNOCKDOWN_RADIUS_SCALE, deadDevices)
@@ -390,6 +400,7 @@ const infantryFire = (world: World, device: InfantryDevice, interval: number, sp
       owner: device.owner,
       damage: INFANTRY_SHOT_DAMAGE,
       life: INFANTRY_RANGE / INFANTRY_SHOT_SPEED,
+      infantry: true,
       color: Color.INFANTRY,
     }
   )
@@ -414,6 +425,7 @@ const heavyBurst = (
     const jittered = angle + randRange(world.rng, -spread, spread)
     pushBullet(world.bullets, mx, my, Math.cos(jittered) * speed, Math.sin(jittered) * speed, {
       owner: device.owner,
+      infantry: true,
       ...opts,
     })
   }

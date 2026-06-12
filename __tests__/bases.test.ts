@@ -370,4 +370,26 @@ describe('damageBase — shelling the building', () => {
     updateDevices(friendly, 0.016)
     expect(own.garrison).toBe(BASE_GARRISON_START)
   })
+
+  test('a blast hugging the building`s flank still rocks it — the body box is the hitbox, not the centroid', () => {
+    // Mine at (1115, 2995): 117 px from the building's center — outside the 90 px blast — but
+    // its circle reaches 35 px past the east wall (x = 1060). A centroid test would excuse it.
+    const tripper = makeShip({ id: PLAYER_ID, x: 1115, y: 2940 })
+    const mine: Device = {
+      kind: DeviceKind.MINE,
+      x: 1115,
+      y: 2995,
+      owner: BOT_ID,
+      radius: 6,
+      armTime: 0,
+      life: 5,
+      triggerRadius: 60,
+      blastRadius: 90,
+      damage: 40,
+    }
+    const shelled = makeBase({})
+    const world = makeWorld([tripper], [mine], [shelled])
+    updateDevices(world, 0.016)
+    expect(shelled.garrison).toBeCloseTo(BASE_GARRISON_START - 40 / BASE_STRUCTURE_ARMOR, 5)
+  })
 })

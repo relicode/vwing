@@ -238,6 +238,54 @@ describe('createSim — base capture cuts respawns', () => {
     expect(ownFire.garrison).toBeCloseTo(control.garrison, 10) // no shelling yourself into elimination
   })
 
+  test('a captured building answers to its capturer: the dispossessed side`s shells are eaten, the holder`s pass', () => {
+    const bulletsAfterStep = (owner: number): number => {
+      const world = createWorld(31)
+      const player = combatant(0, 500, 400)
+      const enemy = combatant(1, 1500, 400)
+      const sim = createSim(world, [player, enemy], { mode: SimMode.CAMPAIGN })
+      const home = world.bases.find((b) => b.owner === 0)
+      if (!home) throw new Error('no player base seeded')
+      home.capture = 1 // the pad fell — the building now answers to side 1, whatever the deed says
+      home.capturedBy = 1
+      world.bullets.push({ x: home.x, y: home.y - 20, vx: 0, vy: 0, radius: 3, life: 1, owner, damage: 50 })
+      sim.step(1 / 60)
+      return world.bullets.length
+    }
+    expect(bulletsAfterStep(0)).toBe(0) // the dispossessed owner now faces an enemy wall
+    expect(bulletsAfterStep(1)).toBe(1) // the capturer shoots across its own muster pad unimpeded
+  })
+
+  test('a trooper`s rifle round passes the band — small arms neither chip the garrison nor get eaten as cover', () => {
+    const run = (shoot: boolean): { garrison: number; bullets: number } => {
+      const world = createWorld(31)
+      const player = combatant(0, 500, 400)
+      const enemy = combatant(1, 1500, 400)
+      const sim = createSim(world, [player, enemy], { mode: SimMode.CAMPAIGN })
+      const home = world.bases.find((b) => b.owner === 0)
+      if (!home) throw new Error('no player base seeded')
+      if (shoot) {
+        world.bullets.push({
+          x: home.x,
+          y: home.y - 20,
+          vx: 0,
+          vy: 0,
+          radius: 3,
+          life: 1,
+          owner: 1,
+          damage: 50,
+          infantry: true, // the same round from a rifle instead of a ship cannon
+        })
+      }
+      sim.step(1 / 60)
+      return { garrison: home.garrison, bullets: world.bullets.length }
+    }
+    const control = run(false)
+    const rifled = run(true)
+    expect(rifled.garrison).toBeCloseTo(control.garrison, 10)
+    expect(rifled.bullets).toBe(1) // the round flies on — the door fight happens inside this band
+  })
+
   test('an uncaptured base means a normal respawn (the noose only closes when the base falls)', () => {
     const world = createWorld(23)
     const player = combatant(0, 500, 400)

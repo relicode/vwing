@@ -43,6 +43,7 @@ export type Bullet = {
   push?: number // knockback impulse applied to a hit ship (water cannon); washes a trooper into a skid
   burn?: boolean // flamethrower: scorches grass→earth on terrain hit (no carve), sets a hit trooper alight
   wet?: boolean // water cannon: wets earth→grass + pools on terrain hit (no carve), douses a burning trooper
+  infantry?: boolean // small-arms round (rifle / specialist burst): passes the barracks band — only ship weaponry shells the building
   color?: number // render tint override (undefined = owner-based default)
 }
 

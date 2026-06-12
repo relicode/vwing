@@ -1,5 +1,6 @@
 import type { Graphics } from 'pixi.js'
 
+import { baseHolder } from '$/game/bases'
 import { Color, MINIMAP_WIDTH, VIEW_HEIGHT, VIEW_WIDTH, WORLD_HEIGHT, WORLD_WIDTH } from '$/game/constants'
 import { ownerHex, type PaletteSlots } from '$/game/render/owner-colors'
 import { blockStyle } from '$/game/render/terrain'
@@ -45,8 +46,7 @@ export const drawMapMarkers = (
 ): void => {
   g.clear()
   for (const base of world.bases) {
-    const holder = base.capture >= 1 && base.capturedBy !== undefined ? base.capturedBy : base.owner
-    const color = ownerHex(holder, selfId, slots)
+    const color = ownerHex(baseHolder(base), selfId, slots)
     g.rect(base.x * MAP_SCALE - 3.5, base.y * MAP_SCALE - 5, 7, 5)
       .fill({ color, alpha: 0.9 })
       .stroke({ width: 1, color, alpha: 1 })

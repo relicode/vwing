@@ -1,5 +1,6 @@
 import type { Graphics } from 'pixi.js'
 
+import { baseHolder } from '$/game/bases'
 import {
   BASE_BUILDING_HALF_WIDTH,
   BASE_BUILDING_HEIGHT,
@@ -72,8 +73,7 @@ export const drawBars = (g: Graphics, ship: Ship): void => {
 // flashing takeover bar while the capture is in progress. Drawn in the dynamic layer — capture
 // state and garrison mutate every frame, so it can't live in the terrainVersion cache.
 export const drawBase = (g: Graphics, base: Base, time: number, selfId: number, slots?: PaletteSlots): void => {
-  const holder = base.capture >= 1 && base.capturedBy !== undefined ? base.capturedBy : base.owner
-  const body = ownerHex(holder, selfId, slots)
+  const body = ownerHex(baseHolder(base), selfId, slots)
   const w = BASE_BUILDING_HALF_WIDTH * 2 // the drawn body IS the shelling hitbox (see damageBase)
   const h = BASE_BUILDING_HEIGHT
   const x = base.x - w / 2
