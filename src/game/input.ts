@@ -1,10 +1,11 @@
-const LEFT_KEYS = ['ArrowLeft', 'KeyA']
-const RIGHT_KEYS = ['ArrowRight', 'KeyD']
-const THRUST_KEYS = ['ArrowUp', 'KeyW']
-const REVERSE_KEYS = ['ArrowDown', 'KeyS'] // retro-brake (the two smaller forward nozzles)
-const FIRE_KEYS = ['Space', 'KeyJ', 'KeyZ']
-const ALT_FIRE_KEYS = ['KeyK', 'ShiftLeft'] // secondary weapon
-const DEPLOY_KEYS = ['KeyX', 'KeyL'] // troop drop — X beside Z (fire), L beside K (alt-fire)
+// Flight lives on the arrow keys; the three combat actions sit under the left hand on A/S/D.
+const LEFT_KEYS = ['ArrowLeft']
+const RIGHT_KEYS = ['ArrowRight']
+const THRUST_KEYS = ['ArrowUp']
+const REVERSE_KEYS = ['ArrowDown'] // retro-brake (the two smaller forward nozzles)
+const FIRE_KEYS = ['KeyD'] // primary weapon
+const ALT_FIRE_KEYS = ['KeyS'] // secondary / special weapon
+const DEPLOY_KEYS = ['KeyA'] // troop drop
 const PREVENT_DEFAULT = new Set([
   ...LEFT_KEYS,
   ...RIGHT_KEYS,

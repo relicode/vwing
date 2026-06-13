@@ -1,14 +1,18 @@
 import { describe, expect, test } from 'bun:test'
 
-import { createCampaignBases, damageBase, stepBases } from '$/game/bases'
+import { createCampaignBases, stepBases } from '$/game/bases'
 import {
+  BASE_ASSAULT_RATE,
+  BASE_BUILDING_HALF_WIDTH,
+  BASE_BUILDING_HEIGHT,
   BASE_CAPTURE_RADIUS,
   BASE_CAPTURE_TIME,
   BASE_GARRISON_CAP,
   BASE_GARRISON_START,
   BASE_GUARD_PATROL,
   BASE_GUARD_RESERVE,
-  BASE_STRUCTURE_ARMOR,
+  BASE_STORM_CONTACT,
+  BASE_STORM_ROOF_SLOTS,
   BaseAlarm,
   BOT_ID,
   DeviceKind,
@@ -108,6 +112,12 @@ const makeBase = (over: Partial<Base>): Base => ({
   ...over,
 })
 
+// Contact spots on that fixture for a radius-9 trooper: pressed flush to a wall face (x), or
+// standing on the roof (y for any x over the building span). Storming demands one of these.
+const WALL_WEST = 1000 - BASE_BUILDING_HALF_WIDTH - 9
+const WALL_EAST = 1000 + BASE_BUILDING_HALF_WIDTH + 9
+const ROOF_Y = 3000 - BASE_BUILDING_HEIGHT - 9
+
 describe('createCampaignBases', () => {
   test('seats one barracks per side on the two pads, west player / east bot', () => {
     const bases = createCampaignBases()
@@ -189,7 +199,7 @@ describe('stepBases — garrison + loading', () => {
 describe('stepBases — capture tug-of-war', () => {
   test('uncontested attackers push capture once the garrison is dead; crossing 1 records the capturer and halts regen/loading', () => {
     const base = makeBase({ garrison: 0 }) // an emptied barracks — the capture clock can run
-    const raider = trooper(BOT_ID, base.x + 50, base.y)
+    const raider = trooper(BOT_ID, base.x + 150, base.y)
     const owner = makeShip({ id: PLAYER_ID, x: base.x, y: base.y - 40, troops: 0 })
     const world = makeWorld([owner], [raider], [base])
     stepBases(world, BASE_CAPTURE_TIME / 2)
@@ -204,13 +214,13 @@ describe('stepBases — capture tug-of-war', () => {
     expect(owner.troops).toBe(troopsAtFall) // no loading while captured
   })
 
-  test('a housed garrison stalls the clock: attackers storm the building, chipping it to zero first', () => {
+  test('a housed garrison stalls the clock: a wall-contact stormer batters it to zero first', () => {
     const base = makeBase({ garrison: BASE_GUARD_RESERVE }) // just the reserve cowering inside
-    const raider = trooper(BOT_ID, base.x + 50, base.y)
+    const raider = trooper(BOT_ID, WALL_EAST, base.y) // pressed flush to the east wall
     const world = makeWorld([], [raider], [base])
     stepBases(world, 1)
     expect(base.capture).toBe(0) // the clock can't run over a living garrison
-    expect(base.garrison).toBeLessThan(BASE_GUARD_RESERVE) // but the storming bleeds it
+    expect(base.garrison).toBeLessThan(BASE_GUARD_RESERVE) // but the battering bleeds it
     for (let i = 0; i < 60; i += 1) stepBases(world, 1)
     expect(base.garrison).toBe(0)
     expect(base.capture).toBeGreaterThan(0) // emptied — now the takeover ticks
@@ -218,7 +228,11 @@ describe('stepBases — capture tug-of-war', () => {
 
   test('a defender in the zone freezes the takeover', () => {
     const base = makeBase({ capture: 0.4 })
-    const world = makeWorld([], [trooper(BOT_ID, base.x + 50, base.y), trooper(PLAYER_ID, base.x - 50, base.y)], [base])
+    const world = makeWorld(
+      [],
+      [trooper(BOT_ID, base.x + 150, base.y), trooper(PLAYER_ID, base.x - 150, base.y)],
+      [base]
+    )
     stepBases(world, 5)
     expect(base.capture).toBe(0.4)
   })
@@ -235,10 +249,10 @@ describe('stepBases — capture tug-of-war', () => {
 
   test('a knocked-flat attacker neither storms nor captures until he scrambles up', () => {
     const base = makeBase({ garrison: 2 })
-    const downed = { ...trooper(BOT_ID, base.x + 50, base.y), fallen: 1 }
+    const downed = { ...trooper(BOT_ID, WALL_EAST, base.y), fallen: 1 }
     const world = makeWorld([], [downed], [base])
     stepBases(world, 1)
-    expect(base.garrison).toBe(2) // flat on his back: no storming
+    expect(base.garrison).toBe(2) // flat on his back, even in wall contact: no storming
     expect(base.capture).toBe(0)
     downed.fallen = 0 // back on his feet — the assault resumes
     stepBases(world, 1)
@@ -247,8 +261,8 @@ describe('stepBases — capture tug-of-war', () => {
 
   test('a knocked-flat defender holds nothing — the takeover ticks over his body', () => {
     const base = makeBase({ garrison: 0 })
-    const raider = trooper(BOT_ID, base.x + 50, base.y)
-    const downed = { ...trooper(PLAYER_ID, base.x - 50, base.y), fallen: 1 }
+    const raider = trooper(BOT_ID, base.x + 150, base.y)
+    const downed = { ...trooper(PLAYER_ID, base.x - 150, base.y), fallen: 1 }
     const world = makeWorld([], [raider, downed], [base])
     stepBases(world, 1)
     expect(base.capture).toBeGreaterThan(0)
@@ -256,14 +270,14 @@ describe('stepBases — capture tug-of-war', () => {
 
   test('an EMP-seized man is as helpless as a fallen one — no storming, no holding', () => {
     const base = makeBase({ garrison: 2 })
-    const seized = { ...trooper(BOT_ID, base.x + 50, base.y), stun: 1 }
+    const seized = { ...trooper(BOT_ID, WALL_EAST, base.y), stun: 1 }
     const world = makeWorld([], [seized], [base])
     stepBases(world, 1)
     expect(base.garrison).toBe(2) // a seized attacker doesn't storm
     expect(base.capture).toBe(0)
     const held = makeBase({ garrison: 0, capture: 0.4 })
-    const frozen = { ...trooper(PLAYER_ID, held.x - 50, held.y), stun: 1 }
-    const raider = trooper(BOT_ID, held.x + 50, held.y)
+    const frozen = { ...trooper(PLAYER_ID, held.x - 150, held.y), stun: 1 }
+    const raider = trooper(BOT_ID, held.x + 150, held.y)
     stepBases(makeWorld([], [raider, frozen], [held]), 1)
     expect(held.capture).toBeGreaterThan(0.4) // a seized defender freezes nothing
   })
@@ -300,13 +314,13 @@ describe('stepBases — capture tug-of-war', () => {
   })
 })
 
-describe('stepBases — the storming render cue', () => {
-  test('unopposed attackers on an uncaptured base mark storming and square up to the door', () => {
+describe('stepBases — the battering crew (contact storming)', () => {
+  test('wall-contact attackers on an uncaptured base mark storming and square up to the building', () => {
     // Garrison at the cowering reserve: below the sortie commit threshold nobody steps out, so
     // the squad really is unopposed (a fuller house fields a guard mid-step — a live defender).
     const base = makeBase({ garrison: BASE_GUARD_RESERVE })
-    const left = { ...trooper(BOT_ID, base.x - 60, base.y), facing: -1 }
-    const right = { ...trooper(BOT_ID, base.x + 60, base.y), facing: 1 }
+    const left = { ...trooper(BOT_ID, WALL_WEST, base.y), facing: -1 }
+    const right = { ...trooper(BOT_ID, WALL_EAST, base.y), facing: 1 }
     const world = makeWorld([], [left, right], [base])
     stepBases(world, 1 / 60)
     expect(left.storming).toBe(true)
@@ -315,27 +329,97 @@ describe('stepBases — the storming render cue', () => {
     expect(right.facing).toBe(-1) // …from either side
   })
 
+  test('storming is contact-only: a man short of the wall occupies the disc but never grinds', () => {
+    const base = makeBase({ garrison: BASE_GUARD_RESERVE })
+    const loiterer = trooper(BOT_ID, base.x + 200, base.y) // well inside the disc, nowhere near a wall
+    const world = makeWorld([], [loiterer], [base])
+    stepBases(world, 1)
+    expect(loiterer.storming).toBe(false)
+    expect(base.garrison).toBe(BASE_GUARD_RESERVE) // not a scratch from across the pad
+    expect(base.capture).toBe(0) // and the housed reserve still stalls the clock
+  })
+
+  test('each wall holds ONE batterer: the second man at the same face queues unmarked', () => {
+    const base = makeBase({ garrison: BASE_GUARD_RESERVE })
+    const first = trooper(BOT_ID, WALL_EAST, base.y)
+    const second = trooper(BOT_ID, WALL_EAST + 2, base.y) // pressed into the same face
+    const world = makeWorld([], [first, second], [base])
+    const dt = 1 / 60
+    stepBases(world, dt)
+    expect(first.storming).toBe(true)
+    expect(second.storming).toBe(false)
+    expect(base.garrison).toBeCloseTo(BASE_GUARD_RESERVE - BASE_ASSAULT_RATE * dt, 8) // one man's work, not two
+  })
+
+  test('the roof holds three: a fourth man up top adds nothing', () => {
+    const base = makeBase({ garrison: BASE_GUARD_RESERVE })
+    const roofers = [-60, -20, 20, 60].map((dx) => trooper(BOT_ID, base.x + dx, ROOF_Y))
+    const world = makeWorld([], roofers, [base])
+    const dt = 1 / 60
+    stepBases(world, dt)
+    expect(roofers.filter((r) => r.storming)).toHaveLength(BASE_STORM_ROOF_SLOTS)
+    expect(base.garrison).toBeCloseTo(BASE_GUARD_RESERVE - BASE_ASSAULT_RATE * BASE_STORM_ROOF_SLOTS * dt, 8)
+  })
+
+  test('a full crew — one per wall plus the roof party — grinds at five men’s rate', () => {
+    const base = makeBase({ garrison: BASE_GUARD_RESERVE })
+    const crew = [
+      trooper(BOT_ID, WALL_WEST, base.y),
+      trooper(BOT_ID, WALL_EAST, base.y),
+      trooper(BOT_ID, base.x - 40, ROOF_Y),
+      trooper(BOT_ID, base.x, ROOF_Y),
+      trooper(BOT_ID, base.x + 40, ROOF_Y),
+    ]
+    const world = makeWorld([], crew, [base])
+    const dt = 1 / 60
+    stepBases(world, dt)
+    expect(crew.every((c) => c.storming)).toBe(true)
+    expect(base.garrison).toBeCloseTo(BASE_GUARD_RESERVE - BASE_ASSAULT_RATE * 5 * dt, 8)
+  })
+
+  test('an enemy ship near the pad halts the storm — the men down tools', () => {
+    const base = makeBase({ garrison: BASE_GUARD_RESERVE })
+    const stormer = trooper(BOT_ID, WALL_EAST, base.y)
+    const owner = makeShip({ id: PLAYER_ID, x: base.x + 400, y: base.y - 200 }) // the defender swoops in
+    const world = makeWorld([owner], [stormer], [base])
+    stepBases(world, 1)
+    expect(stormer.storming).toBe(false)
+    expect(base.garrison).toBe(BASE_GUARD_RESERVE) // nobody batters under a hostile ship
+  })
+
+  test('a live enemy trooper near halts the storm — even from outside the disc; a downed one scares nobody', () => {
+    const base = makeBase({ garrison: BASE_GUARD_RESERVE })
+    const stormer = trooper(BOT_ID, WALL_EAST, base.y)
+    const defender = trooper(PLAYER_ID, base.x + BASE_CAPTURE_RADIUS + 90, base.y) // outside the disc, inside threat range
+    const world = makeWorld([], [stormer, defender], [base])
+    stepBases(world, 1 / 60)
+    expect(stormer.storming).toBe(false)
+    expect(base.garrison).toBe(BASE_GUARD_RESERVE)
+    defender.fallen = 1 // flat on his back he threatens nobody — the battering resumes
+    stepBases(world, 1 / 60)
+    expect(stormer.storming).toBe(true)
+    expect(base.garrison).toBeLessThan(BASE_GUARD_RESERVE)
+  })
+
   test('a defender in the zone stops the riot — last frame’s marks expire', () => {
     const base = makeBase({ garrison: BASE_GUARD_RESERVE })
-    const raider = trooper(BOT_ID, base.x + 60, base.y)
-    const world = makeWorld([], [raider], [base])
-    stepBases(world, 1 / 60)
-    expect(raider.storming).toBe(true)
-    world.devices.push(trooper(PLAYER_ID, base.x - 60, base.y)) // a defender shows up
+    const raider = { ...trooper(BOT_ID, WALL_EAST, base.y), storming: true } // marked last frame
+    const defender = trooper(PLAYER_ID, base.x - 150, base.y)
+    const world = makeWorld([], [raider, defender], [base])
     stepBases(world, 1 / 60)
     expect(raider.storming).toBe(false)
   })
 
   test('the helpless and the spectators never mark: fallen, seized, airborne, out of the disc', () => {
     const base = makeBase({ garrison: BASE_GUARD_RESERVE })
-    const flat = { ...trooper(BOT_ID, base.x + 40, base.y), fallen: 1 }
-    const seized = { ...trooper(BOT_ID, base.x - 40, base.y), stun: 1 }
-    const chuting = trooper(BOT_ID, base.x, base.y - 100, false)
+    const flat = { ...trooper(BOT_ID, WALL_WEST, base.y), fallen: 1 } // in contact, but flat
+    const seized = { ...trooper(BOT_ID, WALL_EAST + 2, base.y), stun: 1 }
+    const chuting = trooper(BOT_ID, base.x, ROOF_Y - 100, false) // descending on the roof, not on it
     const far = trooper(BOT_ID, base.x + BASE_CAPTURE_RADIUS + 50, base.y)
-    const stormer = trooper(BOT_ID, base.x + 80, base.y)
+    const stormer = trooper(BOT_ID, WALL_EAST, base.y)
     const world = makeWorld([], [flat, seized, chuting, far, stormer], [base])
     stepBases(world, 1 / 60)
-    expect(stormer.storming).toBe(true) // the one man on his feet inside the disc
+    expect(stormer.storming).toBe(true) // the one able man in contact
     expect(flat.storming).toBe(false)
     expect(seized.storming).toBe(false)
     expect(chuting.storming).toBe(false)
@@ -356,8 +440,8 @@ describe('stepBases — the storming render cue', () => {
     // wind-up and a runner his bolt, so flipping their facing to the door would point a firing
     // bazooka or a sprint the wrong way. The mark itself stays (they storm like everyone else).
     const base = makeBase({ garrison: BASE_GUARD_RESERVE })
-    const kneeler = { ...trooper(BOT_ID, base.x - 60, base.y), kneel: 1, facing: -1 }
-    const runner = { ...trooper(BOT_ID, base.x + 60, base.y), running: true, facing: 1 }
+    const kneeler = { ...trooper(BOT_ID, WALL_WEST, base.y), kneel: 1, facing: -1 }
+    const runner = { ...trooper(BOT_ID, WALL_EAST, base.y), running: true, facing: 1 }
     const world = makeWorld([], [kneeler, runner], [base])
     stepBases(world, 1 / 60)
     expect(kneeler.storming).toBe(true)
@@ -419,76 +503,129 @@ describe('stepBases — the garrison in the flesh', () => {
   })
 })
 
-describe('damageBase — shelling the building', () => {
-  test('weapon damage grinds the housed garrison through the armor', () => {
-    const base = makeBase({})
-    damageBase(makeWorld([], [], [base]), base, BASE_STRUCTURE_ARMOR) // exactly one man's worth
-    expect(base.garrison).toBeCloseTo(BASE_GARRISON_START - 1, 5)
+describe('the building is indestructible — and a shelter', () => {
+  const mineAt = (x: number, y: number): Device => ({
+    kind: DeviceKind.MINE,
+    x,
+    y,
+    owner: BOT_ID,
+    radius: 6,
+    armTime: 0,
+    life: 5,
+    triggerRadius: 60,
+    blastRadius: 90,
+    damage: 40,
   })
 
-  test('gunfire never grinds below the guard reserve — the last men must be stormed out', () => {
-    const base = makeBase({})
-    const world = makeWorld([], [], [base])
-    for (let i = 0; i < 50; i += 1) damageBase(world, base, BASE_STRUCTURE_ARMOR)
-    expect(base.garrison).toBe(BASE_GUARD_RESERVE)
-  })
-
-  test('a garrison already stormed under the reserve is neither chipped further nor topped up', () => {
-    const base = makeBase({ garrison: 0.5 })
-    damageBase(makeWorld([], [], [base]), base, BASE_STRUCTURE_ARMOR * 10)
-    expect(base.garrison).toBe(0.5)
-  })
-
-  test('a fallen barracks is past hurting', () => {
-    const base = makeBase({ capture: 1, capturedBy: BOT_ID, garrison: 5 })
-    damageBase(makeWorld([], [], [base]), base, BASE_STRUCTURE_ARMOR * 10)
-    expect(base.garrison).toBe(5)
-  })
-
-  test('a mine blast by the building chips the garrison through the same armor — but not the owner side`s own', () => {
-    const tripper = makeShip({ id: PLAYER_ID, x: 1000, y: 2940 }) // walks into the enemy mine by the pad
-    const mine: Device = {
-      kind: DeviceKind.MINE,
-      x: 1000,
-      y: 2940,
-      owner: BOT_ID,
-      radius: 6,
-      armTime: 0,
-      life: 5,
-      triggerRadius: 60,
-      blastRadius: 90,
-      damage: 40,
-    }
-    const shelled = makeBase({}) // player barracks at (1000, 3000): building center ~34 px from the blast
-    const world = makeWorld([tripper], [mine], [shelled])
+  test('a mine blast hugging the building grinds NOTHING off the housed garrison', () => {
+    const tripper = makeShip({ id: PLAYER_ID, x: 1120, y: 2960 }) // walks into the enemy mine by the wall
+    const base = makeBase({}) // player barracks at (1000, 3000): the blast laps the east wall
+    const world = makeWorld([tripper], [mineAt(1120, 2960)], [base])
     updateDevices(world, 0.016)
-    expect(shelled.garrison).toBeCloseTo(BASE_GARRISON_START - 40 / BASE_STRUCTURE_ARMOR, 5)
-
-    const own = makeBase({ owner: BOT_ID }) // the blast owner's own base shrugs the same splash off
-    const friendly = makeWorld([makeShip({ id: PLAYER_ID, x: 1000, y: 2940 })], [{ ...mine }], [own])
-    updateDevices(friendly, 0.016)
-    expect(own.garrison).toBe(BASE_GARRISON_START)
+    expect(world.devices).toHaveLength(0) // the mine really did go off…
+    expect(base.garrison).toBe(BASE_GARRISON_START) // …and the walls shrugged the whole blast off
   })
 
-  test('a blast hugging the building`s flank still rocks it — the body box is the hitbox, not the centroid', () => {
-    // Mine at (1115, 2995): 117 px from the building's center — outside the 90 px blast — but
-    // its circle reaches 35 px past the east wall (x = 1060). A centroid test would excuse it.
-    const tripper = makeShip({ id: PLAYER_ID, x: 1115, y: 2940 })
-    const mine: Device = {
-      kind: DeviceKind.MINE,
-      x: 1115,
-      y: 2995,
-      owner: BOT_ID,
-      radius: 6,
-      armTime: 0,
-      life: 5,
-      triggerRadius: 60,
-      blastRadius: 90,
-      damage: 40,
-    }
-    const shelled = makeBase({})
-    const world = makeWorld([tripper], [mine], [shelled])
+  test('the walls shelter the holder`s men: a blast outside kills the exposed, never the housed watch', () => {
+    const tripper = makeShip({ id: PLAYER_ID, x: 1120, y: 2960 })
+    const sheltered = trooper(PLAYER_ID, 1090, 2991) // inside the building box, near the east wall
+    const exposed = trooper(PLAYER_ID, 1130, 2991) // on the pad outside, same distance from the mine
+    const base = makeBase({})
+    const world = makeWorld([tripper], [mineAt(1120, 2960), sheltered, exposed], [base])
     updateDevices(world, 0.016)
-    expect(shelled.garrison).toBeCloseTo(BASE_GARRISON_START - 40 / BASE_STRUCTURE_ARMOR, 5)
+    expect(world.devices).toContain(sheltered) // the walls ate the blast…
+    expect(sheltered.fallen).toBe(0) // …and its shockwave
+    expect(world.devices).not.toContain(exposed)
+  })
+})
+
+describe('the assault on foot — march, walls, roof', () => {
+  const padBlock = { x: 600, y: 3000, w: 800, h: 60, structure: StructureType.METAL, surface: Surface.EARTH }
+
+  test('an unopposed attacker in the disc marches to the wall, plants, and batters', () => {
+    const base = makeBase({ garrison: BASE_GUARD_RESERVE })
+    const raider = { ...trooper(BOT_ID, base.x + 300, 2991), groundLeft: 600, groundRight: 1400 }
+    const world = makeWorld([], [raider], [base])
+    world.blocks = [padBlock]
+    for (let i = 0; i < 30 * 8; i += 1) {
+      stepBases(world, 1 / 30)
+      updateDevices(world, 1 / 30)
+    }
+    expect(Math.abs(raider.x - WALL_EAST)).toBeLessThanOrEqual(BASE_STORM_CONTACT) // at the east face, in contact
+    expect(raider.storming).toBe(true)
+    expect(base.garrison).toBeLessThan(BASE_GUARD_RESERVE) // and already at work
+  })
+
+  test('a storming man slings his rifle: no fire even with a target in range', () => {
+    // No bases in these worlds: the manual mark stands in for stepBases' (which would clear it
+    // here — a ship this close to the pad is a threat); under test is devices.ts honoring it.
+    const stormer = { ...trooper(BOT_ID, 1119, 2991), storming: true, fireCooldown: 0 }
+    const held = makeWorld([makeShip({ id: PLAYER_ID, x: 1300, y: 2960 })], [stormer], [])
+    held.blocks = [padBlock]
+    for (let i = 0; i < 30; i += 1) updateDevices(held, 1 / 30)
+    expect(held.bullets).toHaveLength(0) // both fists on the building
+
+    const rifleman = { ...trooper(BOT_ID, 1119, 2991), fireCooldown: 0 }
+    const free = makeWorld([makeShip({ id: PLAYER_ID, x: 1300, y: 2960 })], [rifleman], [])
+    free.blocks = [padBlock]
+    for (let i = 0; i < 30; i += 1) updateDevices(free, 1 / 30)
+    expect(free.bullets.length).toBeGreaterThan(0) // the unmarked control blazes away
+  })
+
+  test('an enemy chute settles on the bunker roof; the holder`s man falls through into the shelter', () => {
+    const base = makeBase({})
+    const invader = trooper(BOT_ID, base.x, ROOF_Y - 40, false) // falling, 40 px over the roof
+    const housemate = trooper(PLAYER_ID, base.x, ROOF_Y - 40, false)
+    const world = makeWorld([], [invader, housemate], [base])
+    world.blocks = [padBlock]
+    for (let i = 0; i < 90; i += 1) updateDevices(world, 1 / 30)
+    expect(invader.attached).toBe(true)
+    expect(invader.y + invader.radius).toBeCloseTo(base.y - BASE_BUILDING_HEIGHT, 5) // feet on the roof
+    expect(invader.groundLeft).toBe(base.x - BASE_BUILDING_HALF_WIDTH) // the roof is his patrol span
+    expect(invader.groundRight).toBe(base.x + BASE_BUILDING_HALF_WIDTH)
+    expect(housemate.attached).toBe(true)
+    expect(housemate.y + housemate.radius).toBeCloseTo(base.y, 5) // straight through to the pad inside
+  })
+
+  test('a storming sapper plants nothing — the satchel stays shut', () => {
+    const sapper = { ...trooper(BOT_ID, 1119, 2991), heavy: WeaponKind.MINES, storming: true, fireCooldown: 0 }
+    const held = makeWorld([], [sapper], [])
+    held.blocks = [padBlock]
+    for (let i = 0; i < 30; i += 1) updateDevices(held, 1 / 30)
+    expect(held.devices.some((d) => d.kind === DeviceKind.MINE)).toBe(false)
+
+    const free = { ...trooper(BOT_ID, 1119, 2991), heavy: WeaponKind.MINES, fireCooldown: 0 }
+    const patrol = makeWorld([], [free], [])
+    patrol.blocks = [padBlock]
+    for (let i = 0; i < 30; i += 1) updateDevices(patrol, 1 / 30)
+    expect(patrol.devices.some((d) => d.kind === DeviceKind.MINE)).toBe(true) // the unmarked control seeds
+  })
+
+  test('a storming specialist never starts the brace — no kneel, no round', () => {
+    const stormer = { ...trooper(BOT_ID, 1119, 2991), heavy: WeaponKind.GRENADE, storming: true, fireCooldown: 0 }
+    const held = makeWorld([makeShip({ id: PLAYER_ID, x: 1300, y: 2960 })], [stormer], [])
+    held.blocks = [padBlock]
+    for (let i = 0; i < 60; i += 1) updateDevices(held, 1 / 30)
+    expect(stormer.kneel).toBe(0)
+    expect(held.devices.some((d) => d.kind === DeviceKind.GRENADE)).toBe(false)
+
+    const grenadier = { ...trooper(BOT_ID, 1119, 2991), heavy: WeaponKind.GRENADE, fireCooldown: 0 }
+    const free = makeWorld([makeShip({ id: PLAYER_ID, x: 1300, y: 2960 })], [grenadier], [])
+    free.blocks = [padBlock]
+    let braced = false
+    for (let i = 0; i < 60; i += 1) {
+      updateDevices(free, 1 / 30)
+      braced ||= grenadier.kneel > 0
+    }
+    expect(braced).toBe(true) // the unmarked control drops to a knee for his target
+  })
+
+  test('the walls stop a walker: an enemy trooper overlapping the building is shoved back out', () => {
+    const base = makeBase({})
+    const intruder = { ...trooper(BOT_ID, base.x - 80, 2991), groundLeft: 600, groundRight: 1400 }
+    const world = makeWorld([], [intruder], [base])
+    world.blocks = [padBlock]
+    updateDevices(world, 1 / 30)
+    expect(intruder.x).toBe(WALL_WEST) // out the nearest (west) face, flush against it
   })
 })

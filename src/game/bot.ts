@@ -1,5 +1,6 @@
 import { closestPointOnRect } from '$/game/collision'
 import {
+  BASE_BUILDING_HALF_WIDTH,
   BASE_GUARD_PATROL,
   BASE_GUARD_RESERVE,
   BASE_LOAD_RADIUS,
@@ -290,10 +291,12 @@ const actOnGoal = (
       return target ? decideBot(self, target, world.blocks) : IDLE
     case BotGoal.REARM: {
       if (!home) return IDLE
-      // Set DOWN on the pad: loading is embodied now — the garrison walks out and boards by
-      // touch, so the bot must actually land (a resting hull also cuts the thrust that would
-      // otherwise torch its own boarding queue). The landing model handles the final contact.
-      const leg = ferryLeg(self, home.x, home.y - 20)
+      // Set DOWN on the pad BESIDE the bunker (the building is solid — the pad center IS a
+      // wall now): loading is embodied — the garrison walks out and boards by touch, so the
+      // bot must actually land (a resting hull also cuts the thrust that would otherwise
+      // torch its own boarding queue). The apron toward the world center is the open one.
+      const apronX = home.x - (Math.sign(home.x - CENTER.x) || 1) * (BASE_BUILDING_HALF_WIDTH + 50)
+      const leg = ferryLeg(self, apronX, home.y - 20)
       return steerTo(self, leg.x, leg.y, world.blocks, leg.final)
     }
     case BotGoal.DEFEND:

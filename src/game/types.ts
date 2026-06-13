@@ -43,7 +43,7 @@ export type Bullet = {
   push?: number // knockback impulse applied to a hit ship (water cannon); washes a trooper into a skid
   burn?: boolean // flamethrower: scorches grass→earth on terrain hit (no carve), sets a hit trooper alight
   wet?: boolean // water cannon: wets earth→grass + pools on terrain hit (no carve), douses a burning trooper
-  infantry?: boolean // small-arms round (rifle / specialist burst): passes the barracks band — only ship weaponry shells the building
+  infantry?: boolean // small-arms round (rifle / specialist burst): passes the barracks band (the wall fight happens through the slits) — ship-class rounds are eaten by the indestructible walls
   color?: number // render tint override (undefined = owner-based default)
 }
 
@@ -116,7 +116,7 @@ export type Device =
       burning: number // s of fire left before the trooper collapses (0 = not alight); water douses it
       stun: number // s of EMP seize-up remaining (a landed unit can't move or fire)
       fallen: number // s of knocked-flat left (blast shove / hard landing / icy pratfall) — can't move or fire while down
-      storming: boolean // unopposed in an enemy base's capture disc (stepBases re-marks each frame): the man plants at the door (patrol halts) for the renderer's pounding pose; never set online (DEATHMATCH has no bases)
+      storming: boolean // elected to an enemy base's battering crew — in CONTACT with a wall or its roof, unopposed, no threat near (stepBases re-marks each frame): the man plants there (patrol halts, weapon slung — no firing) for the renderer's pounding pose; never set online (DEATHMATCH has no bases)
     }
   | {
       kind: DeviceKind.GRENADE // gravity arc → shrapnel ring on fuse
@@ -186,8 +186,10 @@ export type WaterBody = {
 
 // A home barracks: it garrisons troopers for its owner ship to load aboard, and is the
 // side's lifeline — enemy troopers capturing it cut the owner's respawns (see bases.ts).
-// The garrison doubles as the base's hitpoints: it fields live guards around the pad, and
-// attackers who clear them whittle the housed count before the capture timer can start.
+// The building itself is impenetrable and indestructible (solid to every ship and to enemy
+// infantry; weapons can't scratch it); the garrison doubles as the base's hitpoints: it
+// fields live guards inside the building's shelter, and attackers who clear them must
+// batter the housed count down BY CONTACT (walls/roof) before the capture timer can start.
 export type Base = {
   owner: number // ship id whose respawns this barracks sustains
   x: number // pad center, world px

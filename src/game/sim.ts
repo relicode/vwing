@@ -1,10 +1,9 @@
-import { baseHolder, createCampaignBases, damageBase, stepBases } from '$/game/bases'
+import { baseBuilding, baseHolder, createCampaignBases, stepBases } from '$/game/bases'
 import { updateBeams } from '$/game/beams'
 import { spawnBullet, updateBullets } from '$/game/bullets'
 import { circleRectContact, circlesOverlap } from '$/game/collision'
 import { applyDamage, applyKnockback, isDead } from '$/game/combat'
 import {
-  BASE_BUILDING_HALF_WIDTH,
   BASE_BUILDING_HEIGHT,
   BOT_KILL_SCORE,
   CARVE_RADIUS_BASE,
@@ -35,6 +34,7 @@ import {
   SPLASH_MIN_SPEED,
   SPLASH_PARTICLES,
   StructureType,
+  Surface,
   TERRAIN_SALT,
   THRUST_PARTICLE_LIFE,
   THRUST_PARTICLE_SPEED,
@@ -233,7 +233,11 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
       for (const d of world.devices) {
         if (d.kind !== DeviceKind.INFANTRY || !d.attached) continue
         if (d.x <= pad.slab.x || d.x >= pad.slab.x + pad.slab.w) continue
-        if (Math.abs(d.y + d.radius - oldTop) > 6) continue
+        // Feet on the deck — or up on the barracks roof riding a building-height above it
+        // (the storming perch moves with the building; left behind, a roof man would drop
+        // through the box on a rise or be embedded by it on a fall).
+        const feet = d.y + d.radius
+        if (Math.abs(feet - oldTop) > 6 && Math.abs(feet - (oldTop - BASE_BUILDING_HEIGHT)) > 6) continue
         d.y += delta // the deck rises under their feet — ride it, don't get embedded by it
       }
       terrainDirty = true
@@ -291,9 +295,15 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     return taken ? { x: taken.x, y: taken.y - SPAWN_ALTITUDE } : undefined
   }
 
-  // Clear deployed devices around a fresh spawn so a respawn isn't an instant re-death.
+  // Clear deployed ORDNANCE around a fresh spawn so a respawn isn't an instant re-death.
+  // Infantry is spared: the muster point hangs SPAWN_ALTITUDE over the pad, and with the
+  // battering crew now perched on the (taller) roof, a radius wipe would hand the defender a
+  // free storm-clear on every respawn — the ground war is settled by men, not by mustering.
   const clearSpawnArea = (x: number, y: number): void => {
-    world.devices = world.devices.filter((device) => Math.hypot(device.x - x, device.y - y) > SHIP_SPAWN_CLEAR_RADIUS)
+    world.devices = world.devices.filter(
+      (device) =>
+        device.kind === DeviceKind.INFANTRY || Math.hypot(device.x - x, device.y - y) > SHIP_SPAWN_CLEAR_RADIUS
+    )
   }
 
   // Blow up a downed ship: credit the killer, then queue its respawn (or, in CAMPAIGN,
@@ -401,23 +411,18 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
         }
         continue
       }
-      // Ship fire vs the barracks building: a hit grinds the housed garrison through the walls'
-      // armor (never below the guard reserve — see damageBase). The HOLDER's own fire is exempt
-      // (no shelling yourself into elimination — and a captured pad guards its capturer, not the
-      // dispossessed deed-holder), the water cannon passes (nothing to douse), and so does every
-      // small-arms round: the door fight happens inside this band, so rifles neither chip the
-      // garrison nor get eaten as one-way hard cover.
-      const struckBase = world.bases.find(
-        (b) =>
-          baseHolder(b) !== bullet.owner &&
-          !bullet.wet &&
-          !bullet.infantry &&
-          Math.abs(bullet.x - b.x) <= BASE_BUILDING_HALF_WIDTH + bullet.radius &&
-          bullet.y >= b.y - BASE_BUILDING_HEIGHT - bullet.radius &&
-          bullet.y <= b.y
-      )
+      // Ship fire vs the barracks building: the walls are INDESTRUCTIBLE — every ship-class
+      // round (water and flame gouts included) is eaten where it strikes and hurts nothing
+      // inside. The HOLDER's own fire is exempt (his garrison's covering fire leaves from
+      // within — and a captured pad guards its capturer, not the dispossessed deed-holder),
+      // and so is every small-arms round: the wall fight happens through the slits, so rifles
+      // neither get eaten as one-way hard cover nor leave the sheltering watch unshootable.
+      const struckBase = world.bases.find((b) => {
+        if (baseHolder(b) === bullet.owner || bullet.infantry) return false
+        const r = baseBuilding(b)
+        return circleRectContact(bullet.x, bullet.y, bullet.radius, r.x, r.y, r.w, r.h) !== undefined
+      })
       if (struckBase) {
-        damageBase(world, struckBase, bullet.damage)
         spawnExplosion(world.particles, bullet.x, bullet.y, Color.SPARK, world.rng, 5)
         continue
       }
@@ -472,10 +477,18 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
   }
 
   // Land/bounce/crash each ship against terrain; only a hard crash (once invuln lapses) kills.
+  // The barracks buildings are solid to EVERY hull (the owner sets down beside his own pad, or
+  // on the roof) and indestructible besides — flying into one is flying into bedrock.
   const resolveTerrain = (dt: number, events: DeathEvent[]): void => {
+    const solids =
+      world.bases.length === 0
+        ? world.blocks
+        : world.blocks.concat(
+            world.bases.map((b) => ({ ...baseBuilding(b), structure: StructureType.METAL, surface: Surface.EARTH }))
+          )
     for (const { ship } of combatants) {
       if (eliminated.has(ship.id) || awaiting.has(ship.id)) continue
-      if (resolveShipTerrain(ship, world.blocks, dt) === 'crash' && ship.invuln <= 0) killShip(ship, undefined, events)
+      if (resolveShipTerrain(ship, solids, dt) === 'crash' && ship.invuln <= 0) killShip(ship, undefined, events)
     }
   }
 

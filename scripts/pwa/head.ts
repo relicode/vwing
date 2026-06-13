@@ -5,6 +5,7 @@
 // manifest or icons, and the dev server stays free of dead references.
 
 import {
+  APP_VERSION,
   APPLE_TOUCH_ICON,
   absoluteUrl,
   FAVICON,
@@ -28,6 +29,7 @@ export const buildJsonLd = (site: string): string =>
     name: GAME_NAME,
     alternateName: GAME_TITLE,
     description: GAME_DESCRIPTION,
+    softwareVersion: APP_VERSION,
     url: site,
     image: absoluteUrl(site, SHARE_IMAGE.file),
     genre: ['Shooter', 'Real-time strategy'],
@@ -48,6 +50,7 @@ export const buildHeadTags = (site: string): string => {
   const appIcon = MANIFEST_ICONS.find((icon) => icon.purpose === 'any') ?? MANIFEST_ICONS[0]
   const lines = [
     `<meta name="description" content="${escapeAttribute(GAME_DESCRIPTION)}">`,
+    `<meta name="version" content="${escapeAttribute(APP_VERSION)}">`,
     `<meta name="theme-color" content="${THEME_COLOR}">`,
     `<link rel="canonical" href="${href()}">`,
     `<link rel="manifest" href="${href('manifest.webmanifest')}">`,
