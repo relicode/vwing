@@ -1,4 +1,4 @@
-import { baseHolder, damageBase } from '$/game/bases'
+import { baseBuilding, baseHolder, stormContact, stormThreatNear } from '$/game/bases'
 import { castRail } from '$/game/beams'
 import { pushBullet } from '$/game/bullets'
 import { circleRectContact, circlesOverlap, segmentIntersectsRect } from '$/game/collision'
@@ -6,10 +6,10 @@ import { applyDamage, applyDisable, isDead } from '$/game/combat'
 import {
   AFTERBURNER_IGNITE_LEN,
   AFTERBURNER_IGNITE_RADIUS,
-  BASE_BUILDING_HALF_WIDTH,
-  BASE_BUILDING_HEIGHT,
+  BASE_CAPTURE_RADIUS,
   BASE_DOOR_RADIUS,
   BASE_GARRISON_CAP,
+  BASE_GUARD_RANGE,
   BaseAlarm,
   BLAST_SHAKE,
   BULLET_RADIUS,
@@ -125,6 +125,7 @@ import {
   PARACHUTE_TERMINAL,
   RETRO_IGNITE_LEN,
   RETRO_IGNITE_RADIUS,
+  StructureType,
   Surface,
   TROOP_BAY_CAPACITY,
   WALL_THICKNESS,
@@ -161,6 +162,27 @@ const wallAhead = (blocks: Block[], device: InfantryDevice, dir: number): boolea
 // in world.blocks). Projectile devices detonate or fizzle here instead of tunnelling through.
 const touchingBlock = (blocks: Block[], x: number, y: number, r: number): boolean =>
   blocks.some((b) => circleRectContact(x, y, r, b.x, b.y, b.w, b.h) !== undefined)
+
+// The barracks buildings solid to this owner: every base whose holder is someone else
+// contributes its body box. The holder's own building is no obstacle — his men walk, fall,
+// and fire straight through into its shelter (that is what makes it one).
+const enemyBuildings = (world: World, ownerId: number): { x: number; y: number; w: number; h: number }[] =>
+  world.bases.filter((b) => baseHolder(b) !== ownerId).map(baseBuilding)
+
+// A flying device's body touching an enemy barracks: the indestructible walls stop projectiles
+// like bedrock does (the holder's garrison still launches its own out from inside).
+const touchingEnemyBase = (world: World, ownerId: number, x: number, y: number, r: number): boolean =>
+  enemyBuildings(world, ownerId).some((b) => circleRectContact(x, y, r, b.x, b.y, b.w, b.h) !== undefined)
+
+// True when the trooper stands inside a building his own side holds — walls between him and
+// any outside blast or shockwave. One-sided by construction: the building is solid to its
+// enemies, so a blast can never originate inside someone else's shelter.
+const shelteredInBase = (world: World, d: InfantryDevice): boolean =>
+  world.bases.some((base) => {
+    if (baseHolder(base) !== d.owner) return false
+    const r = baseBuilding(base)
+    return d.x > r.x && d.x < r.x + r.w && d.y > r.y && d.y < r.y + r.h
+  })
 
 // The block directly under a landed trooper's feet (probed just below the soles), or undefined if
 // the ground was shot away. Its surface tells us whether the footing is icy (see the ice slip).
@@ -204,11 +226,12 @@ const nearestEnemyOf = (ownerId: number, x: number, y: number, ships: Ship[]): S
 
 // Flatten every landed trooper in the ring — a blast's shove without its shrapnel (both sides:
 // a shockwave is as indiscriminate as the blast itself). Airborne units are already falling,
-// swimmers/corpses keep their water states, and the dead are past knocking down.
+// swimmers/corpses keep their water states, the dead are past knocking down, and a man inside
+// his own side's barracks is sheltered from the shove like he is from the blast.
 const knockdown = (world: World, x: number, y: number, radius: number, deadDevices: Set<Device>): void => {
   for (const device of world.devices) {
     if (device.kind !== DeviceKind.INFANTRY || deadDevices.has(device)) continue
-    if (!device.attached || device.sinking > 0) continue
+    if (!device.attached || device.sinking > 0 || shelteredInBase(world, device)) continue
     if (Math.hypot(device.x - x, device.y - y) > radius) continue
     device.fallen = Math.max(device.fallen, INFANTRY_FALLEN_TIME)
     device.kneel = 0
@@ -241,26 +264,13 @@ const areaDamage = (
   }
   for (const device of world.devices) {
     if (device.kind !== DeviceKind.INFANTRY || deadDevices.has(device)) continue
+    // The barracks is INDESTRUCTIBLE: a blast neither grinds the housed garrison nor reaches
+    // the holder's men sheltering inside its walls. (Enemies can't be inside one — it's solid
+    // to them — so the shelter never hides a blast's own victims from it.)
+    if (shelteredInBase(world, device)) continue
     if (Math.hypot(device.x - x, device.y - y) > radius) continue
     spawnExplosion(world.particles, device.x, device.y, Color.BLOOD, world.rng, 6)
     deadDevices.add(device)
-  }
-  // A blast rocks the barracks too: splash overlapping the building's BODY (the same box the
-  // bullet path tests — a wall-hugging mine isn't excused by missing the centroid) grinds the
-  // housed garrison through the walls' armor (never below the reserve — see damageBase). The
-  // holder's own base is spared, mirroring the ship exemption above.
-  for (const base of world.bases) {
-    if (baseHolder(base) === ownerId) continue
-    const contact = circleRectContact(
-      x,
-      y,
-      radius,
-      base.x - BASE_BUILDING_HALF_WIDTH,
-      base.y - BASE_BUILDING_HEIGHT,
-      BASE_BUILDING_HALF_WIDTH * 2,
-      BASE_BUILDING_HEIGHT
-    )
-    if (contact) damageBase(world, base, damage)
   }
   // The shove past the shrapnel: landed troopers in the wider ring are knocked flat, not killed.
   knockdown(world, x, y, radius * INFANTRY_KNOCKDOWN_RADIUS_SCALE, deadDevices)
@@ -636,13 +646,21 @@ const walkToward = (
 
 // Walk back and forth along the supporting block, turning at its edges (never off it) and at
 // any wall face rising from it, and occasionally reversing on a whim. `facing` tracks the
-// movement direction for the sprite.
+// movement direction for the sprite. A guard's PATROL is narrower than its footing: the watch
+// keeps to the building's shelter (its ground span stays the whole pad, so the boarding sprint
+// can still reach a ship parked beyond the solid walls).
 const patrolInfantry = (device: InfantryDevice, world: World, dt: number): void => {
-  // A storming man (stepBases' mark, one frame stale here) plants at the door and pounds —
-  // wandering would moonwalk the planted pose and drift the squad out of the capture disc.
-  if (device.storming) return
-  const min = device.groundLeft + device.radius
-  const max = device.groundRight - device.radius
+  let left = device.groundLeft
+  let right = device.groundRight
+  if (device.guard) {
+    const post = world.bases.find((b) => b.owner === device.owner && b.capture < 1)
+    if (post) {
+      left = Math.max(left, post.x - BASE_GUARD_RANGE)
+      right = Math.min(right, post.x + BASE_GUARD_RANGE)
+    }
+  }
+  const min = left + device.radius
+  const max = right - device.radius
   if (max <= min) {
     device.facing = device.walkDir
     return
@@ -660,8 +678,46 @@ const patrolInfantry = (device: InfantryDevice, world: World, dt: number): void 
   device.facing = device.walkDir
 }
 
+// The assault approach: an attacker landed inside an enemy base's capture disc, with no live
+// threat near the pad, makes for the building instead of milling about — the battering slots
+// are at the walls and on the roof. A man stepBases marked storming (or one already in contact,
+// queueing for a slot) plants where he stands; the rest sprint for the nearest wall face (the
+// solid-wall clamp stops them flush). Returns false when there's no base business here.
+const advanceOnBase = (world: World, device: InfantryDevice, dt: number): boolean => {
+  if (device.guard) return false // the watch holds its post; it doesn't emigrate
+  if (device.storming) {
+    device.running = false
+    return true // planted at the wall, both hands on the building (stepBases' mark)
+  }
+  const base = world.bases.find(
+    (b) =>
+      baseHolder(b) !== device.owner &&
+      b.capture < 1 &&
+      Math.hypot(device.x - b.x, device.y - b.y) <= BASE_CAPTURE_RADIUS
+  )
+  if (!base || stormThreatNear(world, base, device.owner)) return false // threats first — fight, don't queue
+  if (stormContact(base, device) !== undefined) {
+    // In contact but not elected to the crew: hold the spot — wandering off would surrender
+    // the slot the moment one frees up.
+    device.running = false
+    device.facing = device.x < base.x ? 1 : -1
+    return true
+  }
+  const b = baseBuilding(base)
+  const targetX = device.x < base.x ? b.x - device.radius : b.x + b.w + device.radius
+  if (Math.abs(targetX - device.x) <= INFANTRY_RUN_SPEED * dt) {
+    device.x = clampToGround(device, targetX) // arrive flush, no overshoot jitter
+    device.facing = device.x < base.x ? 1 : -1
+    device.running = false
+  } else {
+    walkToward(world, device, targetX, dt)
+  }
+  return true
+}
+
 // A landed unit between firing actions: walk toward a slow rescuing owner sharing its block
-// (to be scooped up), otherwise patrol it. The vertical gate keeps the rescuer to a ship resting
+// (to be scooped up); failing that, press an assault on an enemy base it stands inside the
+// capture disc of; otherwise patrol. The vertical gate keeps the rescuer to a ship resting
 // at the unit's level (not hovering above), within reach of the boarding touch once it arrives.
 const repositionLanded = (world: World, device: InfantryDevice, dt: number): void => {
   const rescuer = rescuingOwner(world, device)
@@ -672,9 +728,66 @@ const repositionLanded = (world: World, device: InfantryDevice, dt: number): voi
     Math.abs(rescuer.y - device.y) <= INFANTRY_PICKUP_RADIUS + device.radius
   ) {
     walkToward(world, device, rescuer.x, dt)
-  } else {
-    patrolInfantry(device, world, dt)
+    return
   }
+  if (advanceOnBase(world, device, dt)) return
+  patrolInfantry(device, world, dt)
+}
+
+// Resolve an airborne trooper against one solid rectangle (terrain block or enemy barracks).
+// A landing only counts on the rect's TOP with the feet actually over it (x within the span) —
+// that's where it has real footing: fatal past INFANTRY_FALL_LETHAL (a chute not yet fully
+// open brakes nothing), flooring past INFANTRY_FALL_KNOCKDOWN, patrol bounds set to the span.
+// A side or corner contact is a wall: push clear and cancel only the velocity driving in, so
+// the unit slides down and off instead of latching on and re-thumping.
+const settleAirborne = (
+  world: World,
+  device: InfantryDevice,
+  rect: { x: number; y: number; w: number; h: number }
+): 'none' | 'landed' | 'dead' => {
+  const c = circleRectContact(device.x, device.y, device.radius, rect.x, rect.y, rect.w, rect.h)
+  if (!c) return 'none'
+  const onTop = c.ny < 0 && device.x > rect.x && device.x < rect.x + rect.w
+  if (!onTop) {
+    device.x += c.nx * c.depth
+    device.y += c.ny * c.depth
+    const into = device.vx * c.nx + device.vy * c.ny
+    if (into < 0) {
+      device.vx -= into * c.nx
+      device.vy -= into * c.ny
+    }
+    return 'none'
+  }
+  const impact = -(device.vx * c.nx + device.vy * c.ny)
+  if (impact > INFANTRY_FALL_LETHAL) {
+    spawnExplosion(world.particles, device.x, device.y, Color.BLOOD, world.rng, 6)
+    return 'dead'
+  }
+  if (impact > INFANTRY_FALL_KNOCKDOWN) device.fallen = INFANTRY_FALLEN_TIME
+  device.x += c.nx * c.depth
+  device.y += c.ny * c.depth
+  device.vx = 0
+  device.vy = 0
+  device.attached = true
+  device.chute = -1
+  device.groundLeft = rect.x
+  device.groundRight = rect.x + rect.w
+  spawnExplosion(world.particles, device.x, device.y + device.radius, Color.ROCK_EDGE, world.rng, 4) // landing dust
+  return 'landed'
+}
+
+// The enemy-barracks roof a landed trooper stands on, expressed as the metal footing it is
+// (nothing up there burns, slips, or gets shot away), or undefined. Pairs with supportingBlock:
+// the building lives outside world.blocks (the holder's men pass through it), so roof-standers
+// need their footing read off the bases.
+const roofFooting = (world: World, device: InfantryDevice): Block | undefined => {
+  const footY = device.y + device.radius + FOOTING_PROBE
+  for (const r of enemyBuildings(world, device.owner)) {
+    if (device.x > r.x && device.x < r.x + r.w && footY > r.y && footY < r.y + r.h) {
+      return { ...r, structure: StructureType.METAL, surface: Surface.EARTH }
+    }
+  }
+  return undefined
 }
 
 // Advance one device. Mutates the device and the world (spawns shards/shots/blasts),
@@ -760,9 +873,13 @@ const stepDevice = (
         spawnExplosion(world.particles, device.x, device.y, device.color, world.rng, 14)
         return false
       }
-      // Terrain stops it: a blast warhead (seeker) detonates against the rock — splashing any
-      // ship or trooper hugging the wall — while a bare orb (EMP) just fizzles out.
-      if (touchingBlock(world.blocks, device.x, device.y, device.radius)) {
+      // Terrain stops it — and so do the barracks' indestructible walls: a blast warhead
+      // (seeker) detonates against the face — splashing any ship or trooper hugging it (never
+      // the men sheltering inside) — while a bare orb (EMP) just fizzles out.
+      if (
+        touchingBlock(world.blocks, device.x, device.y, device.radius) ||
+        touchingEnemyBase(world, device.owner, device.x, device.y, device.radius)
+      ) {
         if (device.blastRadius > 0) {
           areaDamage(world, device.x, device.y, device.blastRadius, device.blastDamage, device.owner, dead, deadDevices)
         }
@@ -889,39 +1006,18 @@ const stepDevice = (
         device.x += device.vx * dt
         device.y += device.vy * dt
         for (const block of world.blocks) {
-          const c = circleRectContact(device.x, device.y, device.radius, block.x, block.y, block.w, block.h)
-          if (!c) continue
-          // A landing only counts on a block's TOP with the feet actually over it (x within the
-          // span) — that's where it has real footing. A side or corner contact is a wall: push
-          // clear and keep falling so the unit slides off instead of latching on and re-thumping.
-          const onTop = c.ny < 0 && device.x > block.x && device.x < block.x + block.w
-          if (onTop) {
-            const impact = -(device.vx * c.nx + device.vy * c.ny)
-            if (impact > INFANTRY_FALL_LETHAL) {
-              spawnExplosion(world.particles, device.x, device.y, Color.BLOOD, world.rng, 6)
-              return false
-            }
-            // Survivable but hard — a chute not yet fully open brakes nothing — knocks him flat.
-            if (impact > INFANTRY_FALL_KNOCKDOWN) device.fallen = INFANTRY_FALLEN_TIME
-            device.x += c.nx * c.depth
-            device.y += c.ny * c.depth
-            device.vx = 0
-            device.vy = 0
-            device.attached = true
-            device.chute = -1
-            device.groundLeft = block.x
-            device.groundRight = block.x + block.w
-            spawnExplosion(world.particles, device.x, device.y + device.radius, Color.ROCK_EDGE, world.rng, 4) // landing dust
-            break
-          }
-          // Wall / underside: push out of the block and cancel only the velocity driving into it,
-          // leaving the fall (and the chute brake) intact so the unit slides down and off.
-          device.x += c.nx * c.depth
-          device.y += c.ny * c.depth
-          const into = device.vx * c.nx + device.vy * c.ny
-          if (into < 0) {
-            device.vx -= into * c.nx
-            device.vy -= into * c.ny
+          const settled = settleAirborne(world, device, block)
+          if (settled === 'dead') return false
+          if (settled === 'landed') break
+        }
+        // An enemy barracks is solid too: a chute settles on its ROOF (the storming perch —
+        // three battering slots up there) and a side contact shoves the man clear of the wall.
+        // The holder's own men drop straight through into the shelter below.
+        if (!device.attached) {
+          for (const building of enemyBuildings(world, device.owner)) {
+            const settled = settleAirborne(world, device, building)
+            if (settled === 'dead') return false
+            if (settled === 'landed') break
           }
         }
         if (!device.attached) {
@@ -940,13 +1036,24 @@ const stepDevice = (
         return false
       }
       // Block beneath shot away → lose footing and fall (re-enters the airborne path next frame).
-      const ground = supportingBlock(device, world.blocks)
+      // An enemy barracks roof counts as footing too — it's just not in world.blocks.
+      const ground = supportingBlock(device, world.blocks) ?? roofFooting(world, device)
       if (!ground) {
         device.attached = false
         device.chute = -1
         device.running = false
         device.slide = 0
         return true
+      }
+      // The enemy compound is impenetrable on foot: a raider overlapping the walls (a panic
+      // bolt, a wash, a marching overshoot) is shoved back out to the nearest face. Men with
+      // their feet at or above the roofline are up top, where the roof is theirs to walk.
+      for (const building of enemyBuildings(world, device.owner)) {
+        if (device.y + device.radius <= building.y + 1) continue
+        if (device.x + device.radius <= building.x || device.x - device.radius >= building.x + building.w) continue
+        device.x =
+          device.x < building.x + building.w / 2 ? building.x - device.radius : building.x + building.w + device.radius
+        device.slide = 0 // a skid into the wall is a dead stop
       }
       // Burning ground: footing on grass that's alight catches the man himself.
       if (device.burning <= 0 && ground.surface === Surface.FIRE) device.burning = INFANTRY_BURN_TIME
@@ -1091,7 +1198,8 @@ const stepDevice = (
         if (!spec.kneel) {
           device.fireCooldown -= dt
           repositionLanded(world, device, dt)
-          if (device.fireCooldown <= 0) {
+          // A storming sapper batters with both hands — no mine leaves the satchel.
+          if (device.fireCooldown <= 0 && !device.storming) {
             plantMine(spawned, device)
             device.fireCooldown = spec.interval
           }
@@ -1107,7 +1215,10 @@ const stepDevice = (
         }
         device.fireCooldown -= dt
         repositionLanded(world, device, dt)
-        if (device.fireCooldown <= 0) {
+        // A storming specialist never STARTS a brace (both hands on the building); a wind-up
+        // already running when the mark landed still lets its round fly, like the kneeling
+        // facing rule — the renderer is selling that crouch, not the pounding.
+        if (device.fireCooldown <= 0 && !device.storming) {
           const target = infantryTarget(world, device)
           if (target) {
             device.facing = target.x >= device.x ? 1 : -1 // square up to the target
@@ -1117,11 +1228,14 @@ const stepDevice = (
         }
         return true
       }
-      // Rifle: reposition (walk-to-rescue or patrol), then fire — dead-on from a halt (STANDING),
-      // looser on the move (WALKING).
+      // Rifle: reposition (walk-to-rescue / assault march / patrol), then fire — dead-on from a
+      // halt (STANDING), looser on the move (WALKING). A storming man's rifle stays slung:
+      // both fists are on the building until the mark expires.
       repositionLanded(world, device, dt)
-      const spread = stateOf(device) === InfantryState.STANDING ? INFANTRY_SPREAD_STANDING : INFANTRY_SPREAD_WALKING
-      infantryFire(world, device, INFANTRY_FIRE_INTERVAL, spread, dt)
+      if (!device.storming) {
+        const spread = stateOf(device) === InfantryState.STANDING ? INFANTRY_SPREAD_STANDING : INFANTRY_SPREAD_WALKING
+        infantryFire(world, device, INFANTRY_FIRE_INTERVAL, spread, dt)
+      }
       return true // landed unit persists until it's killed or picked up
     }
 
@@ -1131,11 +1245,13 @@ const stepDevice = (
       device.y += device.vy * dt
       device.fuse -= dt
       // Pops on the fuse OR on impact — a grenade bursts where it lands instead of sinking
-      // into the rock (the shard ring then chews the surface like any bullets).
+      // into the rock (the shard ring then chews the surface like any bullets). The barracks'
+      // walls are an impact like any other; they just don't scratch.
       if (
         device.fuse <= 0 ||
         !inBounds(device.x, device.y) ||
-        touchingBlock(world.blocks, device.x, device.y, device.radius)
+        touchingBlock(world.blocks, device.x, device.y, device.radius) ||
+        touchingEnemyBase(world, device.owner, device.x, device.y, device.radius)
       ) {
         spawnShards(
           world,
@@ -1159,11 +1275,13 @@ const stepDevice = (
       device.x += device.vx * dt
       device.y += device.vy * dt
       device.fuse -= dt
-      // Airbursts on the fuse OR against terrain — a shell never tunnels through a wall.
+      // Airbursts on the fuse OR against terrain — a shell never tunnels through a wall,
+      // the barracks' included.
       if (
         device.fuse <= 0 ||
         !inBounds(device.x, device.y) ||
-        touchingBlock(world.blocks, device.x, device.y, device.radius)
+        touchingBlock(world.blocks, device.x, device.y, device.radius) ||
+        touchingEnemyBase(world, device.owner, device.x, device.y, device.radius)
       ) {
         spawnShards(
           world,
@@ -1337,6 +1455,7 @@ export const resolveInfantryContacts = (world: World): void => {
         d.pickupLock <= 0 &&
         d.sinking <= 0 &&
         (d.attached || d.swim > 0) &&
+        !shelteredInBase(world, d) && // a hull flush against the wall can't reach the men inside
         circlesOverlap(ship.x, ship.y, ship.radius, d.x, d.y, d.radius)
       ) {
         // Recruited: same side-switch sparkle for both teams; the renderer's owner tint flips.
@@ -1353,8 +1472,11 @@ export const resolveInfantryContacts = (world: World): void => {
       }
       if (ramming && d.sinking <= 0 && circlesOverlap(ship.x, ship.y, ship.radius, d.x, d.y, d.radius)) {
         // A ship still in its own trooper's deploy lockout can't mince it — otherwise a fast
-        // drop would splatter the unit the instant it left the hull. Enemies ram freely.
+        // drop would splatter the unit the instant it left the hull. Enemies ram freely —
+        // except through barracks walls: a man inside his side's shelter can't be clipped by
+        // a hull glancing off the building.
         if (d.owner === ship.id && d.pickupLock > 0) continue
+        if (d.owner !== ship.id && shelteredInBase(world, d)) continue
         spawnExplosion(world.particles, d.x, d.y, Color.BLOOD, world.rng, 6)
         world.devices.splice(i, 1)
       }

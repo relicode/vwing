@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
 import {
-  BASE_STRUCTURE_ARMOR,
   BOT_KILL_SCORE,
   DEATHMATCH_FRAG_SCORE,
   DeviceKind,
@@ -217,8 +216,8 @@ describe('createSim — base capture cuts respawns', () => {
     expect(slab).toBeDefined() // the indestructible slab moved with the barracks line
   })
 
-  test('an enemy shell into the building grinds the garrison through the armor; your own fire is exempt', () => {
-    // Identical worlds, with and without the shell: the garrison delta isolates the shelling
+  test('the walls are indestructible: an enemy shell is eaten whole and the garrison never feels it', () => {
+    // Identical worlds, with and without the shell: the garrison delta isolates the impact
     // from the same-frame door cadence and regen.
     const garrisonAfterStep = (shell: boolean, owner: number): { garrison: number; bullets: number } => {
       const world = createWorld(31)
@@ -233,10 +232,10 @@ describe('createSim — base capture cuts respawns', () => {
     }
     const control = garrisonAfterStep(false, 0)
     const shelled = garrisonAfterStep(true, 1)
-    expect(control.garrison - shelled.garrison).toBeCloseTo(50 / BASE_STRUCTURE_ARMOR, 5)
-    expect(shelled.bullets).toBe(0) // the walls stop the shell
+    expect(shelled.garrison).toBeCloseTo(control.garrison, 10) // not a man lost to the bombardment
+    expect(shelled.bullets).toBe(0) // …but the walls do eat the shell
     const ownFire = garrisonAfterStep(true, 0)
-    expect(ownFire.garrison).toBeCloseTo(control.garrison, 10) // no shelling yourself into elimination
+    expect(ownFire.bullets).toBe(1) // the holder's own fire leaves from within — never eaten
   })
 
   test('a captured building answers to its capturer: the dispossessed side`s shells are eaten, the holder`s pass', () => {
@@ -298,6 +297,62 @@ describe('createSim — base capture cuts respawns', () => {
     expect(events[0]).toMatchObject({ victimId: 0, eliminated: false })
     for (let i = 0; i < Math.ceil((RESPAWN_DELAY_BASE + 0.2) * 60); i += 1) sim.step(1 / 60)
     expect(world.ships.some((s) => s.id === 0)).toBe(true) // back after the reinforcement wait
+  })
+
+  test('a respawn clears nearby ordnance but spares the infantry — mustering wins back no ground', () => {
+    // The muster point hangs over the pad with the battering crew now perched on the roof
+    // inside the clear radius: the wipe must take a parked mine, never the men.
+    const world = createWorld(23)
+    const player = combatant(0, 500, 400)
+    const enemy = combatant(1, 1500, 400)
+    const sim = createSim(world, [player, enemy], { mode: SimMode.CAMPAIGN })
+    world.blocks.push({ x: 400, y: 500, w: 200, h: 40, structure: StructureType.METAL, surface: Surface.EARTH })
+    const squatter: Device = {
+      kind: DeviceKind.INFANTRY,
+      x: 510,
+      y: 491, // standing on the pushed block, ~100 px under the muster point
+      vx: 0,
+      vy: 0,
+      owner: 1,
+      radius: 9,
+      guard: false,
+      attached: true,
+      swim: 0,
+      sinking: 0,
+      chute: -1,
+      pickupLock: 0,
+      walkDir: 1,
+      facing: 1,
+      groundLeft: 400,
+      groundRight: 600,
+      fireCooldown: 999,
+      kneel: 0,
+      running: false,
+      storming: false,
+      slide: 0,
+      burning: 0,
+      stun: 0,
+      fallen: 0,
+    }
+    const parked: Device = {
+      kind: DeviceKind.MINE,
+      x: 530,
+      y: 480,
+      owner: 1,
+      radius: 6,
+      armTime: 999, // inert — here to be swept, not to blow
+      life: 999,
+      triggerRadius: 0,
+      blastRadius: 0,
+      damage: 0,
+    }
+    world.devices.push(squatter, parked)
+    player.ship.health = 5
+    world.bullets.push(lethalShot(player.ship.x, player.ship.y, enemy.ship.id))
+    for (let i = 0; i < Math.ceil((RESPAWN_DELAY_BASE + 0.2) * 60); i += 1) sim.step(1 / 60)
+    expect(world.ships.some((s) => s.id === 0)).toBe(true) // mustered at (500, 400)
+    expect(world.devices).toContain(squatter) // the man stood his ground
+    expect(world.devices).not.toContain(parked) // the mine was swept
   })
 })
 

@@ -74,7 +74,7 @@ export const drawBars = (g: Graphics, ship: Ship): void => {
 // state and garrison mutate every frame, so it can't live in the terrainVersion cache.
 export const drawBase = (g: Graphics, base: Base, time: number, selfId: number, slots?: PaletteSlots): void => {
   const body = ownerHex(baseHolder(base), selfId, slots)
-  const w = BASE_BUILDING_HALF_WIDTH * 2 // the drawn body IS the shelling hitbox (see damageBase)
+  const w = BASE_BUILDING_HALF_WIDTH * 2 // the drawn body IS the solid/impenetrable box (see baseBuilding)
   const h = BASE_BUILDING_HEIGHT
   const x = base.x - w / 2
   const y = base.y - h

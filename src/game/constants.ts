@@ -188,14 +188,16 @@ export const SPAWN_ALTITUDE = 320 // px above its pad top where a campaign ship 
 // (see sim.ts).
 export const BASE_GARRISON_CAP = 12 // troopers a barracks can house (housed + fielded guards)
 export const BASE_GARRISON_START = 8 // housed at match start
-// The building has a body: ship weaponry striking the bunker grinds the housed garrison down
-// through the armor (never below the guard reserve — the last men must be stormed out by
-// infantry). Shelling softens a base; only troops can take it.
-export const BASE_BUILDING_HALF_WIDTH = 60 // px — the bunker's half-width (hitbox = drawn body)
-export const BASE_BUILDING_HEIGHT = 52 // px the bunker rises above the pad line (hitbox = drawn body)
-export const BASE_STRUCTURE_ARMOR = 400 // weapon hit-points the walls soak per housed trooper lost (~0.44 men/s under point-blank primary fire)
+// The building has a body — and it is IMPENETRABLE and INDESTRUCTIBLE: ships of either side
+// bounce off (or land on) its walls and roof, enemy troopers are stopped at the walls, every
+// ship-class round/blast/lance is eaten by them without hurting the garrison, and a blast can't
+// reach the holder's men sheltering inside. Only infantry small arms cross the band (the wall
+// fight happens through the slits), and only contact-storming troopers (see BASE_STORM_*) can
+// grind the housed count down.
+export const BASE_BUILDING_HALF_WIDTH = 110 // px — the bunker's half-width (hitbox = drawn body)
+export const BASE_BUILDING_HEIGHT = 88 // px the bunker rises above the pad line (hitbox = drawn body)
 export const BASE_GARRISON_REGEN = 1 / 15 // troopers/s regrown while uncaptured (one man every 15 s)
-export const BASE_LOAD_RADIUS = 140 // px from the pad within which a slow owner ship throws the doors open to board
+export const BASE_LOAD_RADIUS = 200 // px from the pad within which a slow owner ship throws the doors open to board
 export const BASE_PAD_METAL_CELLS = 2 // thickness (cells) of the indestructible metal slab the barracks stands on
 export const BASE_CAPTURE_RADIUS = 460 // px disc around the pad center that counts capturers/defenders
 export const BASE_CAPTURE_TIME = 20 // s of uncontested enemy presence to capture (once the garrison is dead)
@@ -208,12 +210,18 @@ export const BASE_REVERT_TIME = 12 // s for progress to bleed back once the zone
 // ship, and boards by touch. There is no abstract counter transfer.
 export const BASE_GUARD_PATROL = 4 // guards fielded on routine patrol
 export const BASE_GUARD_RESERVE = 2 // housed troopers a sortie never commits (the last-ditch HP)
-export const BASE_GUARD_RANGE = 200 // px patrol half-span around the pad center
+export const BASE_GUARD_RANGE = 96 // px patrol half-span — the watch never leaves the building's shelter (< half-width)
 export const BASE_ALERT_RANGE = 700 // px enemy-ship distance that sends the guards indoors
 export const BASE_SORTIE_RANGE = 600 // px enemy-infantry (landed) distance that triggers the sortie
 export const BASE_DOOR_INTERVAL = 0.7 // s between guards stepping out the door
 export const BASE_DOOR_RADIUS = 16 // px from the door within which a recalled guard slips inside
-export const BASE_ASSAULT_RATE = 0.12 // housed troopers/s each unopposed attacker kills storming the building
+// Storming is a CONTACT job: only men pressed against a wall (ONE per side) or standing on the
+// roof (BASE_STORM_ROOF_SLOTS) batter the garrison — and they down tools entirely (no grinding,
+// no pounding pose, no fire held) the moment a live threat shows near the pad.
+export const BASE_ASSAULT_RATE = 0.2 // housed troopers/s each contact stormer kills battering the building
+export const BASE_STORM_CONTACT = 8 // px gap within which a trooper counts as pressed to a wall / standing on the roof
+export const BASE_STORM_ROOF_SLOTS = 3 // stormers the roof holds (each side wall holds exactly one)
+export const BASE_STORM_THREAT_RANGE = 700 // px — an enemy ship or live enemy trooper this close to the pad halts the storm
 
 // Neon-on-near-black palette, stored as 0xRRGGBB for PixiJS fills.
 export const Color = {

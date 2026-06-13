@@ -1,16 +1,8 @@
-import { baseHolder, damageBase } from '$/game/bases'
+import { baseBuilding, baseHolder } from '$/game/bases'
 import { applyDamage } from '$/game/combat'
-import {
-  BASE_BUILDING_HALF_WIDTH,
-  BASE_BUILDING_HEIGHT,
-  Color,
-  DeviceKind,
-  RAIL_BEAM_LIFE,
-  RAIL_DAMAGE,
-  RAIL_RANGE,
-} from '$/game/constants'
+import { Color, DeviceKind, RAIL_BEAM_LIFE, RAIL_DAMAGE, RAIL_RANGE } from '$/game/constants'
 import { spawnExplosion } from '$/game/particles'
-import type { Base, Device, Ship, World } from '$/game/types'
+import type { Device, Ship, World } from '$/game/types'
 
 // Age out spent rail beams (damage was applied when they were fired).
 export const updateBeams = (world: World, dt: number): void => {
@@ -49,7 +41,7 @@ const rayRectEntry = (
 // transient beam to that ship (or to the first terrain face, or to max range), and return the
 // struck ship so the caller can reap it if the hull is gone. Terrain blocks the lance — it
 // burns into the first wall it meets, never through a mountain, and an enemy barracks counts
-// as (and is shelled like) a wall — but flesh doesn't: EVERY
+// as a wall (an indestructible one: it stops the lance and shrugs it off) — but flesh doesn't: EVERY
 // trooper along the beam dies, either side's (friendly fire is real; `self` exempts only the
 // kneeling sniper's own body from its own lance). Killed troopers are marked into
 // `deadTroopers` — the caller removes them, because the device array may be mid-iteration.
@@ -75,25 +67,16 @@ export const castRail = (
     const t = rayRectEntry(x, y, dirX, dirY, block)
     if (t !== undefined && t < hitDist) hitDist = t // the beam stops at the nearest terrain face
   }
-  // The barracks building stops the SHIP's lance like any wall — and takes the shelling
-  // (through the walls' armor, see damageBase) like any other ship weapon; the holder's own
-  // building is transparent to its own fire, matching the bullet path's exemption. A kneeling
-  // trooper's man-portable lance (`self` set) is small arms like every other infantry round:
-  // it passes the band untouched — the door fight happens inside this box, and a storming rail
-  // specialist standing in it would otherwise fire a zero-length lance into the wall at his nose.
-  let struckBase: Base | undefined
+  // The barracks building stops the SHIP's lance like any wall — but the indestructible face
+  // takes nothing for it; the holder's own building is transparent to its own fire, matching
+  // the bullet path's exemption. A kneeling trooper's man-portable lance (`self` set) is small
+  // arms like every other infantry round: it passes the band untouched — the wall fight happens
+  // through the slits, and a rail specialist pressed to the wall would otherwise fire a
+  // zero-length lance into the face at his nose.
   for (const base of self === undefined ? world.bases : []) {
     if (baseHolder(base) === ownerId) continue
-    const t = rayRectEntry(x, y, dirX, dirY, {
-      x: base.x - BASE_BUILDING_HALF_WIDTH,
-      y: base.y - BASE_BUILDING_HEIGHT,
-      w: BASE_BUILDING_HALF_WIDTH * 2,
-      h: BASE_BUILDING_HEIGHT,
-    })
-    if (t !== undefined && t < hitDist) {
-      hitDist = t
-      struckBase = base
-    }
+    const t = rayRectEntry(x, y, dirX, dirY, baseBuilding(base))
+    if (t !== undefined && t < hitDist) hitDist = t
   }
   for (const other of world.ships) {
     if (other.id === ownerId || other.invuln > 0) continue
@@ -104,8 +87,7 @@ export const castRail = (
     const perp = Math.abs(relX * dirY - relY * dirX) // perpendicular offset from the ray
     if (perp > other.radius) continue
     hit = other
-    hitDist = along
-    struckBase = undefined // a ship in front soaks the lance before it reaches the wall
+    hitDist = along // a ship in front soaks the lance before it reaches any wall
   }
   // The lance pierces infantry: every trooper lying on the beam (up to whatever stopped it —
   // terrain face or struck ship) dies where it stands, whichever side it fights for.
@@ -132,10 +114,6 @@ export const castRail = (
   if (hit) {
     applyDamage(hit, damage)
     hit.lastHitBy = ownerId
-  }
-  if (struckBase) {
-    damageBase(world, struckBase, damage)
-    spawnExplosion(world.particles, x + dirX * hitDist, y + dirY * hitDist, Color.SPARK, world.rng, 5)
   }
   return hit
 }
