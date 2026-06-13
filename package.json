@@ -17,6 +17,7 @@
     "chrome:visual": "${CHROME_BIN:-google-chrome-stable} --new-window --remote-debugging-port=${CHROME_VISUAL_PORT:-9223} --user-data-dir=${TMPDIR:-/tmp}/vwing-chrome-visual --no-first-run --no-default-browser-check http://localhost:${VWING_WEB_PORT:-3110}",
     "build": "bun run scripts/build.ts",
     "preview": "bun run scripts/preview.ts",
+    "release": "bun run scripts/release.ts",
     "test": "bun test",
     "format": "biome check --write",
     "lint": "FORCE_COLOR=${FORCE_COLOR:-1} concurrently --prefix-colors auto 'bun:lint:*'",

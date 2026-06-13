@@ -1,7 +1,12 @@
 // The game's public identity, shared by the manifest, the head metadata, and the icon bake
 // so every surface (installed app, link unfurl, search result) tells the same story.
 
+import { version } from '../../package.json'
+
 export const SITE_DEFAULT = 'https://mccall.kapsi.fi/vwing/'
+
+// Single-sourced from package.json (same value the client shows via src/version.ts).
+export const APP_VERSION: string = version
 
 export const GAME_NAME = 'V-Wing'
 export const GAME_TITLE = 'V-Wing — Gravity Dogfighter'
