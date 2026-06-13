@@ -341,3 +341,19 @@ export const fetchGames = async (): Promise<{ name: string; players: number; max
   const body = (await response.json()) as { games: { name: string; players: number; maxPlayers: number }[] }
   return body.games
 }
+
+// Quick reachability probe for the title screen: true when the game server answers the lobby
+// endpoint within the timeout. Any failure (offline, refused, slow, CORS) resolves false rather
+// than throwing — Multiplayer is gated on this.
+export const pingServer = async (timeoutMs = 3000): Promise<boolean> => {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetch(`${serverOrigin()}/api/games`, { signal: controller.signal })
+    return response.ok
+  } catch {
+    return false
+  } finally {
+    clearTimeout(timer)
+  }
+}

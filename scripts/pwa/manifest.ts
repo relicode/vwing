@@ -3,6 +3,7 @@
 // so the file is unambiguous wherever it is fetched from.
 
 import {
+  APP_VERSION,
   absoluteUrl,
   GAME_DESCRIPTION,
   GAME_NAME,
@@ -16,6 +17,7 @@ export const buildManifest = (site: string): Record<string, unknown> => ({
   name: GAME_TITLE,
   short_name: GAME_NAME,
   description: GAME_DESCRIPTION,
+  version: APP_VERSION,
   id: site,
   start_url: site,
   scope: site,
