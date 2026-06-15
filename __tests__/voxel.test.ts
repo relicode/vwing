@@ -22,6 +22,7 @@ import {
   hasDebris,
   igniteSurface,
   restoreVoxel,
+  settleWater,
   snapshotVoxel,
   stepVoxel,
   voxelToBlocks,
@@ -353,5 +354,69 @@ describe('snapshotVoxel / restoreVoxel (terrain persistence round-trip)', () => 
     const snap = snapshotVoxel(vt)
     expect(restoreVoxel(vt, { ...snap, cols: vt.cols - 1 })).toBe(false)
     expect(JSON.stringify(voxelToBlocks(vt))).toBe(before)
+  })
+})
+
+// A small contained basin: two earth walls (rows 30–59) with a thick bed between them (rows 50–59),
+// holding water from row 40 (surface) down to row 50 (the bed top). All in whole cells so the
+// re-settled rect is exact. Independent of the production terrain.
+const WALL_L = 10
+const WALL_R = 20
+const SURF_ROW = 40
+const BED_ROW = 50
+const basin = (): { vt: ReturnType<typeof createVoxelTerrain>; water: WaterBody[] } => {
+  const blocks: Block[] = [
+    blk(WALL_L, 30, 1, BED_ROW - 30, StructureType.EARTH, Surface.EARTH), // left wall, rows 30–49
+    blk(WALL_R, 30, 1, BED_ROW - 30, StructureType.EARTH, Surface.EARTH), // right wall, rows 30–49
+    blk(WALL_L, BED_ROW, WALL_R - WALL_L + 1, 10, StructureType.EARTH, Surface.EARTH), // bed, rows 50–59
+  ]
+  const water: WaterBody[] = [
+    { x: (WALL_L + 1) * C, y: SURF_ROW * C, w: (WALL_R - WALL_L - 1) * C, h: (BED_ROW - SURF_ROW) * C },
+  ]
+  return { vt: createVoxelTerrain(blocks, water), water }
+}
+
+describe('settleWater — water falls / is contained as the terrain changes', () => {
+  test('an intact basin is left exactly as it was (same array reference)', () => {
+    const { vt, water } = basin()
+    expect(settleWater(vt, water)).toBe(water) // unchanged → no redraw
+  })
+
+  test('a localized hole gouged under the bed (solid still below) does NOT smear the body deeper', () => {
+    // The bed is 10 cells thick (rows 50–59). Gouge a hole through its top half in the middle columns,
+    // leaving solid below — the flat rect must NOT chase the hole down (that would draw "water" over
+    // the solid flanks beside it: the screenshot bug). The body is left exactly as it was.
+    const { vt, water } = basin()
+    carveVoxel(vt, 15 * C + C / 2, (BED_ROW + 2) * C, 2.5 * C) // hole in cols ~13–17, rows ~50–54
+    expect(settleWater(vt, water)).toBe(water) // unchanged — no deepen, no bleed over the solid flanks
+  })
+
+  test('breaching a side wall at the waterline drops the surface — the water spills out and falls', () => {
+    const { vt, water } = basin()
+    carveVoxel(vt, WALL_L * C + C / 2, SURF_ROW * C + C / 2, C) // notch the left lip at the surface
+    const settled = settleWater(vt, water)
+    expect(settled).not.toBe(water)
+    expect(settled[0].y).toBeGreaterThan(water[0].y) // the level fell to the breach
+  })
+
+  test('knocking the floor out from under a body drains it away entirely', () => {
+    const { vt, water } = basin()
+    carveVoxel(vt, 15 * C + C / 2, (BED_ROW + 5) * C, 6 * C) // blow the whole bed out under the body
+    expect(settleWater(vt, water)).toHaveLength(0) // no bed left → the water falls away
+  })
+
+  test('a thick rim survives one carved-out boundary column (the lip probe looks past it)', () => {
+    const blocks: Block[] = [
+      blk(8, 30, 3, BED_ROW - 30, StructureType.EARTH, Surface.EARTH), // 3-col-thick left wall, cols 8–10
+      blk(20, 30, 3, BED_ROW - 30, StructureType.EARTH, Surface.EARTH), // 3-col-thick right wall, cols 20–22
+      blk(8, BED_ROW, 15, 10, StructureType.EARTH, Surface.EARTH), // bed, cols 8–22
+    ]
+    const water: WaterBody[] = [
+      { x: 11 * C, y: SURF_ROW * C, w: 9 * C, h: (BED_ROW - SURF_ROW) * C }, // body in cols 11–19
+    ]
+    const vt = createVoxelTerrain(blocks, water)
+    // Blow the innermost left wall column (col 10) clean out from the waterline down to the bed.
+    for (let row = SURF_ROW; row < BED_ROW; row += 1) carveVoxel(vt, 10 * C + C / 2, row * C + C / 2, 5)
+    expect(settleWater(vt, water)).toBe(water) // col 9 still walls it — surface held, no drop, no drain
   })
 })

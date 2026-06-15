@@ -64,6 +64,7 @@ import {
   igniteSurface,
   moveBedrock,
   restoreVoxel,
+  settleWater,
   snapshotVoxel,
   stepVoxel,
   type VoxelSnapshot,
@@ -602,6 +603,10 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     // changed this frame.
     const debrisMoved = stepVoxel(voxel, dt)
     if (terrainDirty || debrisMoved) {
+      // The terrain shifted: re-settle the water against it — a body's surface falls to a breached
+      // wall, and a body whose bed is carved clean through drains away (see settleWater).
+      const settled = settleWater(voxel, world.water)
+      if (settled !== world.water) world.water = settled
       refreshTerrain()
       terrainDirty = false
     }

@@ -60,6 +60,7 @@ const trooper = (owner: number, x: number, y: number, attached = true): Infantry
   radius: 9,
   guard: false,
   attached,
+  wade: 0,
   swim: 0,
   sinking: 0,
   chute: -1,

@@ -471,7 +471,13 @@ export const INFANTRY_KNOCKDOWN_RADIUS_SCALE = 1.6 // blast knockdown ring: kill
 export const BURST_KNOCKDOWN_RADIUS = 80 // px around a grenade/flak burst where landed troopers are knocked flat
 export const INFANTRY_SWIM_TIME = 6 // s a unit floats (can't shoot) in water before it drowns
 export const INFANTRY_SWIM_DRAG = 1.6 // horizontal damping coefficient while swimming (no rescuer near)
-export const INFANTRY_SWIM_SPEED = 34 // px/s a unit paddles toward a rescuing owner
+export const INFANTRY_SWIM_SPEED = 34 // px/s a unit paddles toward a rescuing owner (or, lacking one, toward home shore)
+// Wading: knee/waist-high shallows. A trooper standing where the water over its footing is at most
+// INFANTRY_WADE_DEPTH keeps its feet and fights on (no swim, no drown) but slogs at a fraction of
+// its land speed. Deeper than this it loses the bottom and starts swimming; a swimmer that drifts
+// over ground within this depth of the surface stands back up and wades ashore.
+export const INFANTRY_WADE_DEPTH = 14 // px of water over the feet a trooper can still stand in
+export const INFANTRY_WADE_SPEED_SCALE = 0.55 // fraction of land speed kept while wading
 // Boarding is by TOUCH: the hulls must actually meet (ship radius + trooper radius) — "near" is
 // not aboard. The approach gate below is only how close a ship must hover for a unit to start
 // walking toward it; the scoop itself happens on contact with a landed / barely-drifting ship.
@@ -682,6 +688,11 @@ export const POOL_MAX_RISE = 30 // cells a basin rim may sit above the hit
 export const POOL_MAX_DEPTH = 40 // cells below the hit searched for the basin floor
 export const POOL_MIN_WIDTH = 2 // cells: ignore puddles narrower than this
 export const MAX_WATER_BODIES = 24 // cap on authored + dynamic water bodies
+// When a carve changes the terrain, each water body is re-settled against it (settleWater): a body
+// deepens into ground gouged beneath it and its surface FALLS to a breached side lip. The lip search
+// scans this many columns outward so a thick rim isn't read as "breached" by one carved-out column
+// (a single-column probe would drop the whole sea when its border land takes a stray hit).
+export const WATER_SETTLE_WALL_PROBE = 4 // cells outward a settling body scans for a containing wall
 // Pools fill GRADUALLY: each water-cannon droplet pours a fixed cross-section area into the
 // basin it lands in (the level climbs by area/width per hit, fast in a gully, slow in a wide
 // bowl), capped at the basin's spill level — never the whole basin from a single squirt.

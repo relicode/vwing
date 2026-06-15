@@ -58,8 +58,11 @@ const finite = (value: unknown): value is number => typeof value === 'number' &&
 // kind's numeric fields are finite (booleans/optional-enum fields like `guard`/`heavy` aren't
 // gating — the sim tolerates their absence; required booleans added after a blob was written —
 // `running`, `storming` — stay undefined on its restored rows for the room's life, so every
-// reader must treat them as falsy). Keep this in lockstep with the Device union in types.ts;
-// PERSIST_VERSION must bump if a kind's required numeric surface changes.
+// reader must treat them as falsy). `wade` is deliberately NOT gated either: stepDevice rewrites it
+// from scratch every tick (`device.wade = 0` before any read), so a blob missing it self-heals on
+// the first step and never NaN-poisons — no version bump needed (same as `running`/`storming`).
+// Keep this in lockstep with the Device union in types.ts; PERSIST_VERSION must bump if a kind's
+// required numeric surface changes in a way the sim does NOT self-heal.
 const DEVICE_NUMERIC_FIELDS: Record<DeviceKind, readonly string[]> = {
   [DeviceKind.MISSILE]: [
     'x',

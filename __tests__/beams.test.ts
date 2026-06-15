@@ -67,6 +67,7 @@ const trooper = (x: number, owner: number): Device => ({
   radius: 9,
   guard: false,
   attached: true,
+  wade: 0,
   swim: 0,
   sinking: 0,
   chute: -1,
