@@ -274,6 +274,60 @@ const drawStanding = (g: Graphics, d: InfantrySprite, kit: Kit, time: number, f:
   }
 }
 
+// VIGILANT — a base defender holding the firing line inside the bunker. Feet planted at the ready
+// (a touch wider than at-ease), weapon up, and the head sweeping side to side on watch — a comical
+// sentry scan, out of sync per man (keyed off d.x) so a line of them doesn't bob in unison. The
+// instant his weapon barks he snaps to face the shot, gritting; otherwise he keeps watch with a
+// cocked brow and the odd startled "!". Replaces the marching-in-place the wide pad span would
+// otherwise read as — he holds his post, he doesn't patrol it. (Specialists kneel to fire, so this
+// only ever shows the shouldered tube between rounds.)
+const drawVigilant = (g: Graphics, d: InfantrySprite, kit: Kit, time: number, f: number): void => {
+  const r = d.radius
+  const a = 1
+  const footY = d.y + r
+  const watch = Math.sin(time * 1.7 + d.x * 0.07) // the slow scan sweep
+  const cy = d.y - Math.sin(time * 3 + d.x * 0.13) * r * 0.04 // a brisk at-the-ready bob
+  const hipY = cy + r * 0.7
+  shadow(g, d, r, a)
+  pack(g, d, r, f, a)
+  // Feet braced apart, planted (no gait).
+  g.moveTo(d.x - f * r * 0.22, hipY)
+    .lineTo(d.x - f * r * 0.36, footY)
+    .stroke({ width: r * 0.34, color: kit.body, alpha: a })
+  boot(g, d.x - f * r * 0.36, footY, f, r, a)
+  g.moveTo(d.x + f * r * 0.27, hipY)
+    .lineTo(d.x + f * r * 0.36, footY)
+    .stroke({ width: r * 0.34, color: kit.body, alpha: a })
+  boot(g, d.x + f * r * 0.36, footY, f, r, a)
+  torso(g, d.x, cy - r * 0.55, r, kit, a)
+  const hx = d.x + watch * r * 0.16 // the head leans into the sweep
+  if (d.heavy !== undefined) {
+    head(g, hx, cy - r * 0.95, r, f, kit, a, Mood.SMIRK, 1, true) // brow up, scanning over the tube
+    g.moveTo(d.x + f * r * 0.2, cy - r * 0.3)
+      .lineTo(d.x + f * r * 0.35, cy - r * 0.45)
+      .stroke({ width: r * 0.3, color: kit.body, alpha: a }) // grip arm
+    bazooka(g, d.x + f * r * 0.1, cy - r * 0.5, f, r, a, 0, tubeColor(d)) // shouldered, no flash (he kneels to fire)
+  } else {
+    const flashT = clamp((d.fireCooldown - (INFANTRY_FIRE_INTERVAL - FLASH_WINDOW)) / FLASH_WINDOW, 0, 1)
+    const looking = flashT > 0 ? f : watch >= 0 ? 1 : -1 // snap to the shot, else sweep the field
+    head(g, hx, cy - r * 0.95, r, looking, kit, a, flashT > 0 ? Mood.GRIT : Mood.SMIRK, 1, true)
+    const handX = d.x + f * r * 0.55
+    const handY = cy - r * 0.1
+    g.moveTo(d.x + f * r * 0.2, cy - r * 0.3)
+      .lineTo(handX, handY)
+      .stroke({ width: r * 0.3, color: kit.body, alpha: a }) // arm holding the rifle ready
+    rifle(g, handX, handY, f, r, kit, a, flashT)
+  }
+  // A startled "!" pops over the helmet at the far edge of each sweep — comic vigilance.
+  const startle = clamp((Math.abs(watch) - 0.9) / 0.1, 0, 1)
+  if (startle > 0) {
+    const ax = hx + (watch >= 0 ? 1 : -1) * r * 0.7
+    const ay = cy - r * 1.55
+    g.rect(ax - r * 0.06, ay - r * 0.28, r * 0.12, r * 0.32).fill({ color: Color.SHIP_CORE, alpha: 0.85 * startle })
+    g.circle(ax, ay + r * 0.18, r * 0.08).fill({ color: Color.SHIP_CORE, alpha: 0.85 * startle })
+  }
+}
+
 // STORMING — the capture war's quiet grind made legible: an unopposed attacker plants himself
 // (the sim halts his patrol), turns on the building, and riots at it with a wind-up-and-slam
 // cycle — rears back fuming, then lunges to hammer both fists home under a cartoon WHACK star.
@@ -626,6 +680,12 @@ const drawInfantryPose = (g: Graphics, d: InfantrySprite, kit: Kit, time: number
   const state = stateOf(d)
   if (d.storming && (state === InfantryState.WALKING || state === InfantryState.STANDING)) {
     drawStorming(g, d, kit, time, f)
+    return
+  }
+  // A base defender holding its post reads as the vigilant sentry, not a man marching on the spot —
+  // the same kind of render override as storming, keyed off the guard flag over the two idle poses.
+  if (d.guard && (state === InfantryState.WALKING || state === InfantryState.STANDING)) {
+    drawVigilant(g, d, kit, time, f)
     return
   }
   switch (state) {
