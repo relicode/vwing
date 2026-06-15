@@ -225,6 +225,28 @@ describe('connectivity + debris', () => {
     expect(hasDebris(vt)).toBe(false)
     expect(filledCells(vt.mat)).toBe(before - 8) // only the 8 crater cells are truly gone
   })
+
+  test('undercut grass falls instead of bridging the void (grass is a non-cohesive skin)', () => {
+    // A grounded earth slab (cols 100–119, rows 91–99 on the bedrock floor) under a one-row grass
+    // cap (row 90). Emptying the earth directly beneath two MIDDLE grass cells leaves that grass
+    // laterally connected to still-supported grass on either side — old slab behaviour kept it
+    // hovering as a bridge; a non-cohesive skin loses its footing and drops.
+    const floor = blk(0, FLOOR_ROW, Math.ceil(WORLD_WIDTH / C), 1, StructureType.METAL, Surface.EARTH)
+    const slab = blk(100, 91, 20, 9, StructureType.EARTH, Surface.EARTH)
+    const cap = blk(100, 90, 20, 1, StructureType.EARTH, Surface.GRASS)
+    const vt = createVoxelTerrain([floor, slab, cap], [])
+    expect(vt.pinned.length).toBe(0) // all grounded at birth — grass sits on earth, nothing floats
+    expect(hasDebris(vt)).toBe(false)
+    const capCell = (col: number): number => 90 * vt.cols + col
+    expect(vt.mat[capCell(109)]).not.toBe(0) // grass present before we dig under it
+    // Empty the earth under cols 109–110 the full depth, leaving the grass cap row 90 untouched.
+    for (const col of [109, 110]) for (let row = 91; row <= 99; row += 1) carveVoxel(vt, ...cellCenter(col, row), 4)
+    expect(hasDebris(vt)).toBe(true) // the unsupported grass dropped (regression guard: old code bridged it)
+    expect(vt.mat[capCell(109)]).toBe(0) // grass lifted out of the static grid…
+    expect(vt.mat[capCell(110)]).toBe(0)
+    expect(vt.mat[capCell(108)]).not.toBe(0) // …while its still-supported neighbours hold
+    expect(vt.mat[capCell(111)]).not.toBe(0)
+  })
 })
 
 // Total pixel area of a given surface across the derived blocks.

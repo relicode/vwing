@@ -326,6 +326,35 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     }
   })
 
+  test('a trooper crosses a surface seam on even ground (the walkable span merges level blocks)', () => {
+    // Two abutting blocks at the SAME height but different surfaces — greedy meshing makes them
+    // separate rectangles, the classic 'terrain is different' seam that used to pin a man to one block.
+    const world = makeWorld(
+      [],
+      [infantry({ attached: true, x: 80, y: 94, walkDir: 1, groundLeft: 0, groundRight: 90 })]
+    )
+    world.blocks = [
+      { x: 0, y: 100, w: 90, h: 50, structure: StructureType.EARTH, surface: Surface.GRASS },
+      { x: 90, y: 100, w: 90, h: 50, structure: StructureType.EARTH, surface: Surface.EARTH },
+    ]
+    updateDevices(world, 1 / 30)
+    const u = world.devices[0]
+    expect(u?.kind).toBe(DeviceKind.INFANTRY)
+    if (u?.kind === DeviceKind.INFANTRY) {
+      expect(u.groundLeft).toBe(0) // span now covers BOTH blocks, not just the landing one
+      expect(u.groundRight).toBe(180)
+      expect(stateOf(u)).toBe(InfantryState.WALKING)
+      // And over time it actually walks across the seam into the far block instead of pacing one block.
+      let maxX = u.x
+      for (let i = 0; i < 300; i += 1) {
+        updateDevices(world, 1 / 30)
+        const d = world.devices[0]
+        if (d?.kind === DeviceKind.INFANTRY) maxX = Math.max(maxX, d.x)
+      }
+      expect(maxX).toBeGreaterThan(100) // crossed past the seam at x=90 into the EARTH block
+    }
+  })
+
   test('a storming man plants at the door — the patrol shuffle pauses while the mark lasts', () => {
     const world = makeWorld(
       [],
