@@ -1,6 +1,7 @@
 import { Container, Graphics, Rectangle } from 'pixi.js'
 
 import { Color, StructureType, Surface, WORLD_HEIGHT, WORLD_WIDTH } from '$/game/constants'
+import { waterQuads } from '$/game/render/water-shape'
 import type { Block, RenderWorld, WaterBody } from '$/game/types'
 
 // Per-surface fill + brighter edge for earth blocks; metal (any surface) always renders gray.
@@ -74,11 +75,15 @@ export const drawBlocks = (g: Graphics, blocks: Block[]): void => {
   }
 }
 
-// Water bodies: a translucent volume with a brighter surface line at the top.
-export const drawWaterBodies = (g: Graphics, water: WaterBody[]): void => {
+// Water bodies: a translucent volume with a brighter surface line at the top. Each body is clipped
+// to the empty space it actually occupies (see waterQuads) so the fill hugs an uneven basin floor
+// instead of smearing translucent water over the solid high spots poking up through it.
+export const drawWaterBodies = (g: Graphics, water: WaterBody[], blocks: Block[]): void => {
   for (const b of water) {
-    g.rect(b.x, b.y, b.w, b.h).fill({ color: Color.WATER, alpha: 0.38 })
-    g.rect(b.x, b.y, b.w, 2).fill({ color: Color.WATER_EDGE, alpha: 0.8 })
+    for (const q of waterQuads(b, blocks)) {
+      g.rect(q.x, q.top, q.w, q.floor - q.top).fill({ color: Color.WATER, alpha: 0.38 })
+      g.rect(q.x, q.top, q.w, 2).fill({ color: Color.WATER_EDGE, alpha: 0.8 })
+    }
   }
 }
 
@@ -122,7 +127,7 @@ export const createTerrainView = (): TerrainView => {
       drawBlocks(chunks[i], byChunk[i])
     }
     waterGfx.clear()
-    drawWaterBodies(waterGfx, world.water)
+    drawWaterBodies(waterGfx, world.water, world.blocks)
   }
 
   return { container, draw }
