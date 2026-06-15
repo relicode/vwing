@@ -1,8 +1,8 @@
-import { baseBuilding, baseHolder } from '$/game/bases'
+import { baseBuilding, shellBase, shelteredInBase } from '$/game/bases'
 import { applyDamage } from '$/game/combat'
 import { Color, DeviceKind, RAIL_BEAM_LIFE, RAIL_DAMAGE, RAIL_RANGE } from '$/game/constants'
 import { spawnExplosion } from '$/game/particles'
-import type { Device, Ship, World } from '$/game/types'
+import type { Base, Device, Ship, World } from '$/game/types'
 
 // Age out spent rail beams (damage was applied when they were fired).
 export const updateBeams = (world: World, dt: number): void => {
@@ -62,21 +62,24 @@ export const castRail = (
   const dirY = Math.sin(angle)
 
   let hit: Ship | undefined
+  let struckBase: Base | undefined
   let hitDist = range
   for (const block of world.blocks) {
     const t = rayRectEntry(x, y, dirX, dirY, block)
     if (t !== undefined && t < hitDist) hitDist = t // the beam stops at the nearest terrain face
   }
-  // The barracks building stops the SHIP's lance like any wall — but the indestructible face
-  // takes nothing for it; the holder's own building is transparent to its own fire, matching
-  // the bullet path's exemption. A kneeling trooper's man-portable lance (`self` set) is small
-  // arms like every other infantry round: it passes the band untouched — the wall fight happens
-  // through the slits, and a rail specialist pressed to the wall would otherwise fire a
+  // The barracks building stops the SHIP's lance like any wall — and the strike rolls a sheltered
+  // defender's death (shellBase below); friendly fire counts, so the holder's own building is no
+  // longer transparent to its own fire. A kneeling trooper's man-portable lance (`self` set) is
+  // small arms like every other infantry round: it passes the band untouched — the wall fight
+  // happens through the slits, and a rail specialist pressed to the wall would otherwise fire a
   // zero-length lance into the face at his nose.
   for (const base of self === undefined ? world.bases : []) {
-    if (baseHolder(base) === ownerId) continue
     const t = rayRectEntry(x, y, dirX, dirY, baseBuilding(base))
-    if (t !== undefined && t < hitDist) hitDist = t
+    if (t !== undefined && t < hitDist) {
+      hitDist = t
+      struckBase = base
+    }
   }
   for (const other of world.ships) {
     if (other.id === ownerId || other.invuln > 0) continue
@@ -88,11 +91,14 @@ export const castRail = (
     if (perp > other.radius) continue
     hit = other
     hitDist = along // a ship in front soaks the lance before it reaches any wall
+    struckBase = undefined // …and shields the building behind it from the strike
   }
   // The lance pierces infantry: every trooper lying on the beam (up to whatever stopped it —
-  // terrain face or struck ship) dies where it stands, whichever side it fights for.
+  // terrain face or struck ship) dies where it stands, whichever side it fights for — except a
+  // defender sheltering inside its own building (the opaque wall already stopped the lance).
   for (const d of world.devices) {
     if (d.kind !== DeviceKind.INFANTRY || d === self || d.sinking > 0) continue
+    if (shelteredInBase(world, d.owner, d.x, d.y)) continue
     const relX = d.x - x
     const relY = d.y - y
     const along = relX * dirX + relY * dirY
@@ -101,6 +107,7 @@ export const castRail = (
     spawnExplosion(world.particles, d.x, d.y, Color.BLOOD, world.rng, 6)
     deadTroopers.add(d)
   }
+  if (struckBase) shellBase(world, struckBase, damage)
 
   world.beams.push({
     x1: x,

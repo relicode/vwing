@@ -74,10 +74,10 @@ export enum DeviceKind {
   WELL = 'WELL',
 }
 
-// The garrison's posture, recomputed by stepBases each tick: PATROL keeps a small standing
-// watch outside, HIDE sends every guard indoors (an enemy ship in sight — they can't fight
-// it, so they deny it targets), SORTIE fields everyone but the reserve to repel enemy
-// infantry on the ground. SORTIE outranks HIDE: a landed assault must be met.
+// A threat SENSOR over a base, recomputed by stepBases each tick and read by the bot's goal
+// layer (defenders no longer change posture — they hold the shelter and fire): PATROL = clear,
+// HIDE = an enemy ship within BASE_ALERT_RANGE, SORTIE = enemy infantry landed within
+// BASE_SORTIE_RANGE. SORTIE outranks HIDE: a landed assault is the louder alarm.
 export enum BaseAlarm {
   PATROL = 'PATROL',
   HIDE = 'HIDE',
@@ -178,49 +178,53 @@ export const BASE_PAD_Y_FRAC = 0.52 // pad top, fraction of WORLD_HEIGHT (flatte
 export const BASE_PAD_CELLS = 24 // pad width in voxel cells (432 px of flat grass)
 export const BASE_APRON_CELLS = 24 // span each side of the pad where land is clamped to pad level (open approach)
 export const SPAWN_ALTITUDE = 320 // px above its pad top where a campaign ship (re)spawns
-// The barracks itself: it houses a garrison the owner ship loads aboard (hover/land slow by the
-// pad, same learned verb as the trooper rescue). The garrison IS the base's hitpoints — it
-// fields live guard troopers around the pad (see BaseAlarm + stepBases), regrows only slowly,
-// and attackers who clear the fielded defenders chip the housed count down before the capture
-// timer can even start. Enemy troopers landed inside the capture disc push capture progress;
-// defenders in the zone contest it; a purged zone bleeds progress back. A captured base stops
-// garrison regen, loading, AND the owner's respawns — death while captured is elimination
-// (see sim.ts).
-export const BASE_GARRISON_CAP = 12 // troopers a barracks can house (housed + fielded guards)
-export const BASE_GARRISON_START = 8 // housed at match start
-// The building has a body — and it is IMPENETRABLE and INDESTRUCTIBLE: ships of either side
-// bounce off (or land on) its walls and roof, enemy troopers are stopped at the walls, every
-// ship-class round/blast/lance is eaten by them without hurting the garrison, and a blast can't
-// reach the holder's men sheltering inside. Only infantry small arms cross the band (the wall
-// fight happens through the slits), and only contact-storming troopers (see BASE_STORM_*) can
-// grind the housed count down.
-export const BASE_BUILDING_HALF_WIDTH = 110 // px — the bunker's half-width (hitbox = drawn body)
-export const BASE_BUILDING_HEIGHT = 88 // px the bunker rises above the pad line (hitbox = drawn body)
-export const BASE_GARRISON_REGEN = 1 / 15 // troopers/s regrown while uncaptured (one man every 15 s)
+// The barracks itself: the DEFENDERS are the base's hitpoints. Up to BASE_ACTIVE_DEFENDERS of
+// them stand INSIDE the building and fire out (sheltered — immune to direct fire); the rest wait
+// in reserve (the housed `garrison` count). Total defense = reserve + fielded defenders. The
+// building's body is solid (ships bounce, enemy troopers stop at the walls) and opaque to
+// gunfire, but a ship-class round STRIKING it can kill a sheltered defender — by chance,
+// proportional to the round's damage (BASE_SHELL_KILL_DAMAGE). When the last defender is gone
+// the fort is stormable: attackers in wall/roof contact run the capture clock (BASE_STORM_*).
+// Defenders regrow over time unless the fort is under ground assault. A captured base stops
+// regen, loading, AND the owner's respawns — death while captured is elimination (see sim.ts).
+export const BASE_GARRISON_CAP = 12 // total defenders a barracks holds (reserve + fielded)
+export const BASE_GARRISON_START = 8 // total defenders at match start
+export const BASE_ACTIVE_DEFENDERS = 4 // defenders manifested inside the building, firing out (rest are reserve)
+// The building's body is IMPENETRABLE (solid to every ship, stops enemy troopers at the walls)
+// and OPAQUE to gunfire (no round passes through). It is no longer indestructible to the men
+// within: a ship-class round/blast/lance that strikes the walls can kill ONE sheltered defender,
+// at a chance proportional to its damage. Infantry small arms still cross the band (the wall
+// fight happens through the slits — that is how the defenders fire out and how a stormer's rifle
+// reaches nobody inside).
+export const BASE_BUILDING_HALF_WIDTH = 150 // px — the bunker's half-width (hitbox = drawn body)
+export const BASE_BUILDING_HEIGHT = 120 // px the bunker rises above the pad line (hitbox = drawn body)
+// Shelling lethality: a ship-class hit on the building kills one defender with probability
+// min(1, damage / BASE_SHELL_KILL_DAMAGE). Primary (30) → 0.2 (~5 hits/kill); a heavy blast or
+// lance is far more likely. Sheltered defenders die ONLY this way — never to a direct hit.
+export const BASE_SHELL_KILL_DAMAGE = 150 // damage at which a single building hit is a certain kill
+export const BASE_GARRISON_REGEN = 1 / 15 // defenders/s regrown while uncaptured + not under ground assault
 export const BASE_LOAD_RADIUS = 200 // px from the pad within which a slow owner ship throws the doors open to board
 export const BASE_PAD_METAL_CELLS = 2 // thickness (cells) of the indestructible metal slab the barracks stands on
 export const BASE_CAPTURE_RADIUS = 460 // px disc around the pad center that counts capturers/defenders
-export const BASE_CAPTURE_TIME = 20 // s of uncontested enemy presence to capture (once the garrison is dead)
 export const BASE_REVERT_TIME = 12 // s for progress to bleed back once the zone is purged
-// The garrison in the flesh: guards step out the door on a cadence and patrol the pad. An enemy
-// ship in sight sends them running back indoors (despawned into the housed count — a bunkered
-// trooper can't be strafed); enemy infantry on the ground pull everyone but the reserve out to
-// fight. Loading is embodied too: a slow owner ship by the pad throws the doors open — the whole
-// garrison (down to zero; the reserve binds only the defensive sortie) streams out, runs to the
-// ship, and boards by touch. There is no abstract counter transfer.
-export const BASE_GUARD_PATROL = 4 // guards fielded on routine patrol
-export const BASE_GUARD_RESERVE = 2 // housed troopers a sortie never commits (the last-ditch HP)
-export const BASE_GUARD_RANGE = 96 // px patrol half-span — the watch never leaves the building's shelter (< half-width)
-export const BASE_ALERT_RANGE = 700 // px enemy-ship distance that sends the guards indoors
-export const BASE_SORTIE_RANGE = 600 // px enemy-infantry (landed) distance that triggers the sortie
-export const BASE_DOOR_INTERVAL = 0.7 // s between guards stepping out the door
-export const BASE_DOOR_RADIUS = 16 // px from the door within which a recalled guard slips inside
-// Storming is a CONTACT job: only men pressed against a wall (ONE per side) or standing on the
-// roof (BASE_STORM_ROOF_SLOTS) batter the garrison — and they down tools entirely (no grinding,
-// no pounding pose, no fire held) the moment a live threat shows near the pad.
-export const BASE_ASSAULT_RATE = 0.2 // housed troopers/s each contact stormer kills battering the building
+// Defenders are fielded from reserve on a cadence, manifesting inside the building (they don't
+// patrol or sortie — they hold the shelter and fire out). Loading is embodied: a slow owner ship
+// by the pad throws the doors open and the whole defense (reserve and fielded) streams out, runs
+// to the ship, and boards by touch. There is no abstract counter transfer.
+export const BASE_GUARD_PATROL = 4 // (bot supply threshold) fielded-defender headcount a healthy base shows
+export const BASE_GUARD_RESERVE = 2 // (bot threshold) defenders the bot won't strip when loading
+export const BASE_GUARD_RANGE = 96 // px fallback half-span for a defender's footing when no pad block is found
+export const BASE_ALERT_RANGE = 700 // px enemy-ship distance that raises the HIDE sensor (bot signal)
+export const BASE_SORTIE_RANGE = 600 // px enemy-infantry (landed) distance that raises the SORTIE sensor (bot signal)
+export const BASE_DOOR_INTERVAL = 0.7 // s between defenders fielding out the door
+export const BASE_DOOR_RADIUS = 16 // px from the door within which a returning defender slips back inside
+// Storming runs only over an EMPTIED fort (no defender left). It is a CONTACT job: capture
+// progresses at 1/BASE_STORM_SIDE_TIME per second for EACH wall a stormer presses (one man per
+// side), so one side takes BASE_STORM_SIDE_TIME, both sides half that — and both sides PLUS a
+// trooper on the roof breaches instantly. A live threat near the pad halts the storm.
+export const BASE_STORM_SIDE_TIME = 10 // s to storm with one soldier on a single side (both sides → 5 s)
 export const BASE_STORM_CONTACT = 8 // px gap within which a trooper counts as pressed to a wall / standing on the roof
-export const BASE_STORM_ROOF_SLOTS = 3 // stormers the roof holds (each side wall holds exactly one)
+export const BASE_STORM_ROOF_SLOTS = 3 // roof stormers marked for the pounding pose (each side wall holds exactly one)
 export const BASE_STORM_THREAT_RANGE = 700 // px — an enemy ship or live enemy trooper this close to the pad halts the storm
 
 // Neon-on-near-black palette, stored as 0xRRGGBB for PixiJS fills.

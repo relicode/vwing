@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import {
+  BASE_SHELL_KILL_DAMAGE,
   BOT_KILL_SCORE,
   DEATHMATCH_FRAG_SCORE,
   DeviceKind,
@@ -216,44 +217,64 @@ describe('createSim — base capture cuts respawns', () => {
     expect(slab).toBeDefined() // the indestructible slab moved with the barracks line
   })
 
-  test('the walls are indestructible: an enemy shell is eaten whole and the garrison never feels it', () => {
-    // Identical worlds, with and without the shell: the garrison delta isolates the impact
-    // from the same-frame door cadence and regen.
-    const garrisonAfterStep = (shell: boolean, owner: number): { garrison: number; bullets: number } => {
+  test('ship fire is stopped by the walls and shells a defender — friendly fire included', () => {
+    // Total defense = reserve + the fielded line. A certain-damage shell (>= BASE_SHELL_KILL_DAMAGE)
+    // stops at the wall and culls exactly one defender, isolated from the same-frame door cadence.
+    const defenseAfterStep = (opts: { shell: boolean; owner?: number; infantry?: boolean }) => {
       const world = createWorld(31)
-      const player = combatant(0, 500, 400)
-      const enemy = combatant(1, 1500, 400)
-      const sim = createSim(world, [player, enemy], { mode: SimMode.CAMPAIGN })
+      const sim = createSim(world, [combatant(0, 500, 400), combatant(1, 1500, 400)], { mode: SimMode.CAMPAIGN })
       const home = world.bases.find((b) => b.owner === 0)
       if (!home) throw new Error('no player base seeded')
-      if (shell) world.bullets.push({ x: home.x, y: home.y - 20, vx: 0, vy: 0, radius: 3, life: 1, owner, damage: 50 })
+      if (opts.shell) {
+        world.bullets.push({
+          x: home.x,
+          y: home.y - 20,
+          vx: 0,
+          vy: 0,
+          radius: 3,
+          life: 1,
+          owner: opts.owner ?? 1,
+          damage: BASE_SHELL_KILL_DAMAGE,
+          infantry: opts.infantry,
+        })
+      }
       sim.step(1 / 60)
-      return { garrison: home.garrison, bullets: world.bullets.length }
+      const fielded = world.devices.filter((d) => d.kind === DeviceKind.INFANTRY && d.guard && d.owner === 0).length
+      return { defense: home.garrison + fielded, bullets: world.bullets.length }
     }
-    const control = garrisonAfterStep(false, 0)
-    const shelled = garrisonAfterStep(true, 1)
-    expect(shelled.garrison).toBeCloseTo(control.garrison, 10) // not a man lost to the bombardment
-    expect(shelled.bullets).toBe(0) // …but the walls do eat the shell
-    const ownFire = garrisonAfterStep(true, 0)
-    expect(ownFire.bullets).toBe(1) // the holder's own fire leaves from within — never eaten
+    const control = defenseAfterStep({ shell: false })
+    const shelled = defenseAfterStep({ shell: true, owner: 1 })
+    expect(shelled.bullets).toBe(0) // the wall stops the round (no longer passes through)…
+    expect(shelled.defense).toBeCloseTo(control.defense - 1, 5) // …and one defender falls
+    const friendly = defenseAfterStep({ shell: true, owner: 0 }) // the holder's own cannon
+    expect(friendly.bullets).toBe(0) // no holder exemption — friendly fire is stopped too…
+    expect(friendly.defense).toBeCloseTo(control.defense - 1, 5) // …and culls a defender
+    const rifle = defenseAfterStep({ shell: true, owner: 1, infantry: true })
+    expect(rifle.bullets).toBe(1) // small arms cross the band…
+    expect(rifle.defense).toBeCloseTo(control.defense, 5) // …and harm no sheltered defender
   })
 
-  test('a captured building answers to its capturer: the dispossessed side`s shells are eaten, the holder`s pass', () => {
-    const bulletsAfterStep = (owner: number): number => {
-      const world = createWorld(31)
-      const player = combatant(0, 500, 400)
-      const enemy = combatant(1, 1500, 400)
-      const sim = createSim(world, [player, enemy], { mode: SimMode.CAMPAIGN })
-      const home = world.bases.find((b) => b.owner === 0)
-      if (!home) throw new Error('no player base seeded')
-      home.capture = 1 // the pad fell — the building now answers to side 1, whatever the deed says
-      home.capturedBy = 1
-      world.bullets.push({ x: home.x, y: home.y - 20, vx: 0, vy: 0, radius: 3, life: 1, owner, damage: 50 })
-      sim.step(1 / 60)
-      return world.bullets.length
-    }
-    expect(bulletsAfterStep(0)).toBe(0) // the dispossessed owner now faces an enemy wall
-    expect(bulletsAfterStep(1)).toBe(1) // the capturer shoots across its own muster pad unimpeded
+  test('a captured building still stops fire, but its dead garrison takes nothing more', () => {
+    const world = createWorld(31)
+    const sim = createSim(world, [combatant(0, 500, 400), combatant(1, 1500, 400)], { mode: SimMode.CAMPAIGN })
+    const home = world.bases.find((b) => b.owner === 0)
+    if (!home) throw new Error('no player base seeded')
+    home.capture = 1 // the pad fell
+    home.capturedBy = 1
+    home.garrison = 0
+    world.bullets.push({
+      x: home.x,
+      y: home.y - 20,
+      vx: 0,
+      vy: 0,
+      radius: 3,
+      life: 1,
+      owner: 1,
+      damage: BASE_SHELL_KILL_DAMAGE,
+    })
+    sim.step(1 / 60)
+    expect(world.bullets.length).toBe(0) // the solid wall still stops the round
+    expect(home.garrison).toBe(0) // a fallen fort has no defenders left to shell
   })
 
   test('a trooper`s rifle round passes the band — small arms neither chip the garrison nor get eaten as cover', () => {

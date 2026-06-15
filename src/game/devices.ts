@@ -1,4 +1,4 @@
-import { baseBuilding, baseHolder, stormContact, stormThreatNear } from '$/game/bases'
+import { baseBuilding, baseHolder, shellBase, shelteredInBase, stormContact, stormThreatNear } from '$/game/bases'
 import { castRail } from '$/game/beams'
 import { pushBullet } from '$/game/bullets'
 import { circleRectContact, circlesOverlap, segmentIntersectsRect } from '$/game/collision'
@@ -7,10 +7,6 @@ import {
   AFTERBURNER_IGNITE_LEN,
   AFTERBURNER_IGNITE_RADIUS,
   BASE_CAPTURE_RADIUS,
-  BASE_DOOR_RADIUS,
-  BASE_GARRISON_CAP,
-  BASE_GUARD_RANGE,
-  BaseAlarm,
   BLAST_SHAKE,
   BULLET_RADIUS,
   BURST_KNOCKDOWN_RADIUS,
@@ -138,7 +134,7 @@ import {
 import { clamp, TWO_PI, wrapAngle } from '$/game/math'
 import { spawnExplosion, spawnPuff } from '$/game/particles'
 import { randRange } from '$/game/rng'
-import type { Block, Device, InfantryDevice, Ship, Vec2, World } from '$/game/types'
+import type { Base, Block, Device, InfantryDevice, Ship, Vec2, World } from '$/game/types'
 import { waterSurfaceAt } from '$/game/water'
 
 // True when no terrain block sits on the straight line between two points (infantry LOS).
@@ -173,16 +169,6 @@ const enemyBuildings = (world: World, ownerId: number): { x: number; y: number; 
 // like bedrock does (the holder's garrison still launches its own out from inside).
 const touchingEnemyBase = (world: World, ownerId: number, x: number, y: number, r: number): boolean =>
   enemyBuildings(world, ownerId).some((b) => circleRectContact(x, y, r, b.x, b.y, b.w, b.h) !== undefined)
-
-// True when the trooper stands inside a building his own side holds — walls between him and
-// any outside blast or shockwave. One-sided by construction: the building is solid to its
-// enemies, so a blast can never originate inside someone else's shelter.
-const shelteredInBase = (world: World, d: InfantryDevice): boolean =>
-  world.bases.some((base) => {
-    if (baseHolder(base) !== d.owner) return false
-    const r = baseBuilding(base)
-    return d.x > r.x && d.x < r.x + r.w && d.y > r.y && d.y < r.y + r.h
-  })
 
 // The block directly under a landed trooper's feet (probed just below the soles), or undefined if
 // the ground was shot away. Its surface tells us whether the footing is icy (see the ice slip).
@@ -231,7 +217,7 @@ const nearestEnemyOf = (ownerId: number, x: number, y: number, ships: Ship[]): S
 const knockdown = (world: World, x: number, y: number, radius: number, deadDevices: Set<Device>): void => {
   for (const device of world.devices) {
     if (device.kind !== DeviceKind.INFANTRY || deadDevices.has(device)) continue
-    if (!device.attached || device.sinking > 0 || shelteredInBase(world, device)) continue
+    if (!device.attached || device.sinking > 0 || shelteredInBase(world, device.owner, device.x, device.y)) continue
     if (Math.hypot(device.x - x, device.y - y) > radius) continue
     device.fallen = Math.max(device.fallen, INFANTRY_FALLEN_TIME)
     device.kneel = 0
@@ -264,16 +250,21 @@ const areaDamage = (
   }
   for (const device of world.devices) {
     if (device.kind !== DeviceKind.INFANTRY || deadDevices.has(device)) continue
-    // The barracks is INDESTRUCTIBLE: a blast neither grinds the housed garrison nor reaches
-    // the holder's men sheltering inside its walls. (Enemies can't be inside one — it's solid
-    // to them — so the shelter never hides a blast's own victims from it.)
-    if (shelteredInBase(world, device)) continue
+    // A blast can't reach the defenders sheltering inside their own walls (ship fire kills them
+    // only via shellBase's chance roll). Enemies can't be inside one — it's solid to them — so
+    // the shelter never hides a blast's own victims from it.
+    if (shelteredInBase(world, device.owner, device.x, device.y)) continue
     if (Math.hypot(device.x - x, device.y - y) > radius) continue
     spawnExplosion(world.particles, device.x, device.y, Color.BLOOD, world.rng, 6)
     deadDevices.add(device)
   }
   // The shove past the shrapnel: landed troopers in the wider ring are knocked flat, not killed.
   knockdown(world, x, y, radius * INFANTRY_KNOCKDOWN_RADIUS_SCALE, deadDevices)
+  // A blast washing over a barracks rolls a sheltered defender's death like any other strike.
+  for (const base of world.bases) {
+    const b = baseBuilding(base)
+    if (circleRectContact(x, y, radius, b.x, b.y, b.w, b.h) !== undefined) shellBase(world, base, damage)
+  }
 }
 
 const spawnShards = (
@@ -596,21 +587,11 @@ const fireHeavy = (
   }
 }
 
-// A guard still bound to its post: while the barracks stands and the alarm is up (HIDE or
-// SORTIE), the watch stays on duty — it neither walks to nor boards a ship. At ease (PATROL),
-// guards are ordinary boarders: that IS how a base is loaded, all the way down to an empty house.
-const guardOnDuty = (world: World, device: InfantryDevice): boolean => {
-  if (!device.guard) return false
-  const post = world.bases.find((b) => b.owner === device.owner)
-  return post !== undefined && post.capture < 1 && post.alarm !== BaseAlarm.PATROL
-}
-
 // The unit's own owner ship when it's a viable boarder: present, with room in the bay, and
 // landed or barely drifting (so a fly-by isn't a rescue — it's a ram). undefined otherwise.
-// The bay-room gate keeps troopers patrolling instead of bunching under a parked ship that
-// can't actually take them aboard; a guard under alarm stays on post.
+// The bay-room gate keeps troopers from bunching under a parked ship that can't take them aboard.
 const rescuingOwner = (world: World, device: InfantryDevice): Ship | undefined => {
-  if (device.pickupLock > 0 || guardOnDuty(world, device)) return undefined
+  if (device.pickupLock > 0) return undefined
   const owner = world.ships.find((s) => s.id === device.owner)
   if (!owner || owner.troops >= TROOP_BAY_CAPACITY) return undefined
   return Math.hypot(owner.vx, owner.vy) <= INFANTRY_PICKUP_SPEED ? owner : undefined
@@ -646,21 +627,10 @@ const walkToward = (
 
 // Walk back and forth along the supporting block, turning at its edges (never off it) and at
 // any wall face rising from it, and occasionally reversing on a whim. `facing` tracks the
-// movement direction for the sprite. A guard's PATROL is narrower than its footing: the watch
-// keeps to the building's shelter (its ground span stays the whole pad, so the boarding sprint
-// can still reach a ship parked beyond the solid walls).
+// movement direction for the sprite.
 const patrolInfantry = (device: InfantryDevice, world: World, dt: number): void => {
-  let left = device.groundLeft
-  let right = device.groundRight
-  if (device.guard) {
-    const post = world.bases.find((b) => b.owner === device.owner && b.capture < 1)
-    if (post) {
-      left = Math.max(left, post.x - BASE_GUARD_RANGE)
-      right = Math.min(right, post.x + BASE_GUARD_RANGE)
-    }
-  }
-  const min = left + device.radius
-  const max = right - device.radius
+  const min = device.groundLeft + device.radius
+  const max = device.groundRight - device.radius
   if (max <= min) {
     device.facing = device.walkDir
     return
@@ -732,6 +702,70 @@ const repositionLanded = (world: World, device: InfantryDevice, dt: number): voi
   }
   if (advanceOnBase(world, device, dt)) return
   patrolInfantry(device, world, dt)
+}
+
+// A fielded base defender, every landed tick. While its owner ship is loading by the pad it
+// streams OUT to climb aboard (the boarding sprint reaches the apron beyond the solid walls);
+// otherwise it HOLDS the firing line inside the building — clamped to the interior, squared up to
+// the nearest foe — and shoots out through the wall slit (small arms cross the band). It never
+// patrols or breaks cover except to board, so it never marches in place: the renderer reads the
+// held, non-running guard as the VIGILANT sentry pose. A specialist drops to a knee to loose its
+// heavy (the KNEELING pose), standing back to vigilant between rounds; a rifleman fires on the
+// spot. (Sheltered: only shellBase's chance roll can kill it.)
+const stepDefender = (
+  world: World,
+  device: InfantryDevice,
+  post: Base,
+  dt: number,
+  dead: Set<Ship>,
+  deadDevices: Set<Device>,
+  spawned: Device[]
+): void => {
+  const owner = rescuingOwner(world, device)
+  if (
+    owner &&
+    owner.x >= device.groundLeft &&
+    owner.x <= device.groundRight &&
+    Math.abs(owner.y - device.y) <= INFANTRY_PICKUP_RADIUS + device.radius
+  ) {
+    walkToward(world, device, owner.x, dt) // sprint out to board
+    return
+  }
+  // Hold the shelter: keep inside the interior, face the nearest foe, and fire out.
+  const b = baseBuilding(post)
+  device.x = clamp(device.x, b.x + device.radius, b.x + b.w - device.radius)
+  device.running = false
+  device.slide = 0
+  const target = infantryTarget(world, device)
+  if (target) device.facing = target.x >= device.x ? 1 : -1
+  if (device.heavy !== undefined) {
+    // A specialist runs the same kneel-fire cycle as in the field (so it renders KNEELING, not
+    // a tube fired from the hip). The no-kneel kinds (the sapper) just loose on cadence.
+    const spec = INFANTRY_HEAVY[device.heavy]
+    if (!spec.kneel) {
+      device.fireCooldown -= dt
+      if (device.fireCooldown <= 0) {
+        fireHeavy(world, device, spawned, dead, deadDevices)
+        device.fireCooldown = spec.interval
+      }
+      return
+    }
+    if (device.kneel > 0) {
+      const before = device.kneel
+      device.kneel -= dt
+      if (before > INFANTRY_KNEEL_FIRE_AT && device.kneel <= INFANTRY_KNEEL_FIRE_AT) {
+        fireHeavy(world, device, spawned, dead, deadDevices)
+      }
+      return
+    }
+    device.fireCooldown -= dt
+    if (device.fireCooldown <= 0 && target) {
+      device.kneel = INFANTRY_KNEEL_TIME // drop to a knee; the round flies as the wind-up elapses
+      device.fireCooldown = spec.interval
+    }
+    return
+  }
+  infantryFire(world, device, INFANTRY_FIRE_INTERVAL, INFANTRY_SPREAD_STANDING, dt)
 }
 
 // Resolve an airborne trooper against one solid rectangle (terrain block or enemy barracks).
@@ -1120,6 +1154,18 @@ const stepDevice = (
         device.kneel = 0
         return true
       }
+      // A base defender holds the shelter and fires out — or, while its owner is loading, streams
+      // out to board. It NEVER bolts (handled before the point-blank panic below): the whole point
+      // of the building is that it doesn't have to give ground. A fallen post (captured) releases
+      // it to fight on as a regular line trooper.
+      if (device.guard) {
+        const post = world.bases.find((b) => b.owner === device.owner)
+        if (post && post.capture < 1) {
+          stepDefender(world, device, post, dt, dead, deadDevices, spawned)
+          return true
+        }
+        device.guard = false
+      }
       // Bolt from a point-blank threat: a crowding enemy trooper, or ANYONE alight (friend or
       // foe — fire jumps, so a burning man clears a circle). Infantry shoot each other at range
       // but back off when crowded, sprinting along the block (no fire). Enemy ships are stood
@@ -1166,29 +1212,6 @@ const stepDevice = (
         return true
       }
       device.running = false
-      // A garrison guard answers its barracks' alarm: while the post stands and HIDE is up, it
-      // double-times to the door and slips back inside (despawning into the housed count, where
-      // no strafing run can touch it). A fallen post releases it to fight as a regular trooper.
-      if (device.guard) {
-        const post = world.bases.find((b) => b.owner === device.owner)
-        if (!post || post.capture >= 1) {
-          device.guard = false
-        } else if (post.alarm === BaseAlarm.HIDE) {
-          if (Math.abs(device.x - post.x) <= BASE_DOOR_RADIUS) {
-            post.garrison = Math.min(BASE_GARRISON_CAP, post.garrison + 1)
-            return false // through the door
-          }
-          const dir = post.x >= device.x ? 1 : -1
-          device.running = true
-          device.walkDir = dir
-          device.facing = dir
-          device.kneel = 0
-          if (!wallAhead(world.blocks, device, dir)) {
-            device.x = clampToGround(device, device.x + dir * INFANTRY_RUN_SPEED * dt)
-          }
-          return true
-        }
-      }
       // A specialist plants itself to shoot its heavy weapon: it repositions freely until the
       // cadence is up and a target is in sight, then drops to a knee and holds DEAD STILL — winds
       // up, lets the round fly mid-crouch, holds through the recovery, then stands back up free.
@@ -1439,7 +1462,6 @@ export const resolveInfantryContacts = (world: World): void => {
       if (
         slow &&
         d.owner === ship.id &&
-        !guardOnDuty(world, d) && // an alarmed watch stays on post; at ease, boarding IS the loading
         d.pickupLock <= 0 &&
         ship.troops < TROOP_BAY_CAPACITY &&
         (d.attached || d.swim > 0 || rescuableDrowning) &&
@@ -1455,7 +1477,7 @@ export const resolveInfantryContacts = (world: World): void => {
         d.pickupLock <= 0 &&
         d.sinking <= 0 &&
         (d.attached || d.swim > 0) &&
-        !shelteredInBase(world, d) && // a hull flush against the wall can't reach the men inside
+        !shelteredInBase(world, d.owner, d.x, d.y) && // a hull flush against the wall can't reach the men inside
         circlesOverlap(ship.x, ship.y, ship.radius, d.x, d.y, d.radius)
       ) {
         // Recruited: same side-switch sparkle for both teams; the renderer's owner tint flips.
@@ -1476,7 +1498,7 @@ export const resolveInfantryContacts = (world: World): void => {
         // except through barracks walls: a man inside his side's shelter can't be clipped by
         // a hull glancing off the building.
         if (d.owner === ship.id && d.pickupLock > 0) continue
-        if (d.owner !== ship.id && shelteredInBase(world, d)) continue
+        if (d.owner !== ship.id && shelteredInBase(world, d.owner, d.x, d.y)) continue
         spawnExplosion(world.particles, d.x, d.y, Color.BLOOD, world.rng, 6)
         world.devices.splice(i, 1)
       }

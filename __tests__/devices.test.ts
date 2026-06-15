@@ -745,17 +745,15 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     expect(late.devices.length).toBe(1) // too deep to save
   })
 
-  test('a guard boards at ease, but an alarmed watch stays on post', () => {
+  test('a defender boards its owner by touch — the alarm sensor never gates it', () => {
+    // Defenders leave the shelter only to board: a guard touching its owner's hull climbs aboard
+    // whatever the threat sensor reads (it is no longer a posture that pins men on post).
     const post: Base = { owner: 0, x: 100, y: 109, garrison: 0, capture: 0, alarm: BaseAlarm.SORTIE, door: 0 }
     const owner = makeShip({ id: 0, x: 100, y: 100, vx: 0, vy: 0, troops: 0 })
     const world = makeWorld([owner], [infantry({ owner: 0, x: 100, y: 100, attached: true, guard: true })])
     world.bases = [post]
     resolveInfantryContacts(world)
-    expect(world.devices.length).toBe(1) // SORTIE: defense keeps its men
-    expect(owner.troops).toBe(0)
-    post.alarm = BaseAlarm.PATROL
-    resolveInfantryContacts(world)
-    expect(world.devices.length).toBe(0) // at ease: boarding IS the loading
+    expect(world.devices.length).toBe(0) // touched the hull → aboard
     expect(owner.troops).toBe(1)
   })
 

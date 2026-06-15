@@ -43,7 +43,7 @@ export type Bullet = {
   push?: number // knockback impulse applied to a hit ship (water cannon); washes a trooper into a skid
   burn?: boolean // flamethrower: scorches grass→earth on terrain hit (no carve), sets a hit trooper alight
   wet?: boolean // water cannon: wets earth→grass + pools on terrain hit (no carve), douses a burning trooper
-  infantry?: boolean // small-arms round (rifle / specialist burst): passes the barracks band (the wall fight happens through the slits) — ship-class rounds are eaten by the indestructible walls
+  infantry?: boolean // small-arms round (rifle / specialist burst): passes the barracks band (the wall fight happens through the slits) — ship-class rounds are stopped by the walls and shell the defenders
   color?: number // render tint override (undefined = owner-based default)
 }
 
@@ -99,7 +99,7 @@ export type Device =
       owner: number
       radius: number
       heavy?: WeaponKind // undefined = rifleman; set = specialist carrying that man-portable heavy (rolled on deploy)
-      guard: boolean // a base-garrison sentry: patrols its barracks, hides indoors from enemy ships, never boards a ship
+      guard: boolean // a fielded base defender: holds inside its barracks firing out, leaves only to board (devices.ts)
       attached: boolean // true once it lands on a surface (then it patrols + shoots)
       swim: number // s of floating left while in water (0 = on land / airborne); drowns at 0
       sinking: number // s of sinking left after drowning (> 0 = a corpse descending + fading)
@@ -186,19 +186,20 @@ export type WaterBody = {
 
 // A home barracks: it garrisons troopers for its owner ship to load aboard, and is the
 // side's lifeline — enemy troopers capturing it cut the owner's respawns (see bases.ts).
-// The building itself is impenetrable and indestructible (solid to every ship and to enemy
-// infantry; weapons can't scratch it); the garrison doubles as the base's hitpoints: it
-// fields live guards inside the building's shelter, and attackers who clear them must
-// batter the housed count down BY CONTACT (walls/roof) before the capture timer can start.
+// The building's body is impenetrable (solid to every ship and to enemy infantry) and OPAQUE
+// to gunfire, but no longer indestructible to the men within: the DEFENDERS are its hitpoints
+// — up to BASE_ACTIVE_DEFENDERS stand inside firing out, the rest wait in reserve (`garrison`),
+// and a ship-class round striking the walls kills them by chance (shellBase). Only over an
+// emptied fort can attackers in wall/roof contact run the capture clock.
 export type Base = {
   owner: number // ship id whose respawns this barracks sustains
   x: number // pad center, world px
   y: number // pad top surface, world px (the building sits on this line)
-  garrison: number // housed troopers (0..BASE_GARRISON_CAP; float accumulator) — the base's HP pool
+  garrison: number // RESERVE troopers (0..BASE_GARRISON_CAP; float) — fielded defenders are checked out of this
   capture: number // enemy capture progress 0..1; >= 1 = captured (respawns cut)
   capturedBy?: number // capturing ship id while captured; undefined = the owner holds it
-  alarm: BaseAlarm // the garrison's posture this tick (patrol / hide indoors / sortie), set by stepBases
-  door: number // s until the next guard can step out the door
+  alarm: BaseAlarm // threat sensor this tick (patrol / ship near / infantry near), set by stepBases — read by the bot
+  door: number // s until the next defender can field out the door
 }
 
 // The full mutable simulation. Owned by the engine closure (never module-level).
