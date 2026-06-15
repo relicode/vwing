@@ -180,6 +180,30 @@ const supportingBlock = (device: InfantryDevice, blocks: Block[]): Block | undef
   return blocks.find((b) => device.x > b.x && device.x < b.x + b.w && footY > b.y && footY < b.y + b.h)
 }
 
+// The full flat run a landed trooper may patrol. Greedy meshing splits even ground into separate
+// rectangles at every surface-type change (grass|earth|ice) and meshing seam, so the block under
+// the feet is usually only PART of the walkable surface. Starting from it, absorb every block whose
+// TOP sits level (within STEP_TOL) and abuts the run — a real step up or drop stays a bound, so men
+// still turn at cliffs and never climb. Recomputed each landed tick, so the span also self-corrects
+// after a knockback or ice-slide nudges a unit onto a neighbour.
+const STEP_TOL = 4 // px: adjacent block tops within this count read as one continuous surface
+const walkableSpan = (ground: Block, blocks: Block[]): { left: number; right: number } => {
+  let left = ground.x
+  let right = ground.x + ground.w
+  const top = ground.y
+  for (let guard = 0; guard < 256; guard += 1) {
+    const next = blocks.find((b) => Math.abs(b.y - top) <= STEP_TOL && b.x <= right + 1 && b.x + b.w > right + 1)
+    if (!next) break
+    right = next.x + next.w
+  }
+  for (let guard = 0; guard < 256; guard += 1) {
+    const next = blocks.find((b) => Math.abs(b.y - top) <= STEP_TOL && b.x + b.w >= left - 1 && b.x < left - 1)
+    if (!next) break
+    left = next.x
+  }
+  return { left, right }
+}
+
 // Locomotion is sluggish in the shallows: a wading trooper keeps only INFANTRY_WADE_SPEED_SCALE of
 // its land pace (every ground mover reads this so the slog is uniform across patrol / boarding /
 // panic / burning flail). `wade` is set each landed tick (0 = dry).
@@ -1128,6 +1152,13 @@ const stepDevice = (
         device.slide = 0
         return true
       }
+      // Patrol the whole contiguous flat run under the feet, not just the single greedy-meshed block
+      // landed on — so a trooper crosses surface-type/meshing seams on even ground (and a one-cell
+      // ledge that's part of a longer flat run patrols instead of freezing STANDING). Self-correcting
+      // each tick, so a unit knocked or slid onto a neighbour re-derives its bounds from the new spot.
+      const span = walkableSpan(ground, world.blocks)
+      device.groundLeft = span.left
+      device.groundRight = span.right
       // The enemy compound is impenetrable on foot: a raider overlapping the walls (a panic
       // bolt, a wash, a marching overshoot) is shoved back out to the nearest face. Men with
       // their feet at or above the roofline are up top, where the roof is theirs to walk.
