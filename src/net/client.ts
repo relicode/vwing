@@ -17,7 +17,7 @@ import { spawnExplosion, spawnPuff, updateParticles } from '$/game/particles'
 import { createRenderer } from '$/game/renderer'
 import { createRng } from '$/game/rng'
 import type { Particle } from '$/game/types'
-import { createCanvasApp } from '$/game/view'
+import { createCanvasApp, fitStageToCanvas } from '$/game/view'
 import { type FeedEntry, reconnectDelay, updateFeed } from '$/net/feed'
 import {
   decodeServer,
@@ -83,6 +83,7 @@ export const connectGame = async (game: string, name: string, intent: JoinIntent
   const app = await createCanvasApp()
   const renderer = createRenderer(createRng(0xc0ffee), app.renderer)
   app.stage.addChild(renderer.view)
+  const stopFit = fitStageToCanvas(app)
   const input = createInput(window)
   const fxRng = createRng(0x51ce) // cosmetic-only stream for client-side particles
   let fxParticles: Particle[] = [] // engine trails / smoke / wreck explosions, regenerated locally
@@ -310,6 +311,7 @@ export const connectGame = async (game: string, name: string, intent: JoinIntent
 
   const destroy = (): void => {
     leave()
+    stopFit()
     input.destroy()
     app.ticker.stop()
     renderer.destroy()
