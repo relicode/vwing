@@ -69,9 +69,10 @@ export const drawBars = (g: Graphics, ship: Ship): void => {
 }
 
 // A home barracks: a bunker squatting on its pad, tinted by whoever holds it (the tint flips to
-// the capturer's color the moment it falls), with garrison helmet pips over the door and a
-// flashing takeover bar while the capture is in progress. Drawn in the dynamic layer — capture
-// state and garrison mutate every frame, so it can't live in the terrainVersion cache.
+// the capturer's color the moment it falls). Its translucent body shows the fielded defenders
+// standing inside (drawn by the infantry layer); reserve helmet pips rack over the door, and a
+// flashing takeover bar runs above the roof while a capture is in progress. Drawn in the dynamic
+// layer — capture state and the reserve count mutate every frame, so it can't live in the cache.
 export const drawBase = (g: Graphics, base: Base, time: number, selfId: number, slots?: PaletteSlots): void => {
   const body = ownerHex(baseHolder(base), selfId, slots)
   const w = BASE_BUILDING_HALF_WIDTH * 2 // the drawn body IS the solid/impenetrable box (see baseBuilding)
@@ -85,7 +86,8 @@ export const drawBase = (g: Graphics, base: Base, time: number, selfId: number, 
     .lineTo(x + w - 16, y - 22)
     .stroke({ width: 2, color: body }) // antenna
   g.circle(x + w - 16, y - 24, 3).fill({ color: body })
-  // Garrison pips: one helmet dot per housed trooper, racked beside the door.
+  // Reserve pips: one helmet dot per reserve trooper (the fielded defenders stand inside the
+  // building proper), racked beside the door.
   const housed = Math.floor(base.garrison)
   for (let i = 0; i < housed; i += 1) {
     const px = x + 10 + (i % 6) * 10

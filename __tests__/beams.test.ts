@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import { castRail, fireRail } from '$/game/beams'
 import {
   BASE_BUILDING_HALF_WIDTH,
+  BASE_SHELL_KILL_DAMAGE,
   BaseAlarm,
   DeviceKind,
   RAIL_DAMAGE,
@@ -84,8 +85,8 @@ const trooper = (x: number, owner: number): Device => ({
   fallen: 0,
 })
 
-// A barracks parked dead ahead of a muzzle at the origin: the body spans y -62..26, so a
-// +x lance from (0, 0) runs straight through it. Owner 1 = an enemy wall for shooter 0.
+// A barracks parked dead ahead of a muzzle at the origin: the body spans y -94..26 and x 150..450,
+// so a +x lance from (0, 0) hits its west face at x=150. Owner 1 = an enemy wall for shooter 0.
 const makeBase = (over: Partial<Base>): Base => ({
   owner: 1,
   x: 300,
@@ -164,63 +165,66 @@ describe('fireRail', () => {
     expect(survivors[0]?.x).toBe(500)
   })
 
-  test('an enemy barracks stops the lance dead — and the indestructible wall takes nothing for it', () => {
-    const shooter = makeShip({ id: 0, x: 0, y: 0, angle: 0 }) // facing +x
-    const base = makeBase({})
-    const world = makeWorld([shooter])
+  test('an enemy barracks stops the lance and shells a sheltered defender; those behind survive', () => {
+    const base = makeBase({ garrison: 4 })
+    const inside = { ...trooper(300, 1), guard: true } // a fielded defender on the line, sheltered
+    const exposed = trooper(120, 1) // in front of the west wall (x < 150): skewered
+    const behind = trooper(500, 1) // beyond the opaque wall: safe
+    const world = makeWorld([])
     world.bases = [base]
-    world.devices = [
-      trooper(150, 1), // exposed in front of the wall: skewered
-      trooper(500, 1), // sheltering behind it: the walls that stop bullets stop the lance too
-    ]
-    fireRail(world, shooter)
-    expect(base.garrison).toBe(8) // not a man lost — the building can't be shelled
+    world.devices = [inside, exposed, behind]
+    const dead = new Set<Device>()
+    castRail(world, 0, 0, 0, 0, 1100, BASE_SHELL_KILL_DAMAGE, dead) // a ship lance, certain to shell
     expect(world.beams[0].x2).toBeCloseTo(base.x - BASE_BUILDING_HALF_WIDTH) // burns into the wall face
-    const survivors = world.devices.filter((d) => d.kind === DeviceKind.INFANTRY)
-    expect(survivors).toHaveLength(1)
-    expect(survivors[0]?.x).toBe(500)
+    expect(dead.has(exposed)).toBe(true) // the man out front is skewered
+    expect(dead.has(behind)).toBe(false) // the man behind the opaque wall is safe
+    expect(world.devices).not.toContain(inside) // …and the sheltered defender is shelled (certain kill)
   })
 
-  test('the holder`s own building is transparent to its own fire', () => {
+  test('no holder exemption: a ship`s lance is stopped by its OWN building too (friendly fire)', () => {
     const shooter = makeShip({ id: 1, x: 0, y: 0, angle: 0 }) // the base's own side
     const enemy = makeShip({ id: 0, x: 500, y: 0 })
-    const base = makeBase({})
+    const base = makeBase({}) // owner 1
     const world = makeWorld([shooter, enemy])
     world.bases = [base]
-    expect(fireRail(world, shooter)).toBe(enemy) // straight through its own wall
-    expect(base.garrison).toBe(8)
+    expect(fireRail(world, shooter)).toBeUndefined() // its own wall stops it short of the enemy
+    expect(world.beams[0].x2).toBeCloseTo(base.x - BASE_BUILDING_HALF_WIDTH) // burns into its own wall face
   })
 
-  test('a trooper`s man-portable lance is small arms: the building neither stops it nor takes its shelling', () => {
-    // A kneeling rail specialist storming the door stands INSIDE the building box — a wall that
-    // stopped his lance would make it zero-length at his nose. castRail marks trooper fire by
-    // its `self` param (the sniper's own body exemption); ship rail passes none.
-    const sniper = trooper(250, 0) // inside the box (190..410) — pressed up at the wall fight
-    const doorGuard = trooper(340, 1) // the defender he is shooting across the band
+  test('a trooper`s man-portable lance is small arms: it crosses the band, shells nothing, never touches the sheltered', () => {
+    // A kneeling rail specialist stands INSIDE the building box — a wall that stopped his lance
+    // would make it zero-length at his nose. castRail marks trooper fire by its `self` param, which
+    // skips the bases entirely: it passes the band, shells no defender, and (like all small arms)
+    // can't reach a defender sheltering inside — only an exposed enemy beyond the wall.
+    const sniper = trooper(250, 0) // inside the box (150..450)
+    const sheltered = { ...trooper(340, 1), guard: true } // a defender on the line behind the wall
+    const exposed = trooper(600, 1) // an enemy out in the open beyond the building
     const base = makeBase({})
     const world = makeWorld([])
-    world.devices = [sniper, doorGuard]
+    world.devices = [sniper, sheltered, exposed]
     world.bases = [base]
     const dead = new Set<Device>()
     castRail(world, sniper.x, sniper.y, 0, 0, 1100, 30, dead, sniper)
     expect(base.garrison).toBe(8) // small arms don't shell the building…
     expect(world.beams[0].x2).toBeCloseTo(sniper.x + 1100) // …or get eaten by it
-    expect(dead.has(doorGuard)).toBe(true) // the lance reached across the band
+    expect(dead.has(exposed)).toBe(true) // it skewers the man in the open
+    expect(dead.has(sheltered)).toBe(false) // but never the defender sheltering inside
+    expect(world.devices).toContain(sheltered)
   })
 
-  test('a captured building answers to its capturer: a wall to the dispossessed, transparent to the holder', () => {
+  test('a captured building is a wall to BOTH sides; a fallen fort loses no one', () => {
     const dispossessed = makeShip({ id: 1, x: 0, y: 0, angle: 0 })
-    const taken = makeBase({ capture: 1, capturedBy: 0 }) // deed says 1, the flag flies for 0
+    const taken = makeBase({ capture: 1, capturedBy: 0, garrison: 4 }) // deed 1, flag flies for 0
     const world = makeWorld([dispossessed])
     world.bases = [taken]
     fireRail(world, dispossessed)
-    expect(world.beams[0].x2).toBeCloseTo(taken.x - BASE_BUILDING_HALF_WIDTH) // now an enemy wall
-    expect(taken.garrison).toBe(8) // though a fallen barracks is past hurting
+    expect(world.beams[0].x2).toBeCloseTo(taken.x - BASE_BUILDING_HALF_WIDTH) // stopped at the wall
+    expect(taken.garrison).toBe(4) // a fallen barracks is past hurting
 
     const capturer = makeShip({ id: 0, x: 0, y: 0, angle: 0 })
     const held = makeWorld([capturer])
-    held.bases = [makeBase({ capture: 1, capturedBy: 0 })]
+    held.bases = [makeBase({ capture: 1, capturedBy: 0, garrison: 4 })]
     fireRail(held, capturer)
-    expect(held.beams[0].x2).toBeGreaterThan(410) // his own muster pad doesn't eat his fire
+    expect(held.beams[0].x2).toBeCloseTo(300 - BASE_BUILDING_HALF_WIDTH) // the holder's fire is stopped too — no transparency
   })
 })

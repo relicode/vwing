@@ -1,21 +1,20 @@
 import {
+  BASE_ACTIVE_DEFENDERS,
   BASE_ALERT_RANGE,
-  BASE_ASSAULT_RATE,
   BASE_BUILDING_HALF_WIDTH,
   BASE_BUILDING_HEIGHT,
   BASE_CAPTURE_RADIUS,
-  BASE_CAPTURE_TIME,
   BASE_DOOR_INTERVAL,
   BASE_GARRISON_CAP,
   BASE_GARRISON_REGEN,
   BASE_GARRISON_START,
-  BASE_GUARD_PATROL,
-  BASE_GUARD_RESERVE,
   BASE_LOAD_RADIUS,
   BASE_REVERT_TIME,
+  BASE_SHELL_KILL_DAMAGE,
   BASE_SORTIE_RANGE,
   BASE_STORM_CONTACT,
   BASE_STORM_ROOF_SLOTS,
+  BASE_STORM_SIDE_TIME,
   BASE_STORM_THREAT_RANGE,
   BaseAlarm,
   BOT_ID,
@@ -72,6 +71,47 @@ export const baseBuilding = (base: Base): { x: number; y: number; w: number; h: 
   h: BASE_BUILDING_HEIGHT,
 })
 
+// A point lying within the building's body — used to spot the defenders manning its shelter.
+const insideBuilding = (base: Base, x: number, y: number): boolean => {
+  const b = baseBuilding(base)
+  return x > b.x && x < b.x + b.w && y > b.y && y < b.y + b.h
+}
+
+// A trooper standing inside a building its own side holds: sheltered from outside fire, blasts,
+// and rams (only shellBase's chance roll can touch it). One-sided by construction — the building
+// is solid to its enemies, so a hostile can never be inside someone else's shelter. Shared by the
+// sim's bullet path, the rail caster, and the device step.
+export const shelteredInBase = (world: World, owner: number, x: number, y: number): boolean =>
+  world.bases.some((base) => baseHolder(base) === owner && insideBuilding(base, x, y))
+
+// A ship-class round / blast / lance striking the building. The walls are OPAQUE (the round
+// never passes through) but no longer indestructible to the men within: this kills ONE sheltered
+// defender at a chance proportional to the round's damage (min(1, damage / BASE_SHELL_KILL_DAMAGE))
+// — sheltered defenders die ONLY this way, never to a direct hit. A fielded defender (a live
+// device inside) is the visible casualty; failing that a reserve man falls (stepBases re-mans the
+// line from reserve next tick). A captured or already-empty fort shrugs the round off. Rolls on
+// world.rng so the sim stays deterministic on the server and under test.
+export const shellBase = (world: World, base: Base, damage: number): void => {
+  if (base.capture >= 1 || damage <= 0) return
+  if (world.rng() >= Math.min(1, damage / BASE_SHELL_KILL_DAMAGE)) return
+  const idx = world.devices.findIndex(
+    (d) =>
+      d.kind === DeviceKind.INFANTRY &&
+      d.guard &&
+      d.owner === base.owner &&
+      d.sinking <= 0 &&
+      insideBuilding(base, d.x, d.y)
+  )
+  if (idx >= 0) {
+    const d = world.devices[idx]
+    spawnExplosion(world.particles, d.x, d.y, Color.BLOOD, world.rng, 6)
+    world.devices.splice(idx, 1)
+  } else if (base.garrison >= 1) {
+    base.garrison -= 1
+    spawnExplosion(world.particles, base.x, base.y - 12, Color.BLOOD, world.rng, 6)
+  }
+}
+
 // A live threat near the pad, from the STORMERS' point of view: any enemy-of-raider ship, or
 // any enemy-of-raider trooper still on its feet (downed/seized/drowned men scare nobody —
 // airborne ones count: an incoming defender drop is exactly what a stormer breaks off for).
@@ -103,28 +143,28 @@ export const stormContact = (base: Base, d: InfantryDevice): 'left' | 'right' | 
   return undefined
 }
 
-// Advance every barracks one frame: threat posture + guard fielding (including throwing the
-// doors open for a boarding owner), garrison regen, and the capture war. The garrison is the
-// base's hitpoints — it walks the building's shelter as live guards (who hide indoors from
-// ships and sortie against infantry), and attackers who clear the fielded defenders batter
-// the building by CONTACT — one man pressed to each wall, a roof party of three — killing
-// the housed count down to zero before the capture timer can start. Loading is embodied: there
-// is no counter transfer — the men step out, run to the landed ship, and board by touch (see
-// devices.ts). Drop placement is still the whole skill — troopers only count while landed inside
-// the disc, and they never pathfind toward it.
+// Advance every barracks one frame: the threat sensor, defender fielding (manning the firing
+// line inside, or streaming out to a boarding owner), reserve regen, and the capture war. The
+// DEFENDERS are the base's hitpoints — up to BASE_ACTIVE_DEFENDERS stand inside the shelter and
+// fire out (devices.ts), the rest wait in reserve (`garrison`). Ship fire that strikes the
+// building kills them by chance (shellBase, called from the bullet/beam/blast paths); only over
+// an EMPTIED fort do unopposed attackers in wall/roof contact run the capture clock. Loading is
+// embodied: there is no counter transfer — the men step out, run to the landed ship, and board
+// by touch (devices.ts). Drop placement is still the whole skill — attackers only count while
+// landed inside the disc, and they never pathfind toward it.
 export const stepBases = (world: World, dt: number): void => {
   if (world.bases.length === 0) return
   // Last frame's storming marks expire — the capture war below re-marks the men still at it.
-  // The flag drives the renderer's pounding pose AND plants the man (patrolInfantry holds a
-  // marked man at the door instead of wandering him around the disc).
+  // The flag drives the renderer's pounding pose AND plants the man (advanceOnBase holds a
+  // marked man at the wall instead of wandering him around the disc).
   for (const d of world.devices) {
     if (d.kind === DeviceKind.INFANTRY) d.storming = false
   }
   for (const base of world.bases) {
     const captured = base.capture >= 1
 
-    // One pass over the devices: count this base's fielded guards and spot landed enemy
-    // infantry close enough to warrant the sortie.
+    // One pass over the devices: count this base's fielded defenders and spot landed enemy
+    // infantry close enough to read on the threat sensor.
     let fielded = 0
     let enemyInfantryNear = false
     for (const d of world.devices) {
@@ -138,21 +178,43 @@ export const stepBases = (world: World, dt: number): void => {
     const enemyShipNear = world.ships.some(
       (s) => s.id !== base.owner && Math.hypot(s.x - base.x, s.y - base.y) <= BASE_ALERT_RANGE
     )
-    // SORTIE outranks HIDE: troopers on the ground must be met even under an enemy ship's guns.
+    // The alarm is now purely a SENSOR for the bot's goal layer (defenders no longer patrol,
+    // sortie, or hide — they hold the shelter and fire). SORTIE outranks HIDE.
     base.alarm = enemyInfantryNear ? BaseAlarm.SORTIE : enemyShipNear ? BaseAlarm.HIDE : BaseAlarm.PATROL
 
-    // Garrison replenishes only while the owner holds the base AND no ground battle is on —
-    // nobody musters with enemies at the door (regen mid-assault would sustain a zombie
-    // garrison hovering just under one man, stalling the capture clock forever). The cap
-    // counts the whole defense (housed + fielded), so cycling guards out the door grows nothing.
-    if (!captured && base.alarm !== BaseAlarm.SORTIE && base.garrison + fielded < BASE_GARRISON_CAP) {
+    // The capture war over the LANDED attackers inside the disc. A man flat on his back (or
+    // EMP-seized) neither storms nor occupies as a live raider, but a downed man still OCCUPIES
+    // (counted apart) so a knockdown ring doesn't un-capture a won pad or revert a stalled storm.
+    let attackers = 0
+    let attackersDown = 0
+    let attackerId: number | undefined
+    const raiders: InfantryDevice[] = []
+    for (const d of world.devices) {
+      if (d.kind !== DeviceKind.INFANTRY || !d.attached || d.owner === base.owner) continue
+      if (Math.hypot(d.x - base.x, d.y - base.y) > BASE_CAPTURE_RADIUS) continue
+      if (d.fallen > 0 || d.stun > 0) {
+        attackersDown += 1
+      } else {
+        attackers += 1
+        attackerId = d.owner
+        raiders.push(d)
+      }
+    }
+
+    // Total defense = reserve + the fielded firing line: the base's hitpoints, and the gate on
+    // storming. The cap counts the whole defense, so fielding a man out the door grows nothing.
+    const totalDefense = base.garrison + fielded
+
+    // Reserve regrows while the owner holds the base AND no ground assault is on (enemy troopers
+    // in the disc): the fort patches up between battles but cannot regenerate its way out of a
+    // storm. Regen mid-assault would also stall the capture clock forever just under one man.
+    if (!captured && attackers === 0 && attackersDown === 0 && totalDefense < BASE_GARRISON_CAP) {
       base.garrison = Math.min(BASE_GARRISON_CAP - fielded, base.garrison + BASE_GARRISON_REGEN * dt)
     }
 
-    // A boarding call: the owner ship landed (or barely drifting) by the pad with room in the
-    // bay throws the doors open. Loading is embodied — the men run to the hull and board by
-    // touch (devices.ts) — so emptying the WHOLE garrison is the owner's call to make; only
-    // the defensive sortie is bound by the reserve.
+    // A boarding call: the owner ship landed (or barely drifting) by the pad with room in the bay
+    // throws the doors open. Loading is embodied — the men run to the hull and board by touch
+    // (devices.ts) — so emptying the WHOLE defense onto the ship is the owner's call to make.
     const owner = world.ships.find((s) => s.id === base.owner)
     const loading =
       owner !== undefined &&
@@ -161,60 +223,26 @@ export const stepBases = (world: World, dt: number): void => {
       Math.hypot(owner.vx, owner.vy) <= INFANTRY_PICKUP_SPEED &&
       Math.hypot(owner.x - base.x, owner.y - (base.y - 40)) <= BASE_LOAD_RADIUS
 
-    // The door: guards step out on a cadence — a small standing patrol in peacetime (everyone,
-    // down to an empty house, while the owner is boarding), everyone but the reserve when enemy
-    // infantry close in, nobody while hiding from a ship (the recall back through the door lives
-    // in devices.ts with the rest of the guard behaviour).
+    // The door: a reserve man steps out on a cadence — to man the firing line (up to
+    // BASE_ACTIVE_DEFENDERS inside) in peace and under siege alike, or to stream out and board
+    // while the owner is loading. The return back through the door lives in devices.ts.
     base.door = Math.max(0, base.door - dt)
-    if (!captured && base.door <= 0) {
-      const wantsOut =
-        base.alarm === BaseAlarm.SORTIE
-          ? base.garrison >= BASE_GUARD_RESERVE + 1
-          : base.alarm === BaseAlarm.PATROL && base.garrison >= 1 && (loading || fielded < BASE_GUARD_PATROL)
-      if (wantsOut) {
-        spawnGuard(world, base, world.ships.find((s) => s.id === base.owner)?.squad)
-        base.garrison -= 1
-        base.door = BASE_DOOR_INTERVAL
-      }
+    if (!captured && base.door <= 0 && base.garrison >= 1 && (loading || fielded < BASE_ACTIVE_DEFENDERS)) {
+      spawnGuard(world, base, owner?.squad)
+      base.garrison -= 1
+      base.door = BASE_DOOR_INTERVAL
     }
 
-    // The capture war over the LANDED troopers inside the disc. Any defender freezes enemy
-    // progress. Unopposed attackers storm the building by CONTACT — one man battering each
-    // wall plus a roof party chips the housed garrison (the base's hitpoints) — and only over
-    // an emptied barracks does the capture clock run (crossing 1 records the capturer). An
-    // empty zone bleeds progress back — which is also how a base is re-liberated (dropping
-    // below 1 clears capturedBy), so purging the zone with ship guns alone wins the base back.
-    let attackers = 0
-    let attackersDown = 0
-    let defenders = 0
-    let attackerId: number | undefined
-    const raiders: InfantryDevice[] = []
-    for (const d of world.devices) {
-      if (d.kind !== DeviceKind.INFANTRY || !d.attached) continue
-      if (Math.hypot(d.x - base.x, d.y - base.y) > BASE_CAPTURE_RADIUS) continue
-      // A man flat on his back (or EMP-seized) neither storms the door nor holds it — a blast
-      // that floors the whole party really does interrupt the assault (or the defense). But a
-      // downed man still OCCUPIES: he's counted apart so a won pad isn't un-captured (and a
-      // dead-waiting capturer isn't eliminated) by one knockdown ring over men who are alive
-      // and about to stand back up.
-      const down = d.fallen > 0 || d.stun > 0
-      if (d.owner === base.owner) {
-        if (!down) defenders += 1
-      } else if (down) {
-        attackersDown += 1
-      } else {
-        attackers += 1
-        attackerId = d.owner
-        raiders.push(d)
-      }
-    }
-    if (attackers > 0 && defenders === 0) {
-      // The battering crew: contact only — the FIRST man pressed to each wall (one per side)
-      // and the first BASE_STORM_ROOF_SLOTS standing on the roof. Everyone else in the disc is
-      // occupation, not demolition. And the work stops cold while a live threat (enemy ship or
-      // trooper) is near the pad: stormers down tools and fight instead — devices.ts reads the
-      // expired mark and releases them back to their weapons.
+    // Storming runs ONLY over an emptied fort. Unopposed attackers in wall/roof contact run the
+    // capture clock at 1/BASE_STORM_SIDE_TIME per pressed side (one side → BASE_STORM_SIDE_TIME,
+    // both sides → half that), and both sides PLUS a man on the roof breaches at once. The work
+    // stops cold while a live threat (enemy ship or trooper) is near the pad. An empty zone
+    // bleeds progress back — which also re-liberates a base (dropping below 1 clears capturedBy),
+    // so relieving the pad wins it back.
+    if (attackers > 0 && totalDefense < 1) {
       if (!captured && attackerId !== undefined && !stormThreatNear(world, base, attackerId)) {
+        // The contact crew: the FIRST man pressed to each wall (one per side) and the first
+        // BASE_STORM_ROOF_SLOTS standing on the roof. Everyone else in the disc is occupation.
         const crew: InfantryDevice[] = []
         let leftTaken = false
         let rightTaken = false
@@ -232,34 +260,21 @@ export const stepBases = (world: World, dt: number): void => {
             crew.push(s)
           }
         }
-        // The crew marks for the renderer's comic pounding (and devices.ts holds its fire —
-        // both hands are on the building). The turn-to-the-door applies only in the poses the
-        // renderer actually swaps (kneel ≤ 0 && !running && no slide ⟺ stateOf WALKING/STANDING
-        // for a marked man): a kneeling specialist keeps squaring up to his target and a
-        // bolting or skidding man keeps the heading his legs are selling.
+        // The crew marks for the renderer's comic pounding (and devices.ts holds its fire — both
+        // hands are on the building). The turn-to-the-door applies only in the poses the renderer
+        // actually swaps (kneel ≤ 0 && !running && no slide ⟺ stateOf WALKING/STANDING).
         for (const s of crew) {
           s.storming = true
           if (s.kneel <= 0 && !s.running && s.slide === 0 && s.x !== base.x) {
             s.facing = s.x < base.x ? 1 : -1
           }
         }
-        // Battering only matters while the base still stands — a fallen barracks' count is
-        // frozen. A whole housed trooper lost: a red flash at the door sells the storming.
-        if (base.garrison > 0 && crew.length > 0) {
-          const before = base.garrison
-          base.garrison = Math.max(0, base.garrison - BASE_ASSAULT_RATE * crew.length * dt)
-          if (Math.floor(before) > Math.floor(base.garrison)) {
-            spawnExplosion(world.particles, base.x, base.y - 12, Color.BLOOD, world.rng, 6)
-          }
+        const sides = (leftTaken ? 1 : 0) + (rightTaken ? 1 : 0)
+        if (leftTaken && rightTaken && roofTaken > 0) {
+          base.capture = 1 // flanked both sides + a roofer: the gate comes down at once
+        } else if (sides > 0) {
+          base.capture = Math.min(1, base.capture + (sides / BASE_STORM_SIDE_TIME) * dt)
         }
-      }
-      // A fraction of a man isn't a defender (the same floor a deploy uses): the clock starts
-      // once the last whole housed trooper is dead, while the residue bleeds out underneath.
-      // Deliberately NOT threat-gated: the clock is occupation, not battering — a hostile in
-      // the wider threat ring makes the men down tools, but only a defender INSIDE the disc
-      // contests the ground itself.
-      if (base.garrison < 1) {
-        base.capture = Math.min(1, base.capture + dt / BASE_CAPTURE_TIME)
         if (base.capture >= 1) base.capturedBy = attackerId
       }
     } else if (attackers === 0 && attackersDown === 0 && base.capture > 0) {

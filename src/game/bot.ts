@@ -218,19 +218,19 @@ export const nextGoal = (prev: BotGoal, self: Ship, world: World, target: Ship |
   if (!home || !enemyBase) return BotGoal.DOGFIGHT
   // 1. A nearby enemy ship always wins attention — never stop being a dogfighter when pressed.
   if (target && Math.hypot(target.x - self.x, target.y - self.y) < BOT_THREAT_RANGE) return BotGoal.DOGFIGHT
-  // 2. The home barracks under threat — capture progress, or the garrison already sortied
-  // against landed raiders (capture stays 0 while they storm the building, so the sortie is
-  // the early warning). Flying home empty-handed helps nobody, so the sortie response needs
-  // troops aboard to drop.
+  // 2. The home barracks under threat — capture progress, or enemy infantry landed near the pad
+  // (the SORTIE sensor: capture stays 0 while defenders remain, so a ground assault forming is
+  // the early warning). Flying home empty-handed helps nobody, so this response needs troops
+  // aboard to drop on the raiders.
   if (home.capture > 0) return BotGoal.DEFEND
   if (home.alarm === BaseAlarm.SORTIE && self.troops >= 1) return BotGoal.DEFEND
-  // 2b. The barracks under the guns: shelling reads HIDE (everyone bunkered), not SORTIE — so
-  // once the housed count is ground toward the reserve with an enemy ship overhead, fly home
-  // and answer the siege (no troops needed: the ship itself is the answer to a shelling ship).
-  // The bay counts as supply only while the bot is the one draining the pad (mid-REARM, or
-  // sitting at the door where loading happens): those men were withdrawn, not lost to shells,
-  // so a mere flyby can't spook the bot into dumping its just-loaded troops back over the pad.
-  // A stocked bay FAR from home is no alibi — a garrison really ground down calls the ship back.
+  // 2b. The barracks under the guns: an enemy ship overhead reads HIDE — once shelling has ground
+  // the defense toward the reserve, fly home and answer the siege (no troops needed: the ship
+  // itself is the answer to a shelling ship). The bay counts as supply only while the bot is the
+  // one draining the pad (mid-REARM, or sitting at the door where loading happens): those men were
+  // withdrawn, not lost to shells, so a mere flyby can't spook the bot into dumping its just-loaded
+  // troops back over the pad. A stocked bay FAR from home is no alibi — a defense really ground
+  // down calls the ship back.
   const loadingDrain = prev === BotGoal.REARM || Math.hypot(self.x - home.x, self.y - (home.y - 40)) <= BASE_LOAD_RADIUS
   if (
     home.alarm === BaseAlarm.HIDE &&
@@ -238,9 +238,9 @@ export const nextGoal = (prev: BotGoal, self: Ship, world: World, target: Ship |
       BASE_GUARD_PATROL + BASE_GUARD_RESERVE
   )
     return BotGoal.DEFEND
-  // 3. Sticky rearm: keep loading until topped up. Supply = housed + the fielded watch (loading
-  // boards both), but the bot never strips its base below the reserve — emptying the whole
-  // garrison is a gamble only the human is allowed to take.
+  // 3. Sticky rearm: keep loading until topped up. Supply = reserve + the fielded defenders
+  // (loading boards both), but the bot never strips its base below the reserve — emptying the
+  // whole defense is a gamble only the human is allowed to take.
   const canLoad = home.capture < 1 && home.garrison + guardCount(world, self.id) > BASE_GUARD_RESERVE
   if (prev === BotGoal.REARM && self.troops < BOT_REARM_DONE_TROOPS && canLoad) return BotGoal.REARM
   // 4. Stocked: fly the assault. 5. Short on troops but the barracks can supply: go load.

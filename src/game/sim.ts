@@ -1,4 +1,4 @@
-import { baseBuilding, baseHolder, createCampaignBases, stepBases } from '$/game/bases'
+import { baseBuilding, createCampaignBases, shellBase, shelteredInBase, stepBases } from '$/game/bases'
 import { updateBeams } from '$/game/beams'
 import { spawnBullet, updateBullets } from '$/game/bullets'
 import { circleRectContact, circlesOverlap } from '$/game/collision'
@@ -382,9 +382,14 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
       if (bulletHitShip(bullet, events)) continue
       // Friendly fire is real: a bullet hits whatever trooper it meets, whoever fired it
       // (infantry fire from the muzzle, clear of their own bodies, and hold the trigger when a
-      // friend stands in the lane — see devices.ts).
+      // friend stands in the lane — see devices.ts). A defender sheltering inside its own
+      // building is the exception: no round reaches it directly — the wall takes the hit, and
+      // shellBase rolls the casualty below.
       const unit = world.devices.findIndex(
-        (d) => d.kind === DeviceKind.INFANTRY && circlesOverlap(bullet.x, bullet.y, bullet.radius, d.x, d.y, d.radius)
+        (d) =>
+          d.kind === DeviceKind.INFANTRY &&
+          !shelteredInBase(world, d.owner, d.x, d.y) &&
+          circlesOverlap(bullet.x, bullet.y, bullet.radius, d.x, d.y, d.radius)
       )
       if (unit >= 0) {
         const inf = world.devices[unit]
@@ -411,18 +416,20 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
         }
         continue
       }
-      // Ship fire vs the barracks building: the walls are INDESTRUCTIBLE — every ship-class
-      // round (water and flame gouts included) is eaten where it strikes and hurts nothing
-      // inside. The HOLDER's own fire is exempt (his garrison's covering fire leaves from
-      // within — and a captured pad guards its capturer, not the dispossessed deed-holder),
-      // and so is every small-arms round: the wall fight happens through the slits, so rifles
-      // neither get eaten as one-way hard cover nor leave the sheltering watch unshootable.
-      const struckBase = world.bases.find((b) => {
-        if (baseHolder(b) === bullet.owner || bullet.infantry) return false
-        const r = baseBuilding(b)
-        return circleRectContact(bullet.x, bullet.y, bullet.radius, r.x, r.y, r.w, r.h) !== undefined
-      })
+      // Ship fire vs the barracks building: the walls are OPAQUE — every ship-class round (water
+      // and flame gouts included) is stopped where it strikes, never passing through. It no longer
+      // hurts nothing: shellBase rolls a sheltered defender's death by chance proportional to the
+      // round's damage — and friendly fire counts (a holder shelling its own pad culls its own
+      // garrison). Only small-arms rounds are exempt: the wall fight happens through the slits, so
+      // rifles cross the band both ways (that is how the defenders fire out).
+      const struckBase = bullet.infantry
+        ? undefined
+        : world.bases.find((b) => {
+            const r = baseBuilding(b)
+            return circleRectContact(bullet.x, bullet.y, bullet.radius, r.x, r.y, r.w, r.h) !== undefined
+          })
       if (struckBase) {
+        shellBase(world, struckBase, bullet.damage)
         spawnExplosion(world.particles, bullet.x, bullet.y, Color.SPARK, world.rng, 5)
         continue
       }
