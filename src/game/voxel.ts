@@ -12,6 +12,7 @@ import {
   SURFACE_REGROW_TIME,
   Surface,
   VOXEL_CELL,
+  WATER_SETTLE_WALL_PROBE,
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from '$/game/constants'
@@ -591,6 +592,102 @@ export const findPool = (vt: VoxelTerrain, x: number, y: number): WaterBody | un
   const py = surfaceRow * vt.cell
   const ph = (bottomRow - surfaceRow) * vt.cell
   return ph > 0 ? { x: px, y: py, w: pw, h: ph } : undefined
+}
+
+// ── Dynamic water settling ───────────────────────────────────────────────────
+// Authored + poured water rests in basins as flat rectangles. When the terrain under or beside a
+// body changes (a carve, settling debris), each body is re-settled against the heightfield so it
+// stays physically honest WITHOUT a per-cell fluid sim: the surface drops to a breached side lip
+// (water spills/falls until it is contained again), and a body whose bed is carved clean through —
+// a column open all the way down — DRAINS away (the water falls through). A flat rect can't model a
+// floor that's deep in one column and shallow in the next, so the bed never sinks below its original
+// level: a localized hole is left to drain rather than smearing "water" over the solid beside it.
+// Water never RISES here — only pouring (raisePool) lifts a surface.
+
+// The first solid cell row in a column scanning down through [fromRow, toRow], or undefined when the
+// column is open the whole way (water would drain straight through). Out-of-bounds counts as solid.
+const firstSolidBelow = (vt: VoxelTerrain, col: number, fromRow: number, toRow: number): number | undefined => {
+  for (let r = fromRow; r <= toRow; r += 1) if (solidAt(vt, col, r)) return r
+  return undefined
+}
+
+// The containing lip on one side of a body: scan up to WATER_SETTLE_WALL_PROBE columns outward (so a
+// thick rim survives a single carved column). The side is walled — surface held — as soon as a probed
+// column stands solid at the waterline; otherwise the rim is breached and the lip is the highest
+// terrain found across the probe (the new, lower spill row), or undefined when every probed column is
+// open the whole way down (the wall is gone → the body drains on this side).
+const sideLip = (
+  vt: VoxelTerrain,
+  fromCol: number,
+  step: number,
+  surfRow: number,
+  floorRow: number
+): number | undefined => {
+  let lip: number | undefined
+  for (let i = 0; i < WATER_SETTLE_WALL_PROBE; i += 1) {
+    const here = firstSolidBelow(vt, fromCol + step * i, surfRow, floorRow)
+    if (here === surfRow) return surfRow // a wall to the waterline → contained this side
+    if (here !== undefined && (lip === undefined || here < lip)) lip = here // track the highest surviving barrier
+  }
+  return lip
+}
+
+// Re-settle one water body against the current terrain. Returns the same object when nothing moved,
+// an adjusted body when the floor/level shifted, or undefined when it no longer holds water (drained).
+// Rect-preserving: the surface only ever drops (a breached wall), and the floor never sinks below the
+// body's original bed — a flat rect chasing a localized carved hole would smear "water" over the
+// solid flanks beside it (the floor follows the deepest, but the rect can't cut around the shallows).
+const settleBody = (vt: VoxelTerrain, body: WaterBody): WaterBody | undefined => {
+  const cell = vt.cell
+  const c0 = clamp(Math.floor(body.x / cell), 0, vt.cols - 1)
+  const c1 = clamp(Math.floor((body.x + body.w - 0.001) / cell), 0, vt.cols - 1)
+  const surfRow = Math.round(body.y / cell)
+  const bedRow = Math.round((body.y + body.h) / cell) // the body's original floor
+
+  // Floor: a column with no solid all the way down has lost its bed → the body drains (water falls
+  // through). Otherwise the floor can only RISE (debris silting it up), never deepen below the bed —
+  // a localized hole gouged under the body is left to drain through rather than smearing the flat rect
+  // down over the solid that remains beside it (the screenshot bug: water drawn inside a mesa).
+  let floorRow = surfRow
+  for (let c = c0; c <= c1; c += 1) {
+    const t = firstSolidBelow(vt, c, surfRow + 1, vt.rows - 1)
+    if (t === undefined) return undefined
+    const clamped = Math.min(t, bedRow)
+    if (clamped > floorRow) floorRow = clamped
+  }
+
+  // Containing lips: the columns just outside the span. A side is walled when it is solid at the
+  // surface level; otherwise the water spills over it. The spill row is the lower (larger-row) of the
+  // two walls. When it sits BELOW the old surface a wall was breached and the level falls to that lip
+  // (water spills/drains); otherwise the surface is held exactly where it was — so a part-poured pool
+  // keeps its sub-cell fill (only a breach snaps the surface to a cell-aligned lip).
+  const leftLip = sideLip(vt, c0 - 1, -1, surfRow, floorRow)
+  const rightLip = sideLip(vt, c1 + 1, 1, surfRow, floorRow)
+  if (leftLip === undefined || rightLip === undefined) return undefined // a wall breached clean through → drains
+  const spillRow = Math.max(leftLip, rightLip)
+  const floorY = floorRow * cell
+  const y = spillRow > surfRow ? spillRow * cell : body.y // never rises; falls to a breached lip
+  if (y >= floorY) return undefined // the level dropped to (or below) the bed → empty
+  const h = floorY - y
+  if (y === body.y && Math.abs(h - body.h) < 0.001) return body // unchanged — let the caller skip a redraw
+  return { x: body.x, y, w: body.w, h }
+}
+
+// Re-settle every water body against the terrain (run after a carve / debris settle). Returns a new
+// array only when something actually moved; otherwise the same reference (so no spurious redraws).
+export const settleWater = (vt: VoxelTerrain, water: WaterBody[]): WaterBody[] => {
+  let changed = false
+  const out: WaterBody[] = []
+  for (const body of water) {
+    const settled = settleBody(vt, body)
+    if (settled === body) {
+      out.push(body)
+      continue
+    }
+    changed = true
+    if (settled) out.push(settled)
+  }
+  return changed ? out : water
 }
 
 // Slide a bedrock anchor vertically to `newY` (a floating landing slab riding a rising pool):

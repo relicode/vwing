@@ -77,6 +77,7 @@ const bracedSpecialist = (heavy: WeaponKind): World => {
         heavy,
         guard: false,
         attached: true,
+        wade: 0,
         swim: 0,
         sinking: 0,
         chute: -1,

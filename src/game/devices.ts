@@ -99,6 +99,8 @@ import {
   INFANTRY_SWIM_SPEED,
   INFANTRY_SWIM_TIME,
   INFANTRY_THRUST_PANIC_DIST,
+  INFANTRY_WADE_DEPTH,
+  INFANTRY_WADE_SPEED_SCALE,
   INFANTRY_WALK_SPEED,
   INFANTRY_WALK_TURN_CHANCE,
   INFANTRY_WATER_DAMAGE,
@@ -177,6 +179,17 @@ const supportingBlock = (device: InfantryDevice, blocks: Block[]): Block | undef
   const footY = device.y + device.radius + FOOTING_PROBE
   return blocks.find((b) => device.x > b.x && device.x < b.x + b.w && footY > b.y && footY < b.y + b.h)
 }
+
+// Locomotion is sluggish in the shallows: a wading trooper keeps only INFANTRY_WADE_SPEED_SCALE of
+// its land pace (every ground mover reads this so the slog is uniform across patrol / boarding /
+// panic / burning flail). `wade` is set each landed tick (0 = dry).
+const wadeScale = (device: InfantryDevice): number => (device.wade > 0 ? INFANTRY_WADE_SPEED_SCALE : 1)
+
+// A block a swimmer can stand on to wade ashore: its top lies below the waterline but within
+// INFANTRY_WADE_DEPTH of it (so standing leaves the man only knee/waist deep), under the unit's x.
+// Lets a drifting swimmer reaching the shelf rise out of the swim instead of treading until it drowns.
+const standableUnderWater = (blocks: Block[], x: number, surface: number): Block | undefined =>
+  blocks.find((b) => x > b.x && x < b.x + b.w && b.y >= surface && b.y <= surface + INFANTRY_WADE_DEPTH)
 
 // The trooper's behavioural state, derived from its fields — drives the firing rules and most
 // rendered poses. Precedence runs sinking → swimming → airborne → landed. An in-progress ice
@@ -620,7 +633,7 @@ const walkToward = (
   device.walkDir = targetX >= device.x ? 1 : -1
   device.running = true
   if (!wallAhead(world.blocks, device, device.walkDir)) {
-    device.x = clampToGround(device, device.x + device.walkDir * speed * dt)
+    device.x = clampToGround(device, device.x + device.walkDir * speed * wadeScale(device) * dt)
   }
   device.facing = device.walkDir
 }
@@ -637,7 +650,7 @@ const patrolInfantry = (device: InfantryDevice, world: World, dt: number): void 
   }
   if (world.rng() < INFANTRY_WALK_TURN_CHANCE) device.walkDir = -device.walkDir
   if (wallAhead(world.blocks, device, device.walkDir)) device.walkDir = -device.walkDir
-  device.x += device.walkDir * INFANTRY_WALK_SPEED * dt
+  device.x += device.walkDir * INFANTRY_WALK_SPEED * wadeScale(device) * dt
   if (device.x <= min) {
     device.x = min
     device.walkDir = 1
@@ -952,6 +965,7 @@ const stepDevice = (
       if (device.pickupLock > 0) device.pickupLock -= dt
       if (device.stun > 0) device.stun = Math.max(0, device.stun - dt)
       if (device.fallen > 0) device.fallen = Math.max(0, device.fallen - dt)
+      device.wade = 0 // recomputed each landed tick; cleared here so swimming/airborne units read dry
       // Drowned corpse: sink and fade for a moment, then vanish (no explosion).
       if (device.sinking > 0) {
         device.sinking -= dt
@@ -990,24 +1004,59 @@ const stepDevice = (
           }
         }
       }
-      // Swimming: bob at the surface and either paddle toward a nearby rescuing owner (directed —
-      // both hands busy, holds fire) or drift to a stop (standby — looses the odd poor shot).
+      // Swimming: bob at the surface. A shallow shelf underfoot lets the man find the bottom and
+      // wade out; otherwise he makes for safety — paddling to a nearby rescuing owner if there is
+      // one (both hands busy, holds fire), else striking out for the shore of his own base, and only
+      // drifting (loosing the odd poor shot) when there's nowhere to swim to. Solid walls hold him
+      // (no tunnelling into the cliff he's pressed against).
       if (device.swim > 0) {
         device.running = false
         device.slide = 0
-        device.swim -= dt
         const surface = waterSurfaceAt(world.water, device.x, device.y)
+        const shelf = surface !== undefined ? standableUnderWater(world.blocks, device.x, surface) : undefined
+        if (shelf) {
+          // Feet on the bottom: rise out of the swim into a wade — never drowns from the shallows.
+          device.swim = 0
+          device.attached = true
+          device.chute = -1
+          device.vx = 0
+          device.vy = 0
+          device.y = shelf.y - device.radius
+          device.groundLeft = shelf.x
+          device.groundRight = shelf.x + shelf.w
+          return true
+        }
+        device.swim -= dt
         if (surface !== undefined) device.y = surface + device.radius * 0.2
         device.vy = 0
+        // Make for safety: a nearby rescuing owner first, else the shore of one's own base (the shelf
+        // check above lands him once he reaches the shallows). With nowhere to swim to — no boat, no
+        // base, or pressed to a cliff he can't climb — he treads water and looses the odd poor shot.
         const rescuer = rescuingOwner(world, device)
+        const home = world.bases.find((b) => b.owner === device.owner)
+        let target: number | undefined
         if (rescuer && Math.hypot(rescuer.x - device.x, rescuer.y - device.y) <= INFANTRY_RESCUE_RANGE) {
-          device.facing = rescuer.x >= device.x ? 1 : -1
-          device.vx = device.facing * INFANTRY_SWIM_SPEED
+          target = rescuer.x
+        } else if (home && Math.abs(home.x - device.x) > device.radius) {
+          target = home.x
+        }
+        if (target !== undefined) {
+          device.facing = target >= device.x ? 1 : -1
+          const nextX = device.x + device.facing * INFANTRY_SWIM_SPEED * dt
+          if (!insideAnyBlock(nextX, device.y, world.blocks)) {
+            device.vx = device.facing * INFANTRY_SWIM_SPEED
+            device.x = nextX
+          } else {
+            device.vx = 0 // pressed to a cliff — can't climb out unaided; tread and plink
+            infantryFire(world, device, INFANTRY_SWIM_FIRE_INTERVAL, INFANTRY_SPREAD_SWIM, dt)
+          }
         } else {
           device.vx *= Math.exp(-INFANTRY_SWIM_DRAG * dt)
+          const nextX = device.x + device.vx * dt
+          if (!insideAnyBlock(nextX, device.y, world.blocks)) device.x = nextX
+          else device.vx = 0
           infantryFire(world, device, INFANTRY_SWIM_FIRE_INTERVAL, INFANTRY_SPREAD_SWIM, dt)
         }
-        device.x += device.vx * dt
         if (device.swim <= 0) {
           device.sinking = INFANTRY_SINK_TIME
           return true
@@ -1091,6 +1140,24 @@ const stepDevice = (
       }
       // Burning ground: footing on grass that's alight catches the man himself.
       if (device.burning <= 0 && ground.surface === Surface.FIRE) device.burning = INFANTRY_BURN_TIME
+      // Standing in water: the shallows are knee/waist-high — the man keeps his feet but slogs (wade,
+      // slowing every ground mover below); past INFANTRY_WADE_DEPTH the bottom drops away and he
+      // loses his footing into a swim (which can drown). Guards hold the dry, floated pad, never wade.
+      if (!device.guard) {
+        const waterTop = waterSurfaceAt(world.water, device.x, device.y)
+        const submerged = waterTop !== undefined ? device.y + device.radius - waterTop : 0
+        if (submerged > INFANTRY_WADE_DEPTH) {
+          device.attached = false
+          device.chute = -1
+          device.running = false
+          device.kneel = 0
+          device.slide = 0
+          device.vy = 0
+          device.swim = INFANTRY_SWIM_TIME
+          return true // re-enters the swim path next tick
+        }
+        if (submerged > 0) device.wade = submerged
+      }
       // Knocked flat: nothing to do but wait out the count and scramble back up — no walking,
       // no firing, any brace or skid broken. (The timer ticks down at the top of the case; a
       // burning man down on the ground burns where he lies until he's up again.)
@@ -1124,7 +1191,7 @@ const stepDevice = (
         else if (device.x >= device.groundRight - device.radius) device.walkDir = -1
         if (wallAhead(world.blocks, device, device.walkDir)) device.walkDir = -device.walkDir
         device.facing = device.walkDir
-        device.x = clampToGround(device, device.x + device.walkDir * INFANTRY_BURN_RUN_SPEED * dt)
+        device.x = clampToGround(device, device.x + device.walkDir * INFANTRY_BURN_RUN_SPEED * wadeScale(device) * dt)
         return true
       }
       // Ice slip: footing on an icy surface occasionally gives way into a decaying slide. Once
@@ -1207,7 +1274,7 @@ const stepDevice = (
         device.kneel = 0
         // Cornered against a wall: hold there (still running scared) rather than grind into it.
         if (!wallAhead(world.blocks, device, away)) {
-          device.x = clampToGround(device, device.x + away * INFANTRY_RUN_SPEED * dt)
+          device.x = clampToGround(device, device.x + away * INFANTRY_RUN_SPEED * wadeScale(device) * dt)
         }
         return true
       }

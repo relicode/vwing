@@ -101,6 +101,7 @@ export type Device =
       heavy?: WeaponKind // undefined = rifleman; set = specialist carrying that man-portable heavy (rolled on deploy)
       guard: boolean // a fielded base defender: holds inside its barracks firing out, leaves only to board (devices.ts)
       attached: boolean // true once it lands on a surface (then it patrols + shoots)
+      wade: number // px of water over the footing while standing in the shallows (0 = dry); slows movement, never drowns
       swim: number // s of floating left while in water (0 = on land / airborne); drowns at 0
       sinking: number // s of sinking left after drowning (> 0 = a corpse descending + fading)
       chute: number // parachute: -1 = none; 0..1 = deployed openness while descending
