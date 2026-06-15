@@ -119,8 +119,11 @@ const meshGrid = (mat: Uint8Array, cols: number, rows: number, cell: number, ox:
   return blocks
 }
 
-// Filled cells reachable (4-connected) from a seed predicate. Used both for grounding (seeds =
-// bedrock/floor/pin) and for isolating loose components (seeds = a single cell).
+// Filled cells reachable from a seed predicate (seeds = bedrock/floor/pin) — the grounded set.
+// Cohesive earth spreads grounding 4-connected, but GRASS (and its burning FIRE form) is a
+// non-cohesive skin: it can be entered only from the cell DIRECTLY BELOW it (stepped up onto),
+// never sideways or from above. So an undercut grass run stops bridging a carved void as a slab —
+// it loses its anchor and reflowDebris drops it. (Floor/bedrock grass is itself a seed, so it holds.)
 const floodFilled = (vt: VoxelTerrain, seeds: Iterable<number>, into: Uint8Array): void => {
   const stack: number[] = []
   for (const s of seeds) {
@@ -133,17 +136,19 @@ const floodFilled = (vt: VoxelTerrain, seeds: Iterable<number>, into: Uint8Array
     const i = stack.pop() as number
     const col = i % vt.cols
     const row = (i / vt.cols) | 0
+    const above = row > 0 ? i - vt.cols : -1
     const neighbours = [
       col > 0 ? i - 1 : -1,
       col < vt.cols - 1 ? i + 1 : -1,
-      row > 0 ? i - vt.cols : -1,
+      above,
       row < vt.rows - 1 ? i + vt.cols : -1,
     ]
     for (const n of neighbours) {
-      if (n >= 0 && vt.mat[n] !== EMPTY && !into[n]) {
-        into[n] = 1
-        stack.push(n)
-      }
+      if (n < 0 || vt.mat[n] === EMPTY || into[n]) continue
+      // Grass/fire is held only from directly below — never bridged sideways or hung from above.
+      if ((vt.mat[n] === GRASS || vt.mat[n] === FIRE) && n !== above) continue
+      into[n] = 1
+      stack.push(n)
     }
   }
 }
