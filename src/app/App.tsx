@@ -9,6 +9,7 @@ import PracticeGame from '$/app/PracticeGame'
 import TitleScreen from '$/app/TitleScreen'
 import { createAppTheme } from '$/app/theme'
 import { VIEW_HEIGHT, VIEW_WIDTH, type WeaponKind } from '$/game/constants'
+import { weaponFromHash } from '$/game/weapons'
 import type { JoinIntent } from '$/net/protocol'
 
 // Top-level routing between the menu, the lobby, the offline Practice run, and an online
@@ -23,8 +24,9 @@ type Route =
 const App = () => {
   const theme = useMemo(() => createAppTheme(), [])
   const [route, setRoute] = useState<Route>({ view: 'title' })
-  // Debug: a pinned secondary for Practice (undefined = random per life), chosen on the menu.
-  const [weapon, setWeapon] = useState<WeaponKind | undefined>(undefined)
+  // A pinned secondary for Practice (undefined = random per life): seeded from a
+  // `#special-weapon=watercannon` URL hash, then still editable on the menu.
+  const [weapon, setWeapon] = useState<WeaponKind | undefined>(() => weaponFromHash(globalThis.location?.hash ?? ''))
 
   const toTitle = () => setRoute({ view: 'title' })
   const toLobby = () => setRoute({ view: 'lobby' })
