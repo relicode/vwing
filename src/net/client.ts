@@ -1,7 +1,6 @@
 import {
   Color,
   GamePhase,
-  NET_DEFAULT_PORT,
   NET_RECONNECT_DELAYS_MS,
   NET_SNAPSHOT_STALL_MS,
   PLAYER_PALETTE,
@@ -19,6 +18,7 @@ import { createRng } from '$/game/rng'
 import type { Particle } from '$/game/types'
 import { createCanvasApp, fitStageToCanvas } from '$/game/view'
 import { type FeedEntry, reconnectDelay, updateFeed } from '$/net/feed'
+import { serverOrigin, wsBase } from '$/net/origin'
 import {
   decodeServer,
   encode,
@@ -32,19 +32,6 @@ import {
 // Clamp a wire palette slot into the table (a stale/hostile server value falls back to enemy rose).
 const clampSlot = (palette: number): number =>
   Number.isInteger(palette) && palette >= 0 && palette < PLAYER_PALETTE.length ? palette : 1
-
-// Where the game server lives. Overridable for split deploys via `?server=` or a stored value;
-// otherwise the current host on the game-server port (covers both single-origin production and
-// the dev split between the HTML dev server and `bun run server`).
-export const serverOrigin = (): string => {
-  const override =
-    new URLSearchParams(globalThis.location?.search).get('server') ?? globalThis.localStorage?.getItem('vwing.server')
-  if (override) return override
-  const { protocol, hostname } = globalThis.location
-  return `${protocol}//${hostname}:${NET_DEFAULT_PORT}`
-}
-
-const wsBase = (): string => serverOrigin().replace(/^http/, 'ws')
 
 export enum NetPhase {
   CONNECTING = 'CONNECTING',

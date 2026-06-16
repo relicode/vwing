@@ -51,6 +51,19 @@ a CDP endpoint on `localhost:9222` (`$CHROME_PORT`) for DevTools, the chrome-dev
 window (CDP on `9223`, `$CHROME_VISUAL_PORT`) for manual inspection. Each uses an isolated
 `--user-data-dir`; override the binary with `$CHROME_BIN`. Start the dev server first.
 
+**Docker / deploy** — `compose.yaml` is the production-safe **base**: only Traefik publishes a
+host port; the Bun app and Redis stay on the internal network, and because HTTP and `/ws` share
+one origin the proxy carries the WebSocket too (so prod exposes nothing but Traefik).
+`compose.override.yaml` is auto-loaded by `docker compose up` and publishes Redis on
+`127.0.0.1:6379` so a host-side `bun run dev:all` shares the store (the app is reached at
+`http://localhost` via Traefik). `compose.prod.yaml` is the explicit TLS override —
+`bun run stack:prod` runs `-f compose.yaml -f compose.prod.yaml`, so the dev override is *not*
+loaded. Scripts: `bun run stack` (dev up), `stack:down`, `stack:logs`, `stack:prod`, and `redis`
+(just the shared store). Redis persists to the `./data` bind-mount (gitkept, contents ignored;
+also excluded from Biome + the Docker build context). The browser dials the server via
+`serverOrigin()` in `net/client.ts`: same-origin in production builds (works behind Traefik),
+the `:8787` cross-port only in the dev split.
+
 ## Layout
 
 ```
