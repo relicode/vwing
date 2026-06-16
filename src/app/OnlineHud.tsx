@@ -6,7 +6,7 @@ import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
 import { useEffect, useState } from 'react'
 
-import { NET_FEED_TTL, PLAYER_PALETTE, SECONDARY_MAX_CHARGE, WEAPON_CONFIG } from '$/game/constants'
+import { NET_FEED_TTL, PLAYER_PALETTE, SECONDARY_MAX_CHARGE, TROOP_BAY_CAPACITY, WEAPON_CONFIG } from '$/game/constants'
 import type { NetStatus } from '$/net/client'
 import type { FeedEntry } from '$/net/feed'
 
@@ -14,6 +14,21 @@ type OnlineHudProps = {
   status: NetStatus
   onLeave: () => void
 }
+
+const TROOP_SLOTS = Array.from({ length: TROOP_BAY_CAPACITY }, (_, index) => `troop-${index}`)
+
+// One helmet-dome per bay slot: filled = a trooper aboard, hollow = empty rack (matches Hud.tsx).
+const TroopPip = ({ filled }: { filled: boolean }) => (
+  <Box
+    sx={{
+      width: 9,
+      height: 6,
+      borderRadius: '9px 9px 1px 1px',
+      bgcolor: filled ? 'primary.main' : 'rgba(255,255,255,0.14)',
+      boxShadow: filled ? '0 0 4px rgba(51,245,163,0.8)' : 'none',
+    }}
+  />
+)
 
 // The seat's palette slot as a CSS hex (out-of-range falls back to the enemy rose, like the canvas).
 const chipHex = (slot: number): string =>
@@ -70,7 +85,11 @@ const Scoreboard = ({ status }: { status: NetStatus }) => {
         {rows.map((player) => {
           const isSelf = player.id === status.selfId
           return (
-            <Stack key={player.id} direction="row" sx={{ justifyContent: 'space-between', gap: 2 }}>
+            <Stack
+              key={player.id}
+              direction="row"
+              sx={{ justifyContent: 'space-between', gap: 2, opacity: player.eliminated ? 0.5 : 1 }}
+            >
               <Stack direction="row" sx={{ alignItems: 'center', gap: 0.75, minWidth: 0 }}>
                 <Box
                   sx={{
@@ -89,6 +108,8 @@ const Scoreboard = ({ status }: { status: NetStatus }) => {
                     fontSize: 13,
                     maxWidth: 110,
                     fontWeight: isSelf ? 800 : 500,
+                    // An eliminated pilot is struck through; a merely-disconnected one just greys.
+                    textDecoration: player.eliminated ? 'line-through' : 'none',
                     color: isSelf ? 'primary.main' : player.connected ? 'secondary.main' : 'text.disabled',
                   }}
                 >
@@ -164,6 +185,11 @@ const OnlineHud = ({ status, onLeave }: OnlineHudProps) => {
             }}
           />
         </Box>
+        <Stack direction="row" spacing={0.5} aria-label={`${status.troops} troopers aboard`} sx={{ pt: 0.25 }}>
+          {TROOP_SLOTS.map((slot, index) => (
+            <TroopPip key={slot} filled={index < status.troops} />
+          ))}
+        </Stack>
       </Stack>
 
       <Stack spacing={1} sx={{ alignItems: 'flex-end' }}>

@@ -27,32 +27,27 @@ import {
 import { spawnExplosion } from '$/game/particles'
 import { basePadCenters } from '$/game/terrain-map'
 import { spawnGuard } from '$/game/troops'
-import type { Base, InfantryDevice, World } from '$/game/types'
+import type { Base, InfantryDevice, Vec2, World } from '$/game/types'
 
-// The campaign's two home barracks, seated on the generator's flat pads (west = player,
-// east = bot). DEATHMATCH never calls this — world.bases stays [] and every base rule is a no-op.
+// One fresh barracks for `owner`, seated on a generator pad at full reserve. The single base
+// builder, shared by the campaign's fixed pair and the online base war's dynamic per-seat
+// allocation (sim.addBase) — so both spawn identical, regen-ready forts.
+export const createBase = (owner: number, pad: Vec2): Base => ({
+  owner,
+  x: pad.x,
+  y: pad.y,
+  garrison: BASE_GARRISON_START,
+  capture: 0,
+  alarm: BaseAlarm.PATROL,
+  door: 0,
+})
+
+// The campaign's two home barracks, seated on the generator's first two flat pads (index 0 = west
+// player, index 1 = east bot). DEATHMATCH never calls this — world.bases stays [] and every base
+// rule is a no-op; the online BATTLE war builds its bases per seat via sim.addBase instead.
 export const createCampaignBases = (): Base[] => {
   const [west, east] = basePadCenters()
-  return [
-    {
-      owner: PLAYER_ID,
-      x: west.x,
-      y: west.y,
-      garrison: BASE_GARRISON_START,
-      capture: 0,
-      alarm: BaseAlarm.PATROL,
-      door: 0,
-    },
-    {
-      owner: BOT_ID,
-      x: east.x,
-      y: east.y,
-      garrison: BASE_GARRISON_START,
-      capture: 0,
-      alarm: BaseAlarm.PATROL,
-      door: 0,
-    },
-  ]
+  return [createBase(PLAYER_ID, west), createBase(BOT_ID, east)]
 }
 
 // The side a base currently answers to: the capturer once fully taken, the original owner

@@ -1,7 +1,6 @@
 import {
   Color,
   GamePhase,
-  NET_DEFAULT_PORT,
   NET_RECONNECT_DELAYS_MS,
   NET_SNAPSHOT_STALL_MS,
   PLAYER_PALETTE,
@@ -19,6 +18,7 @@ import { createRng } from '$/game/rng'
 import type { Particle } from '$/game/types'
 import { createCanvasApp, fitStageToCanvas } from '$/game/view'
 import { type FeedEntry, reconnectDelay, updateFeed } from '$/net/feed'
+import { serverOrigin, wsBase } from '$/net/origin'
 import {
   decodeServer,
   encode,
@@ -33,24 +33,22 @@ import {
 const clampSlot = (palette: number): number =>
   Number.isInteger(palette) && palette >= 0 && palette < PLAYER_PALETTE.length ? palette : 1
 
-// Where the game server lives. Overridable for split deploys via `?server=` or a stored value;
-// otherwise the current host on the game-server port (covers both single-origin production and
-// the dev split between the HTML dev server and `bun run server`).
-export const serverOrigin = (): string => {
-  const override =
-    new URLSearchParams(globalThis.location?.search).get('server') ?? globalThis.localStorage?.getItem('vwing.server')
-  if (override) return override
-  const { protocol, hostname } = globalThis.location
-  return `${protocol}//${hostname}:${NET_DEFAULT_PORT}`
-}
-
-const wsBase = (): string => serverOrigin().replace(/^http/, 'ws')
-
 export enum NetPhase {
   CONNECTING = 'CONNECTING',
   PLAYING = 'PLAYING',
   RECONNECTING = 'RECONNECTING', // an unexpected drop after a WELCOME — auto-redialing on the backoff
   DISCONNECTED = 'DISCONNECTED',
+}
+
+// The FFA base-war verdict for THIS player, derived from the snapshot's match state + own row.
+// Orthogonal to NetPhase (a connection state): a still-PLAYING socket can be showing a terminal
+// outcome over the live (spectated) world.
+export enum NetOutcome {
+  PLAYING = 'PLAYING', // still in the fight
+  VICTORY = 'VICTORY', // last barracks standing — the match is yours
+  ELIMINATED = 'ELIMINATED', // your last base fell and you were downed; the others fight on
+  DEFEAT = 'DEFEAT', // the match was decided and someone else took it
+  DRAW = 'DRAW', // decided with no survivor (a simultaneous mutual elimination)
 }
 
 export type NetStatus = {
@@ -61,11 +59,14 @@ export type NetStatus = {
   score: number // this player's frags
   weapon: WeaponKind
   charge: number // 0..100 percent of the secondary energy bar
+  troops: number // whole troopers aboard this player's ship (bay pips)
   attempt: number // reconnect re-dials so far this outage (banner: "reconnecting (n/5)")
   reclaims: number // count of reclaimed WELCOMEs (the HUD toasts each increment)
   feed: FeedEntry[] // the rolling kill feed (newest last)
   respawnIn: number // s until this player's ship re-enters; 0 = flying
   stalled: boolean // no SNAPSHOT for NET_SNAPSHOT_STALL_MS while PLAYING (the UNSTABLE chip)
+  outcome: NetOutcome // this player's base-war verdict (terminal screens key off it)
+  winnerName: string | undefined // the deciding pilot's name, for the result screen
   error: string | undefined
 }
 
@@ -92,6 +93,8 @@ export const connectGame = async (game: string, name: string, intent: JoinIntent
   let selfId = -1
   let players: PlayerInfo[] = []
   let paletteSlots = new Map<number, number>() // owner id → PLAYER_PALETTE slot, rebuilt per snapshot
+  let matchOver = false // the FFA base war has been decided (latched on the server, mirrored here)
+  let winnerId: number | undefined // the deciding pilot's ship id
   let phase = NetPhase.CONNECTING
   let error: string | undefined
   let leaving = false
@@ -115,6 +118,17 @@ export const connectGame = async (game: string, name: string, intent: JoinIntent
     const ship = selfShip()
     return ship ? Math.round((ship.charge / SECONDARY_MAX_CHARGE) * 100) : 0
   }
+  // This player's base-war verdict: a decided match is a win for the lone survivor and a loss for
+  // everyone else; before that, your own eliminated row is the terminal ELIMINATED screen while the
+  // others fight on. winnerName names the deciding pilot for the result overlay.
+  const outcomeOf = (): NetOutcome => {
+    if (matchOver) {
+      if (winnerId === selfId) return NetOutcome.VICTORY
+      return winnerId === undefined ? NetOutcome.DRAW : NetOutcome.DEFEAT
+    }
+    return players.find((p) => p.id === selfId)?.eliminated ? NetOutcome.ELIMINATED : NetOutcome.PLAYING
+  }
+  const winnerNameOf = (): string | undefined => players.find((p) => p.id === winnerId)?.name
 
   let status: NetStatus = {
     phase,
@@ -124,11 +138,14 @@ export const connectGame = async (game: string, name: string, intent: JoinIntent
     score: 0,
     weapon: WeaponKind.SCATTERGUN,
     charge: 0,
+    troops: 0,
     attempt,
     reclaims,
     feed,
     respawnIn: 0,
     stalled,
+    outcome: NetOutcome.PLAYING,
+    winnerName: undefined,
     error,
   }
   const publish = (): void => {
@@ -142,11 +159,14 @@ export const connectGame = async (game: string, name: string, intent: JoinIntent
       score: me?.score ?? 0,
       weapon: ship?.weapon ?? status.weapon,
       charge: chargePct(),
+      troops: Math.floor(ship?.troops ?? 0),
       attempt,
       reclaims,
       feed,
       respawnIn: me?.respawnIn ?? 0,
       stalled,
+      outcome: outcomeOf(),
+      winnerName: winnerNameOf(),
       error,
     }
     // Cheap shallow compare on the fields the HUD reads (players identity changes per tick,
@@ -154,7 +174,7 @@ export const connectGame = async (game: string, name: string, intent: JoinIntent
     // EVERY HUD-read field must appear here, or its changes silently never reach React.
     // (respawnIn folds at whole seconds — the countdown displays whole seconds.)
     const sig = (s: NetStatus): string =>
-      `${s.phase}|${s.score}|${s.weapon}|${s.charge}|${s.attempt}|${s.reclaims}|${s.stalled}|${Math.ceil(s.respawnIn)}|${s.error ?? ''}|${s.feed.map((f) => f.id).join('.')}|${s.players.map((p) => `${p.id}:${p.score}:${p.palette}:${p.connected}`).join(',')}`
+      `${s.phase}|${s.score}|${s.weapon}|${s.charge}|${s.troops}|${s.attempt}|${s.reclaims}|${s.stalled}|${s.outcome}|${s.winnerName ?? ''}|${Math.ceil(s.respawnIn)}|${s.error ?? ''}|${s.feed.map((f) => f.id).join('.')}|${s.players.map((p) => `${p.id}:${p.score}:${p.palette}:${p.connected}:${p.eliminated}`).join(',')}`
     if (sig(next) === sig(status)) return
     status = next
     notify()
@@ -213,6 +233,8 @@ export const connectGame = async (game: string, name: string, intent: JoinIntent
       } else if (message.t === MsgType.SNAPSHOT) {
         world = message.world
         players = message.players
+        matchOver = message.matchOver
+        winnerId = message.winnerId
         lastSnapshotMs = Date.now()
         // Benched seats ride players[] too, so a disconnected pilot's troopers keep their color.
         paletteSlots = new Map(players.map((p) => [p.id, clampSlot(p.palette)]))

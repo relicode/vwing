@@ -1,4 +1,12 @@
-import { baseBuilding, baseHolder, createCampaignBases, shellBase, shelteredInBase, stepBases } from '$/game/bases'
+import {
+  baseBuilding,
+  baseHolder,
+  createBase,
+  createCampaignBases,
+  shellBase,
+  shelteredInBase,
+  stepBases,
+} from '$/game/bases'
 import { updateBeams } from '$/game/beams'
 import { spawnBullet, updateBullets } from '$/game/bullets'
 import { circleRectContact, circlesOverlap } from '$/game/collision'
@@ -118,6 +126,12 @@ export type Sim = {
   removeCombatant: (id: number, keepDevices?: boolean) => void
   getCombatant: (id: number) => Combatant | undefined
   respawnIn: (id: number) => number // s until the combatant's ship re-enters; 0 = alive (or gone)
+  // The online BATTLE war seats bases per pilot: addBase stands one barracks for `owner` on `pad`
+  // (sealing its watertight footprint, like construction does for the campaign pair); removeBase
+  // tears down the owner's barracks when the seat leaves. CAMPAIGN/DEATHMATCH manage world.bases
+  // at construction and never call these.
+  addBase: (owner: number, pad: Vec2) => Base
+  removeBase: (owner: number) => void
   // Terrain persistence: the carved voxel state as plain JSON, and its overlay onto a sim
   // rebuilt from the SAME world seed (false = snapshot didn't fit; nothing was touched).
   serializeTerrain: () => VoxelSnapshot
@@ -302,7 +316,9 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     world.shake = Math.max(world.shake, SHIP_DEATH_SHAKE)
 
     const killer = killerId !== undefined && killerId !== victim.id ? getCombatant(killerId) : undefined
-    if (killer) killer.score += config.mode === SimMode.DEATHMATCH ? DEATHMATCH_FRAG_SCORE : BOT_KILL_SCORE
+    // CAMPAIGN scores assault POINTS (BOT_KILL_SCORE); the frag-driven modes (DEATHMATCH and the
+    // online BATTLE war) tick the scoreboard a flat frag per kill.
+    if (killer) killer.score += config.mode === SimMode.CAMPAIGN ? BOT_KILL_SCORE : DEATHMATCH_FRAG_SCORE
 
     // The base-war noose: respawns flow from holding a base. A side that controls none — its
     // own barracks lost and no enemy barracks taken — has no reinforcements left, and dying in
@@ -660,6 +676,43 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     return queued ? Math.max(0, queued.at - world.time) : 0
   }
 
+  // Stand a fresh barracks for `owner` on `pad` mid-match (the online base war seats one per pilot
+  // as they join). Sealing its footprint keeps the fluid out of the shelter exactly as the
+  // construction pass does for the campaign pair, then the rect view is rebuilt so any water that
+  // had been sitting on the spot is evicted this tick rather than next.
+  // Drop any fielded guards belonging to `owner` — they belong to a barracks, not the field, so a
+  // base teardown (or a stale set restored from a persisted blob / a prior base instance) must not
+  // leave them standing to be miscounted as a fresh fort's defenders (stepBases tallies guards by
+  // owner id). The owner's deployed FIELD troopers (guard === false) are untouched — they fight on.
+  const standDownGuards = (owner: number): void => {
+    world.devices = world.devices.filter((d) => !(d.kind === DeviceKind.INFANTRY && d.guard && d.owner === owner))
+  }
+
+  const addBase = (owner: number, pad: Vec2): Base => {
+    standDownGuards(owner) // clear any ghosts before the fresh fort fields its own line
+    const base = createBase(owner, pad)
+    world.bases.push(base)
+    sealWaterRect(voxel, baseBuilding(base))
+    refreshWater()
+    return base
+  }
+
+  // Tear down `owner`'s barracks when its seat leaves the match. The watertight seal on the old
+  // footprint is left in place (there is no unseal, and the footprint sits on the indestructible
+  // metal pad in open air — a harmless invisible dry column). Its guards stand down with it, and any
+  // capture `owner` held over ANOTHER base is released — otherwise that base reads as captured by a
+  // ghost and its rightful holder, controlling no base, becomes wrongly eligible for elimination.
+  const removeBase = (owner: number): void => {
+    world.bases = world.bases.filter((b) => b.owner !== owner)
+    for (const base of world.bases) {
+      if (base.capturedBy === owner) {
+        base.capture = 0
+        base.capturedBy = undefined
+      }
+    }
+    standDownGuards(owner)
+  }
+
   const serializeTerrain = (): VoxelSnapshot => snapshotVoxel(voxel)
 
   const restoreTerrain = (snap: VoxelSnapshot): boolean => {
@@ -681,6 +734,8 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     removeCombatant,
     getCombatant,
     respawnIn,
+    addBase,
+    removeBase,
     serializeTerrain,
     restoreTerrain,
   }

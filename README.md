@@ -98,6 +98,10 @@ bun run dev:all  # web client + game server (:8787) for online play
 | `bun run dev` | Dev server for `src/index.html` with hot reload (`:3110`) |
 | `bun run server` | Authoritative game server (Bun WebSocket, `:8787`; Redis state if available, in-memory fallback) |
 | `bun run dev:all` | Both of the above, labelled `vwing:web` / `vwing:srv` |
+| `bun run redis` | Just the Redis container (loopback `:6379`) for the host dev loop to share |
+| `bun run stack` | Full Docker stack (app + Redis + Traefik) on `http://localhost` — see [Docker](#docker--self-host) |
+| `bun run stack:down` / `stack:logs` | Tear down / tail the dev stack |
+| `bun run stack:prod` | Production stack with TLS (`compose.prod.yaml`; needs `APP_DOMAIN` + `ACME_EMAIL`) |
 | `bun run build` | Production bundle into `dist/` |
 | `bun run preview` | Serve the built `dist/` (`:3111`; run `build` first) |
 | `bun run release <major\|minor\|patch>` | Cut a release with git-flow: bump the version, merge to `main`, tag, back-merge (prompts first; `--dry-run` to preview). Add `--push` to push the tag, which fires `release.yml` to publish the GitHub Release |
@@ -131,6 +135,31 @@ bun test         # the pure-simulation unit suite (never imports PixiJS or touch
 - **Browser inspection:** `bun run chrome` opens the dev URL in headless Chrome with a CDP endpoint
   on `localhost:9222` (for DevTools, the chrome-devtools MCP, or scripted CDP); `bun run
   chrome:visual` opens a real window on `9223`. Start the dev server first.
+
+### Docker / self-host
+
+The repo ships a Compose stack — the Bun server (HTTP + static client + the `/ws` socket all on
+one port) behind [Traefik](https://traefik.io), with Redis for authoritative state:
+
+```sh
+bun run stack       # docker compose up -d --build → http://localhost
+bun run stack:logs  # tail it;  bun run stack:down to stop
+```
+
+- **`compose.yaml`** is the production-safe base: only Traefik publishes a host port (`80`), and
+  Redis sits on an internal-only network — no host port, no egress, unreachable by anything but the
+  app. Because HTTP and the WebSocket share one origin, the proxy carries both.
+- **`compose.override.yaml`** is auto-loaded by `docker compose up` and publishes Redis on
+  `127.0.0.1:6379` so a host-side `bun run dev:all` can share the store (run one *or* the other
+  against it, not both). Redis persists to the `./data` bind-mount.
+- **`compose.prod.yaml`** is the explicit TLS override: `bun run stack:prod`
+  (`-f compose.yaml -f compose.prod.yaml`, so the dev override is *not* loaded → still only Traefik
+  exposed). Set a real `APP_DOMAIN` (public DNS → this host) **and** uncomment `ACME_EMAIL` in
+  `.env` first — the prod config aborts without it, and Let's Encrypt needs inbound `:443`. Tear it
+  down with the matching files: `bun run stack:prod:down`.
+
+Copy `.env.example` → `.env` (Compose reads it automatically); never set `NODE_ENV=production`
+there — it would leak into the dev bundle and misroute the client.
 
 ### Releases & CI
 

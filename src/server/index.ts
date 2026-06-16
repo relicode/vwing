@@ -32,6 +32,7 @@ type RoomState = {
   topic: string
   persistTick: number // ticks since the last full-state write to the store
   emptySince: number | undefined // tick count when the room went empty (for TTL disposal)
+  lobbyHidden: boolean // a decided match: dropped from the lobby once, never re-advertised
 }
 
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type' }
@@ -62,6 +63,7 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
       topic: `game:${key}`,
       persistTick: 0,
       emptySince: undefined,
+      lobbyHidden: false,
     }
     rooms.set(key, created)
     void store.registerGame(key, { name: displayName, players: 0, maxPlayers: NET_MAX_PLAYERS })
@@ -83,10 +85,17 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
   const disposeRoom = (key: string, rs: RoomState): void => {
     rooms.delete(key)
     void store.unregisterGame(key)
-    // Hibernate, don't delete: the final write leaves the room resurrectable until the store's
-    // state TTL lapses — the single authority on when a game is truly gone.
-    void store.saveState(key, rs.room.persisted())
-    log.info(`room hibernated: "${rs.room.name}"`)
+    if (rs.room.isOver()) {
+      // A decided match is gone for good — delete its state so the name can't resurrect a finished
+      // (and unjoinable) fight as a fresh joinable room after a restart.
+      void store.deleteState(key)
+      log.info(`room disposed (match decided): "${rs.room.name}"`)
+    } else {
+      // Hibernate, don't delete: the final write leaves the room resurrectable until the store's
+      // state TTL lapses — the single authority on when a game is truly gone.
+      void store.saveState(key, rs.room.persisted())
+      log.info(`room hibernated: "${rs.room.name}"`)
+    }
   }
 
   // ── Static serving (production single-origin): everything that isn't /api or /ws falls
@@ -158,7 +167,12 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
         const rs = existing ?? createRoomState(key, game, restored)
         const seat = rs.room.join(ws.data.name)
         if ('refusal' in seat) {
-          const reason = seat.refusal === JoinRefusal.NAME_TAKEN ? NAME_TAKEN_REASON : 'Game is full'
+          const reason =
+            seat.refusal === JoinRefusal.NAME_TAKEN
+              ? NAME_TAKEN_REASON
+              : seat.refusal === JoinRefusal.OVER
+                ? 'That match has already been decided.'
+                : 'Game is full'
           log.info(`"${ws.data.name}" refused from "${rs.room.name}": ${seat.refusal}`)
           ws.send(encode({ t: MsgType.REJECTED, reason }))
           ws.close()
@@ -200,11 +214,14 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
         if (!rs || ws.data.shipId < 0) return
         ws.unsubscribe(rs.topic)
         rs.room.leave(ws.data.shipId)
-        void store.registerGame(ws.data.key, {
-          name: rs.room.name,
-          players: rs.room.playerCount(),
-          maxPlayers: NET_MAX_PLAYERS,
-        })
+        // A decided match has already been pulled from the lobby — leaving it must not re-list it.
+        if (!rs.lobbyHidden) {
+          void store.registerGame(ws.data.key, {
+            name: rs.room.name,
+            players: rs.room.playerCount(),
+            maxPlayers: NET_MAX_PLAYERS,
+          })
+        }
         if (rs.room.isEmpty()) rs.emptySince = tickCount
         log.info(`"${ws.data.name}" left "${rs.room.name}" (${rs.room.playerCount()} remain)`)
       },
@@ -224,13 +241,23 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
       }
       const events = rs.room.step(dt)
       server.publish(rs.topic, encode(rs.room.snapshot(events)))
+      // A decided FFA match drops out of the lobby exactly once: no new pilots can seat into a
+      // finished fight, but the room keeps stepping (and broadcasting the verdict) so the survivors
+      // and spectators see the result until they leave and it idles out on the empty-room TTL.
+      if (rs.room.isOver() && !rs.lobbyHidden) {
+        rs.lobbyHidden = true
+        void store.unregisterGame(key)
+        void store.deleteState(key) // a decided match must never resurrect as a joinable room
+        log.info(`match decided in "${rs.room.name}" — removed from the lobby`)
+      }
       rs.persistTick += 1
-      if (rs.persistTick >= NET_PERSIST_EVERY) {
+      // A decided match is no longer checkpointed (its state has been deleted and must stay gone);
+      // live rooms persist on the usual cadence.
+      if (rs.persistTick >= NET_PERSIST_EVERY && !rs.lobbyHidden) {
         rs.persistTick = 0
         const persisted = rs.room.persisted() // full session: seats + devices + carved terrain (see restore.ts)
         void store.saveState(key, persisted)
         log.debug(`persisted "${rs.room.name}" (${(persisted.length / 1024).toFixed(1)} KB)`)
-        // refresh lobby TTL
         void store.registerGame(key, {
           name: rs.room.name,
           players: rs.room.playerCount(),
@@ -250,9 +277,12 @@ export const startServer = (store: Store, options: ServerOptions): GameServer =>
     stop: async () => {
       clearInterval(loop)
       // A graceful shutdown checkpoints every live room, so a restart resumes mid-match games
-      // (SIGINT/SIGTERM route here via scripts/server.ts). allSettled: one room's failed
-      // write must not cost every other room its final state.
-      await Promise.allSettled([...rooms].map(([key, rs]) => store.saveState(key, rs.room.persisted())))
+      // (SIGINT/SIGTERM route here via scripts/server.ts). Decided matches are skipped — their state
+      // was deleted when they resolved and must not be rewritten into a resurrectable blob. allSettled:
+      // one room's failed write must not cost every other room its final state.
+      await Promise.allSettled(
+        [...rooms].filter(([, rs]) => !rs.room.isOver()).map(([key, rs]) => store.saveState(key, rs.room.persisted()))
+      )
       await server.stop(true)
       await store.close()
     },

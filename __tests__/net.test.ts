@@ -4,6 +4,7 @@ import type { RedisClient } from 'bun'
 import {
   Color,
   DeviceKind,
+  NET_DISCONNECT_GRACE,
   NET_MAX_PLAYERS,
   NET_PERSIST_MAX_DEVICES,
   PLAYER_PALETTE,
@@ -223,7 +224,7 @@ describe('room bench (disconnect → same-name reclaim, no auth)', () => {
     if (!combatant) return
     combatant.score = 7
     combatant.deaths = 2
-    combatant.ship.troops = 3 // a part-spent bay (a fresh DEATHMATCH seat starts full)
+    combatant.ship.troops = 3 // a part-spent bay (online BATTLE seats spawn empty + load at the barracks)
     combatant.ship.x = 4321
 
     room.leave(a.shipId)
@@ -235,6 +236,7 @@ describe('room bench (disconnect → same-name reclaim, no auth)', () => {
       palette: 0,
       respawnIn: 0,
       connected: false,
+      eliminated: false,
     })
 
     const back = seat(room.join('MAVERICK')) // identity is the NFKC casefold, not the spelling
@@ -300,7 +302,11 @@ describe('full-session persistence (Redis is the source of state)', () => {
 
     const twin = createRoom('Resurrect', parsed.restore)
     expect(twin.sim.world.time).toBeCloseTo(room.sim.world.time, 5)
-    expect(twin.sim.world.devices.filter((d) => d.kind === DeviceKind.INFANTRY)).toHaveLength(1)
+    // Every deployed trooper survives the round-trip — the test's pushed one plus any defenders the
+    // BATTLE barracks fielded over those 10 ticks (a baseless DEATHMATCH had none).
+    const infantry = (r: Room): number => r.sim.world.devices.filter((d) => d.kind === DeviceKind.INFANTRY).length
+    expect(infantry(twin)).toBe(infantry(room))
+    expect(infantry(twin)).toBeGreaterThanOrEqual(1)
     expect(twin.playerCount()).toBe(0) // nobody reconnected yet…
     expect(twin.players().filter((p) => !p.connected)).toHaveLength(2) // …both seats benched, greyed
 
@@ -545,6 +551,101 @@ describe('players() respawn clock on the wire', () => {
     expect(room.players().find((p) => p.id === b.shipId)?.respawnIn).toBe(0) // benched rows carry 0
     for (let i = 0; i < Math.ceil((RESPAWN_DELAY_BASE + 1) * 30); i += 1) room.step(1 / 30)
     expect(room.players().find((p) => p.id === a.shipId)?.respawnIn).toBe(0) // flying again
+  })
+})
+
+describe('online FFA base war (BATTLE room)', () => {
+  test('each pilot is seated a barracks on its own pad, spawning empty-bayed on the perch', () => {
+    const room = createRoom('War')
+    const a = seat(room.join('Ace'))
+    const b = seat(room.join('Bandit'))
+    const bases = room.sim.world.bases
+    expect(bases).toHaveLength(2)
+    expect(bases.map((base) => base.owner).sort((x, y) => x - y)).toEqual([a.shipId, b.shipId].sort((x, y) => x - y))
+    const shipA = room.sim.getCombatant(a.shipId)?.ship
+    const baseA = bases.find((base) => base.owner === a.shipId)
+    expect(shipA?.troops).toBe(0) // empty bay — fly home and load at the barracks
+    expect(shipA?.x).toBeCloseTo(baseA?.x ?? -1, 5) // spawned over its own pad…
+    expect(shipA?.y).toBeLessThan(baseA?.y ?? 0) // …perched above it
+  })
+
+  test('a disconnect stands the barracks down and frees its pad for the next pilot', () => {
+    const room = createRoom('War2')
+    const a = seat(room.join('Ace'))
+    seat(room.join('Bandit'))
+    expect(room.sim.world.bases).toHaveLength(2)
+    room.leave(a.shipId)
+    expect(room.sim.world.bases.some((base) => base.owner === a.shipId)).toBe(false)
+    const c = seat(room.join('Cobra'))
+    expect(room.sim.world.bases).toHaveLength(2) // Cobra got a fresh fort on the freed pad
+    expect(room.sim.world.bases.some((base) => base.owner === c.shipId)).toBe(true)
+  })
+
+  test('losing your last base then dying is elimination — the lone survivor wins the match', () => {
+    const room = createRoom('War3')
+    const a = seat(room.join('Ace'))
+    const b = seat(room.join('Bandit'))
+    const bBase = room.sim.world.bases.find((base) => base.owner === b.shipId)
+    if (!bBase) throw new Error('no base for Bandit')
+    bBase.capture = 1
+    bBase.capturedBy = a.shipId // Ace's troops stormed it
+    downShip(room, b.shipId) // Bandit dies holding no base
+    expect(room.players().find((p) => p.id === b.shipId)?.eliminated).toBe(true)
+    expect(room.isOver()).toBe(true)
+    const snap = room.snapshot([])
+    if (snap.t !== MsgType.SNAPSHOT) throw new Error('expected a snapshot')
+    expect(snap.matchOver).toBe(true)
+    expect(snap.winnerId).toBe(a.shipId)
+  })
+
+  test('a decided match takes no new seats, and an eliminated pilot cannot reclaim back in', () => {
+    const room = createRoom('War4')
+    const a = seat(room.join('Ace'))
+    const b = seat(room.join('Bandit'))
+    const bBase = room.sim.world.bases.find((base) => base.owner === b.shipId)
+    if (!bBase) throw new Error('no base for Bandit')
+    bBase.capture = 1
+    bBase.capturedBy = a.shipId
+    downShip(room, b.shipId)
+    expect(room.isOver()).toBe(true)
+    room.leave(b.shipId) // the eliminated pilot drops to the lobby…
+    expect(room.join('bandit')).toEqual({ refusal: JoinRefusal.OVER }) // …and can't climb back in
+    expect(room.join('Cobra')).toEqual({ refusal: JoinRefusal.OVER }) // nor can a newcomer
+  })
+
+  test('a lone pilot is never declared the winner (no one to beat)', () => {
+    const room = createRoom('War5')
+    seat(room.join('Solo'))
+    for (let i = 0; i < 30; i += 1) room.step(1 / 30)
+    expect(room.isOver()).toBe(false)
+  })
+
+  test('a transient disconnect does NOT decide a 2-player match — the pilot reclaims within grace', () => {
+    const room = createRoom('Blip')
+    seat(room.join('Ace'))
+    const b = seat(room.join('Bandit'))
+    room.step(1 / 30) // both live → engagement armed
+    room.leave(b.shipId) // Bandit's socket drops — a blip, not a death
+    room.step(1 / 30)
+    expect(room.isOver()).toBe(false) // a benched-but-reclaimable pilot still counts — no walkover
+    const back = seat(room.join('bandit')) // and the seat reclaims cleanly (not refused OVER)
+    expect(back.reclaimed).toBe(true)
+    expect(room.isOver()).toBe(false)
+  })
+
+  test('a disconnect that outlasts the grace window forfeits — the survivor takes the match', () => {
+    const room = createRoom('Blip2')
+    const a = seat(room.join('Ace'))
+    const b = seat(room.join('Bandit'))
+    room.step(1 / 30) // engagement armed
+    room.leave(b.shipId)
+    room.sim.world.time += NET_DISCONNECT_GRACE + 1 // fast-forward past Bandit's reclaim grace
+    room.step(1 / 30)
+    expect(room.isOver()).toBe(true)
+    const snap = room.snapshot([])
+    if (snap.t !== MsgType.SNAPSHOT) throw new Error('expected a snapshot')
+    expect(snap.winnerId).toBe(a.shipId)
+    expect(room.join('bandit')).toEqual({ refusal: JoinRefusal.OVER }) // too late to reclaim now
   })
 })
 

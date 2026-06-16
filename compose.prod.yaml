@@ -1,0 +1,42 @@
+# Production override — layer on top of the base:
+#   docker compose -f compose.yaml -f compose.prod.yaml up -d --build   (bun run stack:prod)
+#
+# The base already exposes ONLY Traefik; this file adds TLS. Passing -f explicitly means the
+# dev conveniences in compose.override.yaml are NOT loaded, so production never publishes the
+# app or Redis to the host. Requires, in ./.env:
+#   APP_DOMAIN   a real domain whose public DNS points at this host
+#   ACME_EMAIL   contact address for Let's Encrypt
+name: vwing
+
+services:
+  app:
+    pull_policy: build # build locally; swap for a registry image + `always` under CD
+    labels:
+      # Serve the app over TLS via the websecure entrypoint (overrides the base's `web`).
+      traefik.http.routers.vwing.entrypoints: websecure
+      traefik.http.routers.vwing.tls.certresolver: le
+
+  traefik:
+    # `command` is REPLACED on merge (not appended), so this repeats the base HTTP flags and
+    # adds the HTTPS entrypoint, the plaintext→HTTPS redirect, and the ACME (Let's Encrypt) resolver.
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedByDefault=false
+      - --entryPoints.web.address=:80
+      - --entryPoints.websecure.address=:443
+      - --entryPoints.web.http.redirections.entrypoint.to=websecure
+      - --entryPoints.web.http.redirections.entrypoint.scheme=https
+      - --certificatesResolvers.le.acme.email=${ACME_EMAIL:?set ACME_EMAIL in .env for production TLS}
+      - --certificatesResolvers.le.acme.storage=/letsencrypt/acme.json
+      # TLS-ALPN-01 — issuance requires inbound :443 reachable from the internet (not just :80;
+      # the :80→:443 redirect will look healthy while certs silently fail to issue otherwise).
+      - --certificatesResolvers.le.acme.tlschallenge=true
+    # `ports` and `volumes` are CONCATENATED on merge — add only the new entries (80 + the
+    # docker socket come from the base).
+    ports:
+      - "443:443"
+    volumes:
+      - letsencrypt:/letsencrypt
+
+volumes:
+  letsencrypt:
