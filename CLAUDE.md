@@ -91,7 +91,8 @@ src/
   net/                # protocol.ts (JSON wire format) + client.ts (snapshot-drawing online client)
   server/             # authoritative Bun server: index.ts (HTTP + WS), room.ts, store.ts (Redis
                       # state with in-memory fallback)
-scripts/              # server.ts (game-server entry), preview.ts, build.ts (bundle + PWA layer)
+scripts/              # server.ts (game-server entry), build.ts (bundle + PWA layer)
+                      # (`preview` serves dist/ via the http-server dep — no bespoke script)
   pwa/                # build-time generators: identity.ts (site base + naming), manifest.ts,
                       # head.ts (OG/Twitter/JSON-LD), artwork.ts + png.ts (SDF icon/og bake)
 __tests__/            # bun:test specs for the pure logic (sim + build-time PWA generators —
