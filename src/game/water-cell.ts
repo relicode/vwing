@@ -95,9 +95,11 @@ export const sealFluidCell = (g: FluidGrid, col: number, row: number): void => {
 // SPREADS: each row is filled OUTWARD from the impact column (alternating left/right, each side
 // stopping at a solid/wall) before the fill climbs to the row above. So a stream lays down a widening
 // puddle at the surface that the flow then levels — it does NOT build a 1-wide column, which (with no
-// pressure term modelled) used to let a fast stream stack straight up the face of a wall and crest
-// it. Anything that overflows past row 0 spills off the top of the world and is lost. Volume-
-// conserving and fully deterministic (fixed scan order, no rng).
+// pressure term modelled) used to let a fast stream stack straight up the face of a wall and crest it.
+// The deposit NEVER rises above the impact row: water pools at and under where the stream hit and
+// spreads sideways, it doesn't climb a column up past the hit. Only a genuinely walled-in pocket that
+// is already full down to the impact overflows upward (the second pass) so no volume is lost; anything
+// past row 0 spills off the top of the world. Volume-conserving and fully deterministic (no rng).
 export const pourFluid = (g: FluidGrid, solid: SolidFn, col: number, row: number, amount: number): void => {
   const { cols, rows } = g
   let remaining = amount
@@ -116,10 +118,10 @@ export const pourFluid = (g: FluidGrid, solid: SolidFn, col: number, row: number
     markWet(g, c, r)
     wakeAround(g, c, r)
   }
-  // 2. From the landing row up, widen each row outward from the impact column before climbing.
-  for (let r = land; remaining > 0 && r >= 0; r -= 1) {
-    if (solid(col, r)) continue // a solid in the impact column — climb past it
-    put(col, r)
+  // Fill one row: the impact column (when open) plus an outward widening to both sides, each stopping
+  // at a solid. Used bottom-up so a slug lays down a flat, widening puddle rather than a tall column.
+  const fillRow = (r: number): void => {
+    if (!solid(col, r)) put(col, r)
     let left = col - 1
     let right = col + 1
     let goL = true
@@ -141,6 +143,57 @@ export const pourFluid = (g: FluidGrid, solid: SolidFn, col: number, row: number
       }
     }
   }
+  // 2. From the landing row up to the impact row, widen each row before climbing — capped at the hit
+  //    so the puddle never starts above where the stream struck.
+  for (let r = land; remaining > 0 && r >= row; r -= 1) fillRow(r)
+  // 3. Overflow: only if the impact row and everything below it is walled in and brim-full does water
+  //    have nowhere left to go but up — then let it rise (still widening) rather than vanish.
+  for (let r = row - 1; remaining > 0 && r >= 0; r -= 1) fillRow(r)
+}
+
+// Does a cell REST at this row — i.e. it can't fall, so it holds water here? True when the floor
+// below is solid or already brim-full. Cells that can fall (open air / room below) are NOT resting:
+// water spills off them, so they bound a level-run rather than belonging to it.
+const restsAt = (g: FluidGrid, solid: SolidFn, col: number, row: number): boolean =>
+  !solid(col, row) && (solid(col, row + 1) || g.level[(row + 1) * g.cols + col] >= WATER_CELL_FULL)
+
+// Level the maximal run of horizontally-adjacent RESTING cells that (col, row) belongs to, sharing
+// their water evenly so the surface goes truly flat. This is what stops a poured puddle (or any body)
+// from settling as a 1-unit-per-cell wedge: pairwise half-gap spreading leaves a monotone ramp resting
+// (each neighbour within WATER_SETTLE_EPS), which over a wide span mounds up px deep instead of lying
+// flat like a natural pool. The run is bounded by solids (walls) and by cells that can fall (cliff
+// edges / floor holes) — water pours off those through the spread step, it doesn't level across them.
+// Volume is conserved exactly; an odd remainder packs into the left-most cells so the rest state is a
+// single deterministic configuration (no left/right ping-pong → it settles, never oscillates). Touched
+// cells are flagged in `leveled` so each run is equalised once a tick, not once per member.
+const equalizeRun = (g: FluidGrid, solid: SolidFn, col: number, row: number, leveled: Set<number>): boolean => {
+  const { cols } = g
+  let a = col
+  let b = col
+  while (a - 1 >= 0 && restsAt(g, solid, a - 1, row)) a -= 1
+  while (b + 1 < cols && restsAt(g, solid, b + 1, row)) b += 1
+  const base = row * cols
+  let sum = 0
+  for (let c = a; c <= b; c += 1) {
+    sum += g.level[base + c]
+    leveled.add(base + c)
+  }
+  const n = b - a + 1
+  if (n === 1) return false // a lone resting cell (walled / cliff-edged) — nothing to level against
+  const q = (sum / n) | 0
+  const rem = sum - q * n
+  let changed = false
+  for (let c = a; c <= b; c += 1) {
+    const target = q + (c - a < rem ? 1 : 0) // the `rem` extra units sit on the left-most cells
+    const i = base + c
+    if (g.level[i] !== target) {
+      g.level[i] = target
+      if (target > 0) markWet(g, c, row)
+      wakeAround(g, c, row)
+      changed = true
+    }
+  }
+  return changed
 }
 
 // True when cell i can't move any water this tick: it can't fall (below is solid or brim-full) and
@@ -166,6 +219,7 @@ export const stepFluid = (g: FluidGrid, solid: SolidFn): boolean => {
   const leftFirst = (g.tick & 1) === 0
   g.tick = (g.tick + 1) & 0x7fffffff
   let changed = false
+  const leveled = new Set<number>() // cells equalised this tick (so each level-run runs once)
 
   for (const i of cells) {
     let lvl = g.level[i]
@@ -188,8 +242,17 @@ export const stepFluid = (g: FluidGrid, solid: SolidFn): boolean => {
       }
     }
 
-    // 2. Spread: once it's resting on support, level off with the lower horizontal neighbour(s).
     const supported = solid(col, row + 1) || g.level[i + cols] >= WATER_CELL_FULL
+
+    // 2. Level: flatten the resting horizontal run this cell sits in so the surface lies flat (a real
+    //    pool), instead of resting as a 1-per-cell wedge. Done once per run via the `leveled` flags.
+    if (lvl > 0 && supported && !leveled.has(i)) {
+      if (equalizeRun(g, solid, col, row, leveled)) changed = true
+      lvl = g.level[i]
+    }
+
+    // 3. Spread: once it's resting on support, pour off toward a lower neighbour outside the run —
+    //    a cliff edge or a lower basin — so water drains off ledges and trickles down to the bottom.
     if (lvl > 0 && supported) {
       const order = leftFirst ? -1 : 1
       for (let s = 0; s < 2; s += 1) {
@@ -197,7 +260,12 @@ export const stepFluid = (g: FluidGrid, solid: SolidFn): boolean => {
         const nc = col + d
         if (nc < 0 || nc >= cols || solid(nc, row)) continue
         const n = i + d
-        const move = (lvl - g.level[n]) >> 1 // half the gap, integer → converges, never overshoots
+        // A neighbour that can fall is a drain (a cliff edge or a hole over a lower basin): hand it the
+        // whole surplus that fits, since the water pours off and won't wash back — so the last unit
+        // leaves instead of clinging as a within-WATER_SETTLE_EPS film, and a shelf empties completely.
+        // Otherwise level off by half the gap (integer → converges, never overshoots or oscillates).
+        const nFalls = !solid(nc, row + 1) && g.level[n + cols] < WATER_CELL_FULL
+        const move = nFalls ? Math.min(lvl, WATER_CELL_FULL - g.level[n]) : (lvl - g.level[n]) >> 1
         if (move > 0) {
           g.level[i] = lvl - move
           g.level[n] += move

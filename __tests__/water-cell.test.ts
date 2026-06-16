@@ -81,6 +81,54 @@ describe('water-cell — water falls, levels, and pours like a fluid', () => {
     expect(volume(g)).toBe(poured) // volume conserved exactly through all the flowing
   })
 
+  test('a wide body levels truly flat — no resting wedge perched across the span', () => {
+    // A wide flat-bottomed basin. Dump everything into ONE column; it must settle level across the
+    // whole span — not as a mound tapering 1 unit per cell from the impact (the wedge bug, where a
+    // monotone ramp rests because every neighbour is within WATER_SETTLE_EPS, so a wide pour mounds up
+    // cells deep instead of lying flat like a natural pool).
+    const cols = 60
+    const rows = 8
+    const { g, solid } = arena(cols, rows, box(cols, rows))
+    pourFluid(g, solid, 2, rows - 2, 30 * WATER_CELL_FULL)
+    settle(g, solid)
+    const surfaces = []
+    const fills = []
+    for (let c = 1; c <= cols - 2; c += 1) {
+      surfaces.push(surfaceRow(g, c))
+      fills.push(g.level[(rows - 2) * cols + c]) // fill in the surface row of each column
+    }
+    expect(Math.max(...surfaces) - Math.min(...surfaces)).toBeLessThanOrEqual(1) // dead flat across 58 cells
+    expect(Math.max(...fills) - Math.min(...fills)).toBeLessThanOrEqual(1) // even the partial fills agree to ±1
+    expect(volume(g)).toBe(30 * WATER_CELL_FULL)
+  })
+
+  test('water on a WIDE shelf drains right off the open edge — no wedge clings far from the edge', () => {
+    // The narrow-shelf case below proves draining at all; this proves the whole span drains. A wide
+    // flat shelf (cols 1..40) with a deep pit to its right. Water poured at the FAR end (col 2, 38
+    // cells from the edge) must trickle all the way across and off — not leave a ramp deepening with
+    // distance from the drain (which is exactly what the 1-per-cell wedge did).
+    const cols = 50
+    const rows = 12
+    const solidCells: [number, number][] = []
+    for (let c = 0; c < cols; c += 1) solidCells.push([c, rows - 1])
+    for (let r = 0; r < rows; r += 1) {
+      solidCells.push([0, r])
+      solidCells.push([cols - 1, r])
+    }
+    for (let c = 1; c <= 40; c += 1) for (let r = 3; r < rows - 1; r += 1) solidCells.push([c, r]) // shelf top row 2
+    const { g, solid } = arena(cols, rows, solidCells)
+    pourFluid(g, solid, 2, 2, 8 * WATER_CELL_FULL)
+    const poured = volume(g)
+    settle(g, solid)
+    let onShelf = 0
+    for (let c = 1; c <= 40; c += 1) onShelf += g.level[2 * cols + c] // shelf-top row
+    expect(onShelf).toBeLessThanOrEqual(40) // at most a 1-unit film per cell — the body trickled into the pit
+    let inPit = 0
+    for (let c = 41; c <= cols - 2; c += 1) inPit += columnVolume(g, c)
+    expect(inPit).toBeGreaterThan(poured * 0.9)
+    expect(volume(g)).toBe(poured)
+  })
+
   test('water on a shelf pours off the open edge instead of perching', () => {
     // A shelf at row 4 spanning cols 1..4; open air to its right (cols 5..7) down to the floor row 8.
     const cols = 9
@@ -104,6 +152,48 @@ describe('water-cell — water falls, levels, and pours like a fluid', () => {
     for (let c = 5; c <= cols - 2; c += 1) inPit += columnVolume(g, c) // the right-hand pit
     expect(inPit).toBeGreaterThan(poured * 0.9) // nearly all of it ended up down in the pit
     expect(volume(g)).toBe(poured)
+  })
+
+  test('a poured slug never deposits above the impact row (it pools at/under the hit)', () => {
+    // A 1-wide crevice (walls at cols 3 and 5 from row 8 down). Hit it partway down with a big slug;
+    // the old fill climbed bottom-up past the impact, stacking water ABOVE where the stream struck.
+    const cols = 9
+    const rows = 20
+    const solidCells: [number, number][] = []
+    for (let c = 0; c < cols; c += 1) solidCells.push([c, rows - 1])
+    for (let r = 0; r < rows; r += 1) {
+      solidCells.push([0, r])
+      solidCells.push([cols - 1, r])
+    }
+    for (let r = 8; r < rows - 1; r += 1) {
+      solidCells.push([3, r])
+      solidCells.push([5, r])
+    }
+    const { g, solid } = arena(cols, rows, solidCells)
+    const impact = 10
+    pourFluid(g, solid, 4, impact, 8 * WATER_CELL_FULL)
+    let aboveImpact = 0
+    for (let r = 0; r < impact; r += 1) for (let c = 0; c < cols; c += 1) aboveImpact += g.level[r * cols + c]
+    expect(aboveImpact).toBe(0) // nothing deposited above where the stream hit
+    expect(volume(g)).toBe(8 * WATER_CELL_FULL) // and no volume lost capping the fill
+  })
+
+  test('a sealed shaft full to the impact overflows upward rather than losing volume', () => {
+    // A 1-wide sealed shaft (col 2). Pour more than fits from floor to impact: it has nowhere to go
+    // but up, so the overflow pass lets it rise — volume must be conserved exactly.
+    const cols = 5
+    const rows = 20
+    const solidCells: [number, number][] = []
+    for (let c = 0; c < cols; c += 1) solidCells.push([c, rows - 1])
+    for (let r = 0; r < rows; r += 1) {
+      solidCells.push([0, r])
+      solidCells.push([1, r])
+      solidCells.push([3, r])
+      solidCells.push([4, r])
+    }
+    const { g, solid } = arena(cols, rows, solidCells)
+    pourFluid(g, solid, 2, 15, 8 * WATER_CELL_FULL)
+    expect(volume(g)).toBe(8 * WATER_CELL_FULL)
   })
 
   test('flow is deterministic — identical runs yield byte-identical grids', () => {

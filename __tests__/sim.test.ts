@@ -15,6 +15,8 @@ import {
   StructureType,
   Surface,
   TROOP_BAY_CAPACITY,
+  VOXEL_CELL,
+  WORLD_WIDTH,
 } from '$/game/constants'
 import { inputFromSnapshot, NEUTRAL_INPUT } from '$/game/input'
 import { createShip } from '$/game/ship'
@@ -538,6 +540,42 @@ describe('createSim — water', () => {
     floater.ship.vy = 0
     sim.step(1 / 60)
     expect(floater.ship.vy).toBeLessThan(0)
+  })
+
+  test('the water cannon pours on EARTH but never on METAL (no sheet pooling on a base pad)', () => {
+    // Fire a wet round straight down onto a single floor block, let it settle, and total the pooled
+    // water. On earth it soaks/pools; on metal (bedrock + the home-base pads) it must just splash —
+    // otherwise firing at a base dumps a sheet on its metal pad that then pours off the edges.
+    const fireAtFloor = (structure: StructureType): number => {
+      const world = createWorld(7)
+      const floorRow = 200
+      world.blocks = [
+        { x: 0, y: floorRow * VOXEL_CELL, w: WORLD_WIDTH, h: 6 * VOXEL_CELL, structure, surface: Surface.EARTH },
+      ]
+      world.water = []
+      world.bases = []
+      const c = combatant(999, 50 * VOXEL_CELL, 50 * VOXEL_CELL)
+      const sim = createSim(world, [c], { mode: SimMode.DEATHMATCH })
+      const wet: Bullet = {
+        x: 200 * VOXEL_CELL,
+        y: floorRow * VOXEL_CELL,
+        vx: 0,
+        vy: 0,
+        radius: 6,
+        life: 1,
+        owner: 999,
+        damage: 2,
+        wet: true,
+      }
+      for (let i = 0; i < 12; i += 1) {
+        world.bullets.push({ ...wet })
+        sim.step(1 / 60)
+      }
+      for (let k = 0; k < 300; k += 1) sim.step(1 / 60)
+      return world.water.reduce((s, b) => s + b.w * b.h, 0)
+    }
+    expect(fireAtFloor(StructureType.EARTH)).toBeGreaterThan(0)
+    expect(fireAtFloor(StructureType.METAL)).toBe(0)
   })
 })
 

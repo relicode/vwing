@@ -432,15 +432,20 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
           // on its own through the voxel fire tick — with a lick of flame at the impact.
           if (igniteSurface(voxel, bullet.x, bullet.y, FLAMETHROWER_BURN_RADIUS)) terrainDirty = true
           spawnExplosion(world.particles, bullet.x, bullet.y, Color.THRUST, world.rng, 7)
-        } else if (bullet.wet) {
-          // Water cannon: douse any grass alight, wet bare earth → grass (regrows over time, no
-          // carve), and POUR a droplet's worth of real water into the grid at the impact — it then
-          // flows, pools, and levels on its own through the fluid tick.
+        } else if (bullet.wet && block.structure === StructureType.EARTH) {
+          // Water cannon on EARTH: douse any grass alight, wet bare earth → grass (regrows over time,
+          // no carve), and POUR a droplet's worth of real water into the grid at the impact — it then
+          // flows, pools, and levels on its own through the fluid tick. METAL (bedrock + the home-base
+          // pads) is impervious: water just splashes off it (below) and never pools on the bunker pad,
+          // so firing at a base no longer dumps a sheet on its roof that pours off the edges.
           if (douseSurface(voxel, bullet.x, bullet.y, WATER_CANNON_WET_RADIUS)) terrainDirty = true
           wetSurface(voxel, bullet.x, bullet.y, WATER_CANNON_WET_RADIUS)
           pourWater(voxel, bullet.x, bullet.y, WATER_POUR_LEVEL)
           waterDirty = true
           spawnExplosion(world.particles, bullet.x, bullet.y, Color.WATER_EDGE, world.rng, 6)
+        } else if (bullet.wet) {
+          // Water cannon on metal: it can't soak in or pool on the indestructible pad — just a splash.
+          spawnExplosion(world.particles, bullet.x, bullet.y, Color.WATER_EDGE, world.rng, 4)
         } else if (block.structure === StructureType.EARTH) {
           const radius = bullet.radius * CARVE_RADIUS_SCALE + CARVE_RADIUS_BASE
           if (carveVoxel(voxel, bullet.x, bullet.y, radius)) terrainDirty = true
