@@ -11,7 +11,7 @@ import {
 } from '$/game/constants'
 import { clamp } from '$/game/math'
 import { drawInfantry } from '$/game/render/infantry'
-import { ownerHex, type PaletteSlots } from '$/game/render/owner-colors'
+import { lighten, ownerHex, type PaletteSlots } from '$/game/render/owner-colors'
 import type { Base, Beam, Device, Ship } from '$/game/types'
 
 export const drawDevice = (g: Graphics, d: Device, time: number, selfId: number, slots?: PaletteSlots): void => {
@@ -80,6 +80,10 @@ export const drawBase = (g: Graphics, base: Base, time: number, selfId: number, 
   const x = base.x - w / 2
   const y = base.y - h
   g.roundRect(x, y, w, h, 8).fill({ color: body, alpha: 0.26 }).stroke({ width: 2, color: body })
+  // Your own barracks reads at a glance — a bright inner ring sets it apart from rivals' forts.
+  if (baseHolder(base) === selfId) {
+    g.roundRect(x + 3.5, y + 3.5, w - 7, h - 7, 6).stroke({ width: 1.5, color: lighten(body, 0.55), alpha: 0.95 })
+  }
   g.circle(base.x, y, 15).fill({ color: body, alpha: 0.5 }) // roof dome
   g.rect(base.x - 9, y + h - 26, 18, 26).fill({ color: Color.INK, alpha: 0.85 }) // door
   g.moveTo(x + w - 16, y)
@@ -101,5 +105,19 @@ export const drawBase = (g: Graphics, base: Base, time: number, selfId: number, 
     const blink = Math.floor(time * 4) % 2 === 0
     g.rect(x, y - 34, w, 5).fill({ color: Color.BAR_BACK })
     g.rect(x, y - 34, w * lead.pct, 5).fill({ color: ownerHex(lead.by, selfId, slots), alpha: blink ? 1 : 0.55 })
+    // Contested: the runner-up's progress as a thinner under-bar in HIS seat color, so a multi-pilot
+    // brawl reads distinctly from a lone storm (and you can see you're being out-stormed).
+    let runnerPct = 0
+    let runnerBy = -1
+    for (const key of Object.keys(base.contest)) {
+      const id = Number(key)
+      if (id !== lead.by && base.contest[id] > runnerPct) {
+        runnerPct = base.contest[id]
+        runnerBy = id
+      }
+    }
+    if (runnerBy >= 0) {
+      g.rect(x, y - 27, w * runnerPct, 2).fill({ color: ownerHex(runnerBy, selfId, slots), alpha: 0.75 })
+    }
   }
 }
