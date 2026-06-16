@@ -8,6 +8,7 @@ import {
   BASE_PLAYER_X_FRAC,
   CAVE_MOUTH_CELLS,
   MAX_AUTHORED_WATER,
+  NET_MAX_PLAYERS,
   PLATEAU_MIN_CELLS,
   SEA_EAST_FRAC,
   SEA_FLOOR_FRAC,
@@ -62,11 +63,32 @@ enum Biome {
   MESA = 'MESA',
 }
 
-// The campaign home-base pad anchors (west = player, east = bot), shared with bases.ts/ship.ts.
-export const basePadCenters = (): Vec2[] => [
-  { x: WORLD_WIDTH * BASE_PLAYER_X_FRAC, y: WORLD_HEIGHT * BASE_PAD_Y_FRAC },
-  { x: WORLD_WIDTH * BASE_BOT_X_FRAC, y: WORLD_HEIGHT * BASE_PAD_Y_FRAC },
-]
+// Home-base pad anchors, all at the shared pad level. The FIRST TWO are the campaign sides
+// (index 0 = west player, index 1 = east bot — exactly the historical 0.12 / 0.88 fracs, so
+// ship.ts's PLAYER/BOT spawn perches still sit over them); the rest fill in for the online FFA
+// base war (one barracks per pilot, up to NET_MAX_PLAYERS). They spread evenly across two
+// sea-avoiding bands — west runs from the player pad inward toward the sea's west lip, east from
+// the bot pad inward toward its east lip, each kept a full pad-reach (slab + apron + a 2-cell
+// margin) clear of the sea so no pad's flattened apron ever dips into the gulf — and interleave
+// west/east so early joiners (and the room's pad allocator) spread to opposite sides first.
+// Shared with bases.ts (createCampaignBases takes the first two), the generator (authors each as
+// a flat metal slab), the spawn keep-outs, and the server's per-seat base allocation.
+export const basePadCenters = (): Vec2[] => {
+  const y = WORLD_HEIGHT * BASE_PAD_Y_FRAC
+  const reach = (BASE_PAD_CELLS / 2 + BASE_APRON_CELLS + 2) * VOXEL_CELL
+  const perSide = Math.ceil(NET_MAX_PLAYERS / 2)
+  const westOuter = WORLD_WIDTH * BASE_PLAYER_X_FRAC
+  const westInner = WORLD_WIDTH * SEA_WEST_FRAC - reach
+  const eastOuter = WORLD_WIDTH * BASE_BOT_X_FRAC
+  const eastInner = WORLD_WIDTH * SEA_EAST_FRAC + reach
+  const lerp = (a: number, b: number, i: number): number => (perSide <= 1 ? a : a + ((b - a) * i) / (perSide - 1))
+  const pads: Vec2[] = []
+  for (let i = 0; i < perSide; i += 1) {
+    pads.push({ x: lerp(westOuter, westInner, i), y })
+    if (pads.length < NET_MAX_PLAYERS) pads.push({ x: lerp(eastOuter, eastInner, i), y })
+  }
+  return pads
+}
 
 // Every protected spawn point: the two campaign perches above their pads + the DM anchor grid.
 export const spawnPoints = (): Vec2[] => [

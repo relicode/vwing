@@ -18,8 +18,9 @@ export enum ShipKind {
 // holding a base — lose every base and death is elimination); DEATHMATCH is online PvP
 // (baseless: everyone respawns endlessly and a kill is worth one frag to its shooter).
 export enum SimMode {
-  CAMPAIGN = 'CAMPAIGN',
-  DEATHMATCH = 'DEATHMATCH',
+  CAMPAIGN = 'CAMPAIGN', // offline 1v1: two fixed barracks (player vs bot)
+  DEATHMATCH = 'DEATHMATCH', // baseless frag-fest (full bay per life, endless respawns)
+  BATTLE = 'BATTLE', // online FFA base war: one barracks per pilot, allocated dynamically as seats join
 }
 
 export const DEATHMATCH_FRAG_SCORE = 1 // points a kill awards its shooter in DEATHMATCH
@@ -105,6 +106,10 @@ export const NET_DEFAULT_PORT = 8787 // game server (HTTP lobby + WebSocket) por
 export const NET_MAX_PLAYERS = 8 // combatants per game room
 export const NET_PERSIST_EVERY = 15 // ticks between full-state writes to Redis (2×/s at 30 Hz)
 export const NET_EMPTY_ROOM_TTL = 30 // s an emptied room lingers (state kept in Redis) before disposal
+// s a disconnected (benched) pilot still counts as a live contender before the FFA base war can be
+// decided in their absence — comfortably longer than the client's full reconnect backoff (~23 s, the
+// sum of NET_RECONNECT_DELAYS_MS) so a genuine blip always reclaims its seat rather than forfeiting.
+export const NET_DISCONNECT_GRACE = 30
 export const NET_GAME_NAME_MAX = 24 // max characters in a hosted game name
 export const NET_BENCH_MAX = 32 // disconnected seats a room remembers for same-name reclaim (oldest evicted)
 export const NET_PERSIST_MAX_DEVICES = 512 // cap on devices read back from a persisted blob (hostile-blob bound)
