@@ -19,6 +19,11 @@ const INITIAL_STATUS: NetStatus = {
   stalled: false,
   outcome: NetOutcome.PLAYING,
   winnerName: undefined,
+  homeUnderAttack: 0,
+  homeAttacker: undefined,
+  bestAssault: 0,
+  basesHeld: 0,
+  seatBases: {},
   error: undefined,
 }
 

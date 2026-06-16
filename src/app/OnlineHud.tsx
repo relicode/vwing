@@ -116,9 +116,17 @@ const Scoreboard = ({ status }: { status: NetStatus }) => {
                   {player.name}
                 </Typography>
               </Stack>
-              <Typography sx={{ fontSize: 13, fontWeight: 700, color: isSelf ? 'primary.main' : 'text.secondary' }}>
-                {player.score}
-              </Typography>
+              <Stack direction="row" sx={{ alignItems: 'center', gap: 0.75, flex: 'none' }}>
+                {/* Bases held — the real base-war standing (frags are orthogonal to the win condition). */}
+                {(status.seatBases[player.id] ?? 0) > 0 ? (
+                  <Typography sx={{ fontSize: 11, fontWeight: 700, color: 'text.secondary' }} aria-label="bases held">
+                    ⌂{status.seatBases[player.id]}
+                  </Typography>
+                ) : null}
+                <Typography sx={{ fontSize: 13, fontWeight: 700, color: isSelf ? 'primary.main' : 'text.secondary' }}>
+                  {player.score}
+                </Typography>
+              </Stack>
             </Stack>
           )
         })}
@@ -129,6 +137,9 @@ const Scoreboard = ({ status }: { status: NetStatus }) => {
 
 const OnlineHud = ({ status, onLeave }: OnlineHudProps) => {
   const ready = status.charge >= (WEAPON_CONFIG[status.weapon].cost / SECONDARY_MAX_CHARGE) * 100
+  // The base-war alarm: who is taking one of your forts, tinted in that rival's seat color.
+  const attacker = status.players.find((p) => p.id === status.homeAttacker)
+  const attackerHex = attacker ? chipHex(attacker.palette) : undefined
   // The welcome-back toast opens on each reclaimed WELCOME (reclaims only ever increments).
   const [toastFor, setToastFor] = useState(0)
   useEffect(() => {
@@ -200,6 +211,45 @@ const OnlineHud = ({ status, onLeave }: OnlineHudProps) => {
           ))}
         </Stack>
       </Stack>
+
+      {status.homeUnderAttack > 0 ? (
+        <Typography
+          sx={{
+            position: 'absolute',
+            top: 116,
+            left: 0,
+            right: 0,
+            textAlign: 'center',
+            fontSize: 18,
+            fontWeight: 900,
+            letterSpacing: '0.2em',
+            color: attackerHex ?? 'secondary.main',
+            textShadow: '0 0 14px currentColor',
+            '@keyframes hudFlash': { '0%': { opacity: 1 }, '50%': { opacity: 0.25 }, '100%': { opacity: 1 } },
+            animation: 'hudFlash 0.8s linear infinite',
+          }}
+        >
+          BASE UNDER ATTACK — {status.homeUnderAttack}%{attacker ? ` · ${attacker.name}` : ''}
+        </Typography>
+      ) : null}
+      {status.bestAssault > 0 ? (
+        <Typography
+          sx={{
+            position: 'absolute',
+            top: status.homeUnderAttack > 0 ? 144 : 116,
+            left: 0,
+            right: 0,
+            textAlign: 'center',
+            fontSize: 13,
+            fontWeight: 700,
+            letterSpacing: '0.18em',
+            color: 'primary.main',
+            textShadow: '0 0 10px currentColor',
+          }}
+        >
+          ASSAULT {status.bestAssault}%
+        </Typography>
+      ) : null}
 
       {status.respawnIn > 0 ? (
         <Typography

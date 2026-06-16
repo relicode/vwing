@@ -1,3 +1,4 @@
+import { baseHolder, captureLead } from '$/game/bases'
 import {
   Color,
   GamePhase,
@@ -67,7 +68,45 @@ export type NetStatus = {
   stalled: boolean // no SNAPSHOT for NET_SNAPSHOT_STALL_MS while PLAYING (the UNSTABLE chip)
   outcome: NetOutcome // this player's base-war verdict (terminal screens key off it)
   winnerName: string | undefined // the deciding pilot's name, for the result screen
+  // The base war, derived from world.bases in each snapshot (no protocol change — the snapshot
+  // already carries every base). The FFA loop is otherwise invisible in the HUD.
+  homeUnderAttack: number // % capture of your most-threatened HELD base by its leading rival (0 = safe)
+  homeAttacker: number | undefined // that rival's ship id (for the alarm's palette tint)
+  bestAssault: number // your highest capture progress on any base you do NOT hold (0..100)
+  basesHeld: number // how many bases you currently hold
+  seatBases: Record<number, number> // bases held per ship id — the real base-war standings
   error: string | undefined
+}
+
+// The base-war picture for one pilot, read straight off the snapshot's bases (which carry every
+// pilot's per-attacker progress + holder). Surfaces what the FRAGS scoreboard can't: who is taking
+// your base and how close, your own assault, and how many bases each pilot holds (the win condition).
+type BaseSummary = Pick<NetStatus, 'homeUnderAttack' | 'homeAttacker' | 'bestAssault' | 'basesHeld' | 'seatBases'>
+const summarizeBases = (world: WorldSnapshot | undefined, id: number): BaseSummary => {
+  const seatBases: Record<number, number> = {}
+  let underAttack = 0
+  let attacker: number | undefined
+  let assault = 0
+  for (const base of world?.bases ?? []) {
+    const holder = baseHolder(base)
+    seatBases[holder] = (seatBases[holder] ?? 0) + 1
+    if (holder === id) {
+      const lead = captureLead(base)
+      if (lead && lead.pct > underAttack) {
+        underAttack = lead.pct
+        attacker = lead.by
+      }
+    } else {
+      assault = Math.max(assault, base.contest[id] ?? 0)
+    }
+  }
+  return {
+    homeUnderAttack: Math.round(underAttack * 100),
+    homeAttacker: attacker,
+    bestAssault: Math.round(assault * 100),
+    basesHeld: seatBases[id] ?? 0,
+    seatBases,
+  }
 }
 
 export type NetClient = {
@@ -146,11 +185,17 @@ export const connectGame = async (game: string, name: string, intent: JoinIntent
     stalled,
     outcome: NetOutcome.PLAYING,
     winnerName: undefined,
+    homeUnderAttack: 0,
+    homeAttacker: undefined,
+    bestAssault: 0,
+    basesHeld: 0,
+    seatBases: {},
     error,
   }
   const publish = (): void => {
     const ship = selfShip()
     const me = players.find((p) => p.id === selfId)
+    const bases = summarizeBases(world, selfId)
     const next: NetStatus = {
       phase,
       game,
@@ -167,6 +212,7 @@ export const connectGame = async (game: string, name: string, intent: JoinIntent
       stalled,
       outcome: outcomeOf(),
       winnerName: winnerNameOf(),
+      ...bases,
       error,
     }
     // Cheap shallow compare on the fields the HUD reads (players identity changes per tick,
@@ -174,7 +220,13 @@ export const connectGame = async (game: string, name: string, intent: JoinIntent
     // EVERY HUD-read field must appear here, or its changes silently never reach React.
     // (respawnIn folds at whole seconds — the countdown displays whole seconds.)
     const sig = (s: NetStatus): string =>
-      `${s.phase}|${s.score}|${s.weapon}|${s.charge}|${s.troops}|${s.attempt}|${s.reclaims}|${s.stalled}|${s.outcome}|${s.winnerName ?? ''}|${Math.ceil(s.respawnIn)}|${s.error ?? ''}|${s.feed.map((f) => f.id).join('.')}|${s.players.map((p) => `${p.id}:${p.score}:${p.palette}:${p.connected}:${p.eliminated}`).join(',')}`
+      `${s.phase}|${s.score}|${s.weapon}|${s.charge}|${s.troops}|${s.attempt}|${s.reclaims}|${s.stalled}|${s.outcome}|${s.winnerName ?? ''}|${Math.ceil(s.respawnIn)}|${s.error ?? ''}|${s.homeUnderAttack}|${s.homeAttacker ?? ''}|${s.bestAssault}|${s.basesHeld}|${Object.entries(
+        s.seatBases
+      )
+        .map(([k, v]) => `${k}:${v}`)
+        .join(
+          '.'
+        )}|${s.feed.map((f) => f.id).join('.')}|${s.players.map((p) => `${p.id}:${p.score}:${p.palette}:${p.connected}:${p.eliminated}`).join(',')}`
     if (sig(next) === sig(status)) return
     status = next
     notify()
