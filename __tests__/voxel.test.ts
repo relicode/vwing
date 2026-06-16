@@ -31,6 +31,7 @@ import {
   voxelToBlocks,
   wetSurface,
 } from '$/game/voxel'
+import { markWet } from '$/game/water-cell'
 
 // A small controlled arena (independent of the procedural production terrain, which is random per
 // seed and so unsuitable as a fixture). All coordinates are in whole cells so assertions are exact.
@@ -417,6 +418,29 @@ describe('per-cell water (voxel ↔ fluid wiring)', () => {
     for (const b of bodies) expect(b.y).toBe(Math.round(b.y)) // surfaces snap to whole px — no sub-pixel jitter
     // Deriving twice without flowing yields identical bodies (nothing wobbles frame to frame).
     expect(fluidToBodies(vt)).toEqual(bodies)
+  })
+
+  test('water trapped under an overhang derives as its own (lower) body — not dropped under the surface pool', () => {
+    const vt = basinTerrain()
+    const { fluid, cols } = vt
+    // Two separate wet runs in the same columns: a surface pool (row 80) and, below a dry gap (the
+    // overhang's rock roof + the air beneath it, rows 81–89), a pocket trapped under it (row 90).
+    // The old derivation kept only the topmost run per column, so the pocket vanished — rendering as
+    // a black void and reading as dry to anything down in it. Both runs must now derive.
+    for (let col = 44; col <= 46; col += 1) {
+      fluid.level[80 * cols + col] = WATER_CELL_FULL
+      fluid.level[90 * cols + col] = WATER_CELL_FULL
+      markWet(fluid, col, 80)
+      markWet(fluid, col, 90)
+    }
+    const bodies = fluidToBodies(vt)
+    const surface = bodies.filter((b) => b.y === 80 * C)
+    const pocket = bodies.filter((b) => b.y === 90 * C)
+    expect(surface).toHaveLength(1) // the top pool, cols 44–46 coalesced
+    expect(pocket).toHaveLength(1) // the trapped pocket, NOT dropped
+    expect(pocket[0].x).toBe(44 * C)
+    expect(pocket[0].w).toBe(3 * C)
+    expect(pocket[0].y).toBeGreaterThan(surface[0].y + surface[0].h) // stacked below, a real gap between
   })
 
   test('a chunk breaking off wakes the pool resting on it — water rides terrain down, never hangs', () => {
