@@ -82,13 +82,14 @@ export const createRoom = (name: string, restore?: RoomRestore): Room => {
   const sim = createSim(world, [], { mode: SimMode.DEATHMATCH })
   // Resurrecting a persisted room: the seed already rebuilt the authored terrain above. The
   // hydration ORDER below is load-bearing: the clock first (pending-respawn math is
-  // world.time-relative), then water + devices + the carved grid, then the id cursor pushed
-  // past every restored seat, then the roster onto the bench — nobody's ship enters the sim
-  // until its pilot reclaims it, so a resurrected room is the arena plus the autonomous minion
-  // war under a greyed scoreboard. A snapshot that doesn't fit (foreign seed / changed grid
-  // constants) is ignored — the room simply starts with the seed's pristine arena.
+  // world.time-relative), then devices + the carved grid, then the id cursor pushed past every
+  // restored seat, then the roster onto the bench — nobody's ship enters the sim until its pilot
+  // reclaims it, so a resurrected room is the arena plus the autonomous minion war under a greyed
+  // scoreboard. A snapshot that doesn't fit (foreign seed / changed grid constants) is ignored —
+  // the room simply starts with the seed's pristine arena. Water is NOT hydrated here: it lives in
+  // the per-cell fluid grid (inside the terrain snapshot), and restoreTerrain re-derives world.water
+  // from it — so a stale rect array can never desync from the grid the physics actually flows.
   if (restore?.time !== undefined) world.time = restore.time
-  if (restore?.water) world.water = restore.water
   if (restore?.devices) world.devices = restore.devices
   if (restore?.terrain) sim.restoreTerrain(restore.terrain)
   const members = new Map<number, Member>()
@@ -278,7 +279,6 @@ export const createRoom = (name: string, restore?: RoomRestore): Room => {
       savedAt: Date.now(),
       nextId,
       time: world.time,
-      water: world.water,
       devices: world.devices,
       roster,
     })

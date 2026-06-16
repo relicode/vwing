@@ -214,7 +214,8 @@ export type World = {
   beams: Beam[]
   blocks: Block[] // collision/render terrain — rectangles greedily meshed from the voxel grid + debris
   terrainVersion: number // bumped whenever `blocks` changes (carve / falling debris); drives render caching
-  water: WaterBody[] // bodies the ship can submerge into
+  water: WaterBody[] // the rectangle view of the per-cell fluid the ship can submerge into
+  waterVersion: number // bumped whenever `water` changes (flow / pour); drives the water-layer redraw alone
   bases: Base[] // home barracks (CAMPAIGN populates one per side; DEATHMATCH leaves it empty)
   shake: number // screen-shake amplitude (px); bumped by explosions, decays each frame
   rng: Rng

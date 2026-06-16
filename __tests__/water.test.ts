@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { ShipKind, WeaponKind } from '$/game/constants'
 import type { Ship, WaterBody } from '$/game/types'
-import { addPool, raisePool, submersion, waterSurfaceAt } from '$/game/water'
+import { submersion, waterSurfaceAt } from '$/game/water'
 
 const makeShip = (over: Partial<Ship>): Ship => ({
   id: 0,
@@ -43,46 +43,12 @@ describe('submersion', () => {
     expect(partial).toBeLessThan(1)
     expect(submersion(makeShip({ x: 300, y: 900 }), [body])).toBe(1) // well under
   })
-})
 
-describe('addPool', () => {
-  const lake: WaterBody = { x: 0, y: 1000, w: 2000, h: 400 } // full-width lake
-
-  test('a basin overlapping an existing body fuses into one (union bounds)', () => {
-    const a: WaterBody = { x: 100, y: 500, w: 100, h: 40 } // 100..200
-    const b: WaterBody = { x: 150, y: 500, w: 100, h: 40 } // 150..250, overlaps a
-    const next = addPool([a], b, 24)
-    expect(next).toHaveLength(1)
-    expect(next[0].x).toBe(100)
-    expect(next[0].w).toBe(150) // union spans 100..250
-  })
-
-  test('a pool stacked above another at the same x stays separate (no vertical overlap)', () => {
-    const perched: WaterBody = { x: 500, y: 590, w: 80, h: 20 } // x overlaps the lake, far above it
-    expect(addPool([lake], perched, 24)).toHaveLength(2)
-  })
-
-  test('at the body cap, a non-merging pool is dropped', () => {
-    const bodies = Array.from({ length: 24 }, (_, i) => ({ x: i * 100, y: 0, w: 10, h: 10 }))
-    const lonely: WaterBody = { x: 5000, y: 0, w: 10, h: 10 }
-    expect(addPool(bodies, lonely, 24)).toHaveLength(24) // skipped (no room, nothing to fuse)
-  })
-})
-
-describe('raisePool — basins fill gradually', () => {
-  const basin: WaterBody = { x: 0, y: 100, w: 100, h: 50 } // spill level 100, floor 150
-
-  test('each pour raises the level by area/width, capped at the spill level', () => {
-    let water: WaterBody[] = []
-    water = raisePool(water, basin, 700, 24)
-    expect(water).toHaveLength(1)
-    expect(water[0].y).toBeCloseTo(150 - 7, 5) // 700 px² across a 100 px basin = 7 px of water
-    const firstY = water[0].y
-    water = raisePool(water, basin, 700, 24)
-    expect(water[0].y).toBeLessThan(firstY) // climbing…
-    for (let i = 0; i < 50; i += 1) water = raisePool(water, basin, 700, 24)
-    expect(water[0].y).toBe(100) // …and pinned at the spill level, never past it
-    expect(raisePool(water, basin, 700, 24)).toBe(water) // a full basin takes no more
+  test('a thin film gives only a thin film of buoyancy (depth clamped to the body height)', () => {
+    const film: WaterBody = { x: 100, y: 800, w: 400, h: 6 } // 6px-deep poured film, floor at y=806
+    const ship = makeShip({ x: 300, y: 800, radius: 12 }) // bottom 12px below the surface, but only 6px of water
+    // Without the body-height clamp this reads 12/24 = 0.5 (a half dunk over a 6px puddle); clamped it's 6/24.
+    expect(submersion(ship, [film])).toBeCloseTo(6 / 24, 5)
   })
 })
 

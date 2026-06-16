@@ -9,7 +9,6 @@ const SURFACE_STYLE: Record<Surface, { fill: number; edge: number }> = {
   [Surface.EARTH]: { fill: Color.ROCK, edge: Color.ROCK_EDGE },
   [Surface.GRASS]: { fill: Color.GRASS, edge: Color.GRASS_EDGE },
   [Surface.ICE]: { fill: Color.ICE, edge: Color.ICE_EDGE },
-  [Surface.WATER]: { fill: Color.WATER, edge: Color.WATER_EDGE },
   [Surface.FIRE]: { fill: Color.FIRE, edge: Color.FIRE_EDGE },
 }
 const METAL_STYLE = { fill: Color.BEDROCK, edge: Color.BEDROCK_EDGE }
@@ -61,8 +60,6 @@ const drawBlockDetail = (g: Graphics, b: Block): void => {
           .stroke({ width: 1.5, color: Color.FIRE_EDGE, alpha: 0.9 })
       }
       break
-    case Surface.WATER:
-      break // water never appears on a block (it is a WaterBody overlay)
   }
 }
 
@@ -112,22 +109,30 @@ export const createTerrainView = (): TerrainView => {
   const waterGfx = new Graphics() // basins span anywhere; few rects, drawn over the blocks
   container.addChild(waterGfx)
   let version = -1
+  let waterVersion = -1
 
   const draw = (world: RenderWorld): void => {
-    if (world.terrainVersion === version) return
-    version = world.terrainVersion
-    const byChunk: Block[][] = chunks.map(() => [])
-    for (const block of world.blocks) {
-      const first = Math.max(0, Math.floor(block.x / chunkWidth))
-      const last = Math.min(CHUNK_COUNT - 1, Math.floor((block.x + block.w) / chunkWidth))
-      for (let i = first; i <= last; i += 1) byChunk[i].push(block)
+    const terrainChanged = world.terrainVersion !== version
+    if (terrainChanged) {
+      version = world.terrainVersion
+      const byChunk: Block[][] = chunks.map(() => [])
+      for (const block of world.blocks) {
+        const first = Math.max(0, Math.floor(block.x / chunkWidth))
+        const last = Math.min(CHUNK_COUNT - 1, Math.floor((block.x + block.w) / chunkWidth))
+        for (let i = first; i <= last; i += 1) byChunk[i].push(block)
+      }
+      for (let i = 0; i < CHUNK_COUNT; i += 1) {
+        chunks[i].clear()
+        drawBlocks(chunks[i], byChunk[i])
+      }
     }
-    for (let i = 0; i < CHUNK_COUNT; i += 1) {
-      chunks[i].clear()
-      drawBlocks(chunks[i], byChunk[i])
+    // The water layer redraws on its OWN version (flowing water never re-tessellates terrain), but
+    // also when terrain changed — the fill is clipped against world.blocks.
+    if (terrainChanged || world.waterVersion !== waterVersion) {
+      waterVersion = world.waterVersion
+      waterGfx.clear()
+      drawWaterBodies(waterGfx, world.water, world.blocks)
     }
-    waterGfx.clear()
-    drawWaterBodies(waterGfx, world.water, world.blocks)
   }
 
   return { container, draw }

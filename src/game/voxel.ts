@@ -4,20 +4,27 @@ import {
   GRASS_BURN_TIME,
   GRASS_FIRE_SPREAD_AFTER,
   GRAVITY,
-  POOL_HALF_WIDTH,
-  POOL_MAX_DEPTH,
-  POOL_MAX_RISE,
-  POOL_MIN_WIDTH,
   StructureType,
   SURFACE_REGROW_TIME,
   Surface,
   VOXEL_CELL,
-  WATER_SETTLE_WALL_PROBE,
+  WATER_CELL_FULL,
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from '$/game/constants'
 import { clamp } from '$/game/math'
 import type { Block, WaterBody } from '$/game/types'
+import {
+  createFluidGrid,
+  type FluidGrid,
+  markWet,
+  pourFluid,
+  type SolidFn,
+  sealFluidCell,
+  setWetBounds,
+  stepFluid,
+  wakeAround,
+} from '$/game/water-cell'
 
 // Destructible terrain as a grid of small cells. Metal stays as indestructible anchor
 // rectangles; earth cells are voxelized (each carrying its surface: bare earth / grass / ice)
@@ -69,7 +76,7 @@ export type VoxelTerrain = {
   bedrockMask: Uint8Array // 1 where a cell center lies inside a bedrock block
   pinned: Set<number>[] // undisturbed floating-island components (cell indices), kept aloft until shot
   bodies: DebrisBody[]
-  water: readonly WaterBody[]
+  fluid: FluidGrid // per-cell water that flows (see water-cell.ts); replaces the old WaterBody rects
   staticBlocks: Block[] // cached greedy mesh of `mat`, recomputed on change
   regrow: Map<number, number> // wetted bare-earth cells → s left until they regrow grass (server-side only)
   burning: Map<number, number> // FIRE cells → s of burn left (spreads at the spread mark, spends to EARTH at 0)
@@ -236,6 +243,9 @@ const liftComponent = (vt: VoxelTerrain, component: number[]): void => {
     // (its timer entry, keyed to the static grid, is swept by the fire tick once mat empties).
     cells[(row - minRow) * boxCols + (col - minCol)] = vt.mat[i] === FIRE ? EARTH : vt.mat[i]
     vt.mat[i] = EMPTY
+    // The cell just emptied — its support is gone. Wake any water resting on or beside it so the
+    // pool pours into the space the breaking chunk left behind, instead of hanging where it was.
+    wakeAround(vt.fluid, col, row)
   }
   if (vt.bodies.length < DEBRIS_MAX_BODIES) {
     vt.bodies.push({ col0: minCol, row0: minRow, boxCols, boxRows, cells, vy: 0, fall: 0 })
@@ -270,7 +280,14 @@ const stampBody = (vt: VoxelTerrain, body: DebrisBody): void => {
       if (m === EMPTY) continue
       const col = body.col0 + lc
       const row = body.row0 + lr
-      if (row >= 0 && row < vt.rows && col >= 0 && col < vt.cols) vt.mat[idx(vt, col, row)] = m
+      if (row >= 0 && row < vt.rows && col >= 0 && col < vt.cols) {
+        const i = idx(vt, col, row)
+        vt.mat[i] = m
+        // The cell just turned solid: any water sitting in it is displaced (debris splashes it out —
+        // a small volume), and the neighbours are woken so the surrounding pool reflows off the chunk.
+        vt.fluid.level[i] = 0
+        wakeAround(vt.fluid, col, row)
+      }
     }
   }
 }
@@ -322,11 +339,12 @@ export const createVoxelTerrain = (blocks: Block[], water: WaterBody[]): VoxelTe
     bedrockMask,
     pinned: [],
     bodies: [],
-    water,
+    fluid: createFluidGrid(cols, rows),
     staticBlocks: [],
     regrow: new Map(),
     burning: new Map(),
   }
+  fillAuthoredWater(vt, water) // seed the authored sea/pools into the per-cell grid (at rest)
 
   // Anything not grounded at birth is an intentional floating island: pin its component so it
   // hovers. Carving the island later shrinks the pin to whatever main mass survives, so only the
@@ -433,6 +451,8 @@ export const carveVoxel = (vt: VoxelTerrain, x: number, y: number, radius: numbe
     }
   }
   if (removed.length === 0) return false
+  // The crater opened space: wake any water touching it so it flows in / pours down the new hole.
+  for (const i of removed) wakeAround(vt.fluid, i % vt.cols, (i / vt.cols) | 0)
   // A shot that bites a floating island shrinks its pin to the surviving main mass, so only the
   // pieces severed from that mass lose their anchor and fall — the rest keeps floating.
   if (vt.pinned.length > 0) {
@@ -535,185 +555,149 @@ export const wetSurface = (vt: VoxelTerrain, x: number, y: number, radius: numbe
   return wetted
 }
 
-// Find the cupped basin a water-cannon hit at (x, y) would pool into, as a WaterBody, or undefined
-// if the impact isn't contained (open ground, a slope, or a basin wider/deeper than the search
-// window). Deterministic and bounded to a POOL_HALF_WIDTH × (POOL_MAX_RISE + POOL_MAX_DEPTH) window:
-// it reads the terrain surface row per column (metal anchors count as walls), takes the lower of
-// the highest lip on each side as the spill level, and fills from there down to the basin floor.
-// Each column is treated as a heightfield (its topmost solid), so overhangs/ceilings aren't modeled.
-export const findPool = (vt: VoxelTerrain, x: number, y: number): WaterBody | undefined => {
-  const hc = Math.floor(x / vt.cell)
-  const hr = Math.floor(y / vt.cell)
-  if (hc < 0 || hc >= vt.cols || hr < 0 || hr >= vt.rows) return undefined
-  const c0 = Math.max(0, hc - POOL_HALF_WIDTH)
-  const c1 = Math.min(vt.cols - 1, hc + POOL_HALF_WIDTH)
-  const r0 = Math.max(0, hr - POOL_MAX_RISE)
-  const r1 = Math.min(vt.rows - 1, hr + POOL_MAX_DEPTH)
-  const span = c1 - c0 + 1
+// ── Per-cell water (the flowing fluid) ───────────────────────────────────────
+// Water lives on the grid as a per-cell fill level that FLOWS each tick (see water-cell.ts): it
+// falls into the cell below, else spreads sideways to level off, so it seeks the lowest point, pours
+// off ledges, and fills carved pockets — no more flat-rectangle settling. The fluid is terrain-blind;
+// it asks this predicate where the solid is.
+const solidFn =
+  (vt: VoxelTerrain): SolidFn =>
+  (col, row) =>
+    // Terrain solids, plus the water-only walls (sealed base footprints): the fluid treats a
+    // barracks as a watertight massif — sheds off its roof, flows around its walls, never in.
+    solidAt(vt, col, row) || vt.fluid.wall[idx(vt, col, row)] === 1
 
-  // Terrain surface row per window column: the topmost solid cell (earth or metal) in [r0, r1],
-  // or r1 + 1 when the column is empty all the way down (an open column — water would drain).
-  const surf = new Int32Array(span)
+// Seed authored worldgen water (the sea + pools, still emitted as rectangles) into the grid: fill
+// every non-solid cell a body covers, partial in the surface row. Left out of the active-set — an
+// authored basin is already at rest, so it costs nothing until something disturbs it.
+const fillAuthoredWater = (vt: VoxelTerrain, water: readonly WaterBody[]): void => {
+  const cell = vt.cell
+  for (const b of water) {
+    const c0 = clamp(Math.floor(b.x / cell), 0, vt.cols - 1)
+    const c1 = clamp(Math.floor((b.x + b.w - 0.001) / cell), 0, vt.cols - 1)
+    const r0 = clamp(Math.floor(b.y / cell), 0, vt.rows - 1)
+    const r1 = clamp(Math.floor((b.y + b.h - 0.001) / cell), 0, vt.rows - 1)
+    for (let row = r0; row <= r1; row += 1) {
+      const overlap = Math.min(b.y + b.h, (row + 1) * cell) - Math.max(b.y, row * cell) // px of water in the row
+      const level = Math.min(WATER_CELL_FULL, Math.round((overlap / cell) * WATER_CELL_FULL))
+      if (level <= 0) continue
+      for (let col = c0; col <= c1; col += 1) {
+        if (solidAt(vt, col, row)) continue
+        const i = idx(vt, col, row)
+        if (level > vt.fluid.level[i]) vt.fluid.level[i] = level
+        markWet(vt.fluid, col, row)
+      }
+    }
+  }
+}
+
+// Advance the fluid one tick against the current terrain. Returns whether any water moved.
+export const stepWater = (vt: VoxelTerrain): boolean => stepFluid(vt.fluid, solidFn(vt))
+
+// Pour `level` units of water in at world (x, y) — the water-cannon injector. The fluid deposits the
+// water at the impact and spreads it across the open span before rising, so a fast stream lays down a
+// widening puddle (which the flow tick then levels) instead of building a column that crests walls.
+export const pourWater = (vt: VoxelTerrain, x: number, y: number, level: number): void => {
+  const col = clamp(Math.floor(x / vt.cell), 0, vt.cols - 1)
+  const row = clamp(Math.floor(y / vt.cell), 0, vt.rows - 1)
+  pourFluid(vt.fluid, solidFn(vt), col, row, level)
+}
+
+// Seal a world-space rectangle as a watertight WALL to the fluid — every cell it covers becomes
+// solid to water only (hulls and troopers pass through as before). Used to make the static barracks
+// footprints impervious so poured/rising water sheds off the roof and flows around the walls instead
+// of pooling inside and drowning the sheltered defenders. Evicts any water already in those cells and
+// wakes the rim so neighbouring water re-levels against the new wall. Idempotent (re-seal on restore).
+export const sealWaterRect = (vt: VoxelTerrain, rect: { x: number; y: number; w: number; h: number }): void => {
+  const cell = vt.cell
+  const c0 = clamp(Math.floor(rect.x / cell), 0, vt.cols - 1)
+  const c1 = clamp(Math.floor((rect.x + rect.w - 0.001) / cell), 0, vt.cols - 1)
+  const r0 = clamp(Math.floor(rect.y / cell), 0, vt.rows - 1)
+  const r1 = clamp(Math.floor((rect.y + rect.h - 0.001) / cell), 0, vt.rows - 1)
+  for (let row = r0; row <= r1; row += 1) {
+    for (let col = c0; col <= c1; col += 1) {
+      sealFluidCell(vt.fluid, col, row)
+      wakeAround(vt.fluid, col, row) // any water lapping the now-sealed footprint re-flows next tick
+    }
+  }
+}
+
+// Derive the render/physics rectangle view of the fluid: per column, the topmost contiguous wet run
+// becomes a flat-topped body (surface = where the water reaches in its top cell, floor = the bottom
+// of the run), and equal-(surface, floor) column runs coalesce into wide rects. This is what fills
+// world.water — drawn by the renderer and queried by ship/infantry buoyancy, exactly as the old
+// authored rects were, so none of those call sites change. (One run per column: a pool perched over
+// a cave in the same column is rare in this terrain and renders as the upper run.)
+// Columns whose surfaces sit within this many px (and share a floor) coalesce into one body. A bit
+// above the per-level granularity (one level ≈ cell/255 ≈ 0.07 px) so a settling pool's slightly
+// uneven top doesn't shatter into dozens of single-column bodies — keeps the body count (and the
+// physics queries that read it) stable.
+const WATER_BODY_MERGE_TOL = 3
+export const fluidToBodies = (vt: VoxelTerrain): WaterBody[] => {
+  const { cols, rows, level } = vt.fluid
+  const cell = vt.cell
+  const c0 = Math.max(0, vt.fluid.minCol)
+  const c1 = Math.min(cols - 1, vt.fluid.maxCol)
+  const r0 = Math.max(0, vt.fluid.minRow)
+  const r1 = Math.min(rows - 1, vt.fluid.maxRow)
+  if (c1 < c0 || r1 < r0) {
+    setWetBounds(vt.fluid, cols, -1, rows, -1) // nothing wet
+    return []
+  }
+  const span = c1 - c0 + 1
+  const surf = new Float64Array(span)
+  const flr = new Float64Array(span)
+  const wet = new Uint8Array(span)
+  // Re-measure the live wet extent while scanning so a drained region stops being scanned next time.
+  let tcMin = cols
+  let tcMax = -1
+  let trMin = rows
+  let trMax = -1
   for (let c = c0; c <= c1; c += 1) {
-    let s = r1 + 1
+    let top = -1
     for (let r = r0; r <= r1; r += 1) {
-      if (solidAt(vt, c, r)) {
-        s = r
+      if (level[r * cols + c] > 0) {
+        top = r
         break
       }
     }
-    surf[c - c0] = s
+    if (top < 0) continue
+    let bottom = top
+    for (let r = top + 1; r <= r1 && level[r * cols + c] > 0; r += 1) bottom = r
+    const k = c - c0
+    wet[k] = 1
+    // Surface rounded to whole px: snaps out sub-pixel float wobble (so a flowing column's body
+    // doesn't micro-jitter the buoyancy/wade queries) and keeps the value platform-stable.
+    surf[k] = Math.round(top * cell + (1 - level[top * cols + c] / WATER_CELL_FULL) * cell)
+    flr[k] = (bottom + 1) * cell
+    if (c < tcMin) tcMin = c
+    if (c > tcMax) tcMax = c
+    if (top < trMin) trMin = top
+    if (bottom > trMax) trMax = bottom
   }
-
-  const hi = hc - c0
-  const floorRow = surf[hi]
-  if (floorRow > r1) return undefined // no floor under the hit within the window → drains
-
-  // Highest lip (smallest row) reachable to each side (prefix / suffix minima of surf).
-  const leftMin = new Int32Array(span)
-  const rightMin = new Int32Array(span)
-  leftMin[0] = surf[0]
-  for (let i = 1; i < span; i += 1) leftMin[i] = Math.min(leftMin[i - 1], surf[i])
-  rightMin[span - 1] = surf[span - 1]
-  for (let i = span - 2; i >= 0; i -= 1) rightMin[i] = Math.min(rightMin[i + 1], surf[i])
-
-  // Water rises to the lower of the two bounding lips; below that it would spill over.
-  const surfaceRow = Math.max(leftMin[hi], rightMin[hi])
-  if (surfaceRow >= floorRow) return undefined // hit sits at/above the rim line → not contained
-  if (surfaceRow <= r0) return undefined // the spill rim rides the window top → basin too tall, treat as open
-
-  // Pooled columns: the contiguous run around the hit whose floor lies below the spill surface.
-  let left = hi
-  while (left - 1 >= 0 && surf[left - 1] > surfaceRow) left -= 1
-  let right = hi
-  while (right + 1 < span && surf[right + 1] > surfaceRow) right += 1
-  if (left === 0 || right === span - 1) return undefined // reaches the window edge → not contained
-  if (right - left + 1 < POOL_MIN_WIDTH) return undefined
-
-  let bottomRow = floorRow
-  for (let i = left; i <= right; i += 1) if (surf[i] > bottomRow) bottomRow = surf[i]
-  const px = (c0 + left) * vt.cell
-  const pw = (right - left + 1) * vt.cell
-  const py = surfaceRow * vt.cell
-  const ph = (bottomRow - surfaceRow) * vt.cell
-  return ph > 0 ? { x: px, y: py, w: pw, h: ph } : undefined
-}
-
-// ── Dynamic water settling ───────────────────────────────────────────────────
-// Authored + poured water rests in basins as flat rectangles. When the terrain under or beside a
-// body changes (a carve, settling debris), each body is re-settled against the heightfield so it
-// stays physically honest WITHOUT a per-cell fluid sim: the surface drops to a breached side lip
-// (water spills/falls until it is contained again), and a body whose bed is carved clean through —
-// a column open all the way down — DRAINS away (the water falls through). A flat rect can't model a
-// floor that's deep in one column and shallow in the next, so the bed never sinks below its original
-// level: a localized hole is left to drain rather than smearing "water" over the solid beside it.
-// Water never RISES here — only pouring (raisePool) lifts a surface.
-
-// The first solid cell row in a column scanning down through [fromRow, toRow], or undefined when the
-// column is open the whole way (water would drain straight through). Out-of-bounds counts as solid.
-const firstSolidBelow = (vt: VoxelTerrain, col: number, fromRow: number, toRow: number): number | undefined => {
-  for (let r = fromRow; r <= toRow; r += 1) if (solidAt(vt, col, r)) return r
-  return undefined
-}
-
-// The containing lip on one side of a body: scan up to WATER_SETTLE_WALL_PROBE columns outward (so a
-// thick rim survives a single carved column). The side is walled — surface held — as soon as a probed
-// column stands solid at the waterline; otherwise the rim is breached and the lip is the highest
-// terrain found across the probe (the new, lower spill row), or undefined when every probed column is
-// open the whole way down (the wall is gone → the body drains on this side).
-const sideLip = (
-  vt: VoxelTerrain,
-  fromCol: number,
-  step: number,
-  surfRow: number,
-  floorRow: number
-): number | undefined => {
-  let lip: number | undefined
-  for (let i = 0; i < WATER_SETTLE_WALL_PROBE; i += 1) {
-    const here = firstSolidBelow(vt, fromCol + step * i, surfRow, floorRow)
-    if (here === surfRow) return surfRow // a wall to the waterline → contained this side
-    if (here !== undefined && (lip === undefined || here < lip)) lip = here // track the highest surviving barrier
-  }
-  return lip
-}
-
-// Re-settle one water body against the current terrain. Returns the same object when nothing moved,
-// an adjusted body when the floor/level shifted, or undefined when it no longer holds water (drained).
-// Rect-preserving: the surface only ever drops (a breached wall), and the floor never sinks below the
-// body's original bed — a flat rect chasing a localized carved hole would smear "water" over the
-// solid flanks beside it (the floor follows the deepest, but the rect can't cut around the shallows).
-const settleBody = (vt: VoxelTerrain, body: WaterBody): WaterBody | undefined => {
-  const cell = vt.cell
-  const c0 = clamp(Math.floor(body.x / cell), 0, vt.cols - 1)
-  const c1 = clamp(Math.floor((body.x + body.w - 0.001) / cell), 0, vt.cols - 1)
-  const surfRow = Math.round(body.y / cell)
-  const bedRow = Math.round((body.y + body.h) / cell) // the body's original floor
-
-  // Floor: a column with no solid all the way down has lost its bed → the body drains (water falls
-  // through). Otherwise the floor can only RISE (debris silting it up), never deepen below the bed —
-  // a localized hole gouged under the body is left to drain through rather than smearing the flat rect
-  // down over the solid that remains beside it (the screenshot bug: water drawn inside a mesa).
-  let floorRow = surfRow
-  for (let c = c0; c <= c1; c += 1) {
-    const t = firstSolidBelow(vt, c, surfRow + 1, vt.rows - 1)
-    if (t === undefined) return undefined
-    const clamped = Math.min(t, bedRow)
-    if (clamped > floorRow) floorRow = clamped
-  }
-
-  // Containing lips: the columns just outside the span. A side is walled when it is solid at the
-  // surface level; otherwise the water spills over it. The spill row is the lower (larger-row) of the
-  // two walls. When it sits BELOW the old surface a wall was breached and the level falls to that lip
-  // (water spills/drains); otherwise the surface is held exactly where it was — so a part-poured pool
-  // keeps its sub-cell fill (only a breach snaps the surface to a cell-aligned lip).
-  const leftLip = sideLip(vt, c0 - 1, -1, surfRow, floorRow)
-  const rightLip = sideLip(vt, c1 + 1, 1, surfRow, floorRow)
-  if (leftLip === undefined || rightLip === undefined) return undefined // a wall breached clean through → drains
-  const spillRow = Math.max(leftLip, rightLip)
-  const floorY = floorRow * cell
-  const y = spillRow > surfRow ? spillRow * cell : body.y // never rises; falls to a breached lip
-  if (y >= floorY) return undefined // the level dropped to (or below) the bed → empty
-  const h = floorY - y
-  if (y === body.y && Math.abs(h - body.h) < 0.001) return body // unchanged — let the caller skip a redraw
-  return { x: body.x, y, w: body.w, h }
-}
-
-// Re-settle every water body against the terrain (run after a carve / debris settle). Returns a new
-// array only when something actually moved; otherwise the same reference (so no spurious redraws).
-export const settleWater = (vt: VoxelTerrain, water: WaterBody[]): WaterBody[] => {
-  let changed = false
-  const out: WaterBody[] = []
-  for (const body of water) {
-    const settled = settleBody(vt, body)
-    if (settled === body) {
-      out.push(body)
+  setWetBounds(vt.fluid, tcMin, tcMax, trMin, trMax)
+  const bodies: WaterBody[] = []
+  let k = 0
+  while (k < span) {
+    if (!wet[k]) {
+      k += 1
       continue
     }
-    changed = true
-    if (settled) out.push(settled)
-  }
-  return changed ? out : water
-}
-
-// Slide a bedrock anchor vertically to `newY` (a floating landing slab riding a rising pool):
-// clears the anchor's old footprint from the grounding mask and rasterizes the new one. The
-// caller re-meshes (the anchor's rect is emitted verbatim into the derived blocks). Assumes the
-// anchor doesn't overlap other bedrock — true for the isolated pad slabs this exists for.
-export const moveBedrock = (vt: VoxelTerrain, block: Block, newY: number): void => {
-  const stamp = (b: Block, value: 0 | 1): void => {
-    const c0 = Math.max(0, Math.floor(b.x / vt.cell))
-    const c1 = Math.min(vt.cols - 1, Math.floor((b.x + b.w - 0.001) / vt.cell))
-    const r0 = Math.max(0, Math.floor(b.y / vt.cell))
-    const r1 = Math.min(vt.rows - 1, Math.floor((b.y + b.h - 0.001) / vt.cell))
-    for (let row = r0; row <= r1; row += 1) {
-      for (let col = c0; col <= c1; col += 1) {
-        if (pointInBlock(b, centerX(vt.cell, col), centerY(vt.cell, row))) vt.bedrockMask[row * vt.cols + col] = value
-      }
+    const s = surf[k]
+    const f = flr[k]
+    let end = k
+    while (
+      end + 1 < span &&
+      wet[end + 1] &&
+      Math.abs(surf[end + 1] - s) <= WATER_BODY_MERGE_TOL &&
+      flr[end + 1] === f
+    ) {
+      end += 1
     }
+    bodies.push({ x: (c0 + k) * cell, y: s, w: (end - k + 1) * cell, h: f - s })
+    k = end + 1
   }
-  stamp(block, 0)
-  block.y = newY
-  stamp(block, 1)
+  return bodies
 }
 
 // Advance falling debris one frame, tick wetted cells toward regrowing grass, and walk the
@@ -855,6 +839,8 @@ export type VoxelSnapshot = {
   bodies: { col0: number; row0: number; boxCols: number; boxRows: number; cells: string; vy: number; fall: number }[]
   regrow: [number, number][] // wetted-cell index → s left until grass regrows
   burning?: [number, number][] // FIRE-cell index → s of burn left (absent in pre-fire snapshots)
+  fluid?: string // base64 of the per-cell water levels (absent in pre-fluid snapshots → restores dry)
+  fluidTick?: number // the flow tick counter, so the L/R spread bias resumes identically
 }
 
 export const snapshotVoxel = (vt: VoxelTerrain): VoxelSnapshot => ({
@@ -873,6 +859,8 @@ export const snapshotVoxel = (vt: VoxelTerrain): VoxelSnapshot => ({
   })),
   regrow: [...vt.regrow],
   burning: [...vt.burning],
+  fluid: encodeCells(vt.fluid.level),
+  fluidTick: vt.fluid.tick,
 })
 
 // Overlay a persisted snapshot onto a terrain rebuilt from the SAME seed. Returns false (and
@@ -895,6 +883,26 @@ export const restoreVoxel = (vt: VoxelTerrain, snap: VoxelSnapshot): boolean => 
   }))
   vt.regrow = new Map(snap.regrow)
   vt.burning = new Map(snap.burning ?? []) // pre-fire snapshots carry no burning map
+  // Per-cell water: load the persisted levels, then wake every wet cell so the flow re-settles
+  // against this terrain (and any mid-flow state carries on). A pre-fluid snapshot carries no water,
+  // so leave the authored fill already seeded into the grid untouched rather than wiping it dry.
+  if (snap.fluid) {
+    vt.fluid.level.fill(0)
+    vt.fluid.active.clear()
+    const lvl = decodeCells(snap.fluid)
+    if (lvl.length === vt.fluid.level.length) {
+      vt.fluid.level.set(lvl)
+      for (let i = 0; i < lvl.length; i += 1) {
+        if (lvl[i] > 0) {
+          const col = i % vt.cols
+          const row = (i / vt.cols) | 0
+          markWet(vt.fluid, col, row) // seed the wet bounds so derivation/flow find the restored water
+          wakeAround(vt.fluid, col, row)
+        }
+      }
+    }
+    vt.fluid.tick = snap.fluidTick ?? 0
+  }
   vt.staticBlocks = meshGrid(vt.mat, vt.cols, vt.rows, vt.cell, 0, 0)
   return true
 }

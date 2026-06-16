@@ -188,7 +188,15 @@ const bazooka = (
   g.moveTo(rearX, rearY)
     .lineTo(muzX, muzY)
     .stroke({ width: r * 0.4, color: tube, alpha }) // tube
-  g.circle(muzX, muzY, r * 0.5).fill({ color: tube, alpha }) // muzzle
+  // T-shaped muzzle: a crossbar across the tube's nose (was a round "lollipop" blob)
+  const dx = muzX - rearX
+  const dy = muzY - rearY
+  const len = Math.hypot(dx, dy) || 1
+  const px = (-dy / len) * r * 0.62
+  const py = (dx / len) * r * 0.62
+  g.moveTo(muzX - px, muzY - py)
+    .lineTo(muzX + px, muzY + py)
+    .stroke({ width: r * 0.26, color: tube, alpha }) // T-bar muzzle
   g.circle(rearX, rearY, r * 0.32).fill({ color: Color.SMOKE, alpha }) // venturi
   if (flashT > 0) {
     g.circle(muzX + f * r * 0.5, muzY, r * 0.5 * flashT).fill({ color: Color.EXPLOSION, alpha: 0.85 * flashT })

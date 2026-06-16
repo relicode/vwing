@@ -54,6 +54,7 @@ const makeWorld = (ships: Ship[], devices: Device[]): World => ({
   blocks: [],
   terrainVersion: 0,
   water: [],
+  waterVersion: 0,
   bases: [],
   shake: 0,
   rng: createRng(1),

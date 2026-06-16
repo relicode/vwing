@@ -113,6 +113,37 @@ describe('createSim — campaign', () => {
   })
 })
 
+describe('createSim — hull repairs only at base', () => {
+  test('a damaged ship docked at the base it holds mends its hull', () => {
+    const world = createWorld(31)
+    const player = combatant(0, 500, 400)
+    const enemy = combatant(1, 1500, 400)
+    const sim = createSim(world, [player, enemy], { mode: SimMode.CAMPAIGN })
+    const home = world.bases.find((b) => b.owner === 0)
+    expect(home).toBeDefined()
+    if (!home) return
+    player.ship.health = 20
+    player.ship.invuln = 0
+    player.ship.x = home.x
+    player.ship.y = home.y - 40 // parked at the loading dock
+    player.ship.vx = 0
+    player.ship.vy = 0
+    sim.step(1 / 60)
+    expect(player.ship.health).toBeGreaterThan(20) // patched up while docked at its own pad
+  })
+
+  test('a damaged ship out in the field does not repair', () => {
+    const world = createWorld(31)
+    const player = combatant(0, 500, 400)
+    const enemy = combatant(1, 1500, 400)
+    const sim = createSim(world, [player, enemy], { mode: SimMode.CAMPAIGN })
+    player.ship.health = 20
+    player.ship.invuln = 0 // far from any base (up in the sky band) — no field repair
+    sim.step(1 / 60)
+    expect(player.ship.health).toBe(20) // hull damage stays until it limps home
+  })
+})
+
 describe('createSim — base capture cuts respawns', () => {
   test('CAMPAIGN seeds one barracks per side; DEATHMATCH stays baseless', () => {
     const campaign = createWorld(21)
@@ -201,7 +232,7 @@ describe('createSim — base capture cuts respawns', () => {
     expect(sim.respawnIn(0)).toBe(0)
   })
 
-  test('a pool lapping over a pad floats the barracks slab up to the waterline', () => {
+  test('the barracks stays static — a pool lapping the pad no longer floats it', () => {
     const world = createWorld(21)
     const sim = createSim(world, [combatant(0, 500, 400)], { mode: SimMode.CAMPAIGN })
     const home = world.bases.find((b) => b.owner === 0)
@@ -209,12 +240,8 @@ describe('createSim — base capture cuts respawns', () => {
     if (!home) return
     const before = home.y
     world.water = [...world.water, { x: home.x - 200, y: before - 30, w: 400, h: 60 }] // surface 30 px over the pad
-    sim.step(1 / 60)
-    expect(home.y).toBe(before - 36) // floated up in whole cells until the deck cleared the waterline
-    const slab = world.blocks.find(
-      (b) => b.structure === StructureType.METAL && home.x >= b.x && home.x < b.x + b.w && b.y === home.y
-    )
-    expect(slab).toBeDefined() // the indestructible slab moved with the barracks line
+    for (let i = 0; i < 30; i += 1) sim.step(1 / 60)
+    expect(home.y).toBe(before) // the base holds its ground — no float step rides it up the waterline
   })
 
   test('ship fire is stopped by the walls and shells a defender — friendly fire included', () => {

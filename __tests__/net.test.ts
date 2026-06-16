@@ -343,7 +343,7 @@ describe('parsePersisted (hostile/corrupt/stale blobs degrade per section, never
     return { doc: room.persisted(), shipId: a.shipId }
   }
 
-  test('a legacy (pre-versioned) blob restores the arena only — seed, terrain, and old-shape water', () => {
+  test('a legacy (pre-versioned) blob restores the arena only — seed + terrain, water re-seeds', () => {
     const legacy = JSON.stringify({
       seed: 9,
       world: { water: [{ x: 0, y: 100, w: 50, h: 20 }] },
@@ -352,7 +352,8 @@ describe('parsePersisted (hostile/corrupt/stale blobs degrade per section, never
     const parsed = parsePersisted(legacy)
     expect(parsed).toBeDefined()
     expect(parsed?.degraded).toContain('version')
-    expect(parsed?.restore.water).toHaveLength(1)
+    expect(parsed?.restore.terrain).toBeDefined() // the carved grid still overlays
+    expect(parsed?.restore).not.toHaveProperty('water') // water is no longer hydrated — it re-seeds from the seed
     expect(parsed?.restore.roster).toBeUndefined()
     expect(parsed?.restore.devices).toBeUndefined()
   })

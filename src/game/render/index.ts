@@ -62,6 +62,7 @@ export const createRenderer = (rng: Rng, pixiRenderer: PixiRenderer): Renderer =
   // The map silhouette redraws only when terrain actually changes — the sim bumps
   // world.terrainVersion on every carve and while debris is falling, and once per fresh run.
   let mapTerrainVersion = -1
+  let mapWaterVersion = -1
 
   const draw = (world: RenderWorld, phase: GamePhase, selfId: number, slots?: PaletteSlots): void => {
     const cam = camera.update(world, selfId)
@@ -101,8 +102,9 @@ export const createRenderer = (rng: Rng, pixiRenderer: PixiRenderer): Renderer =
     mapLayer.visible = phase === GamePhase.PLAYING
     if (mapLayer.visible) {
       mapLayer.position.set(mapBaseX - shake.x, mapBaseY - shake.y)
-      if (world.terrainVersion !== mapTerrainVersion) {
+      if (world.terrainVersion !== mapTerrainVersion || world.waterVersion !== mapWaterVersion) {
         mapTerrainVersion = world.terrainVersion
+        mapWaterVersion = world.waterVersion
         drawMapTerrain(mapTerrainGfx, world)
         mapTerrainGfx.updateCacheTexture() // re-render the cached texture from the fresh geometry
       }

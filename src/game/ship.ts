@@ -13,6 +13,7 @@ import {
   SHIP_RESPAWN_INVULN,
   SHIP_REVERSE_THRUST,
   SHIP_SHIELD_REGEN,
+  SHIP_STEER_MIN,
   SHIP_THRUST,
   SHIP_TURN_RATE,
   ShipKind,
@@ -112,12 +113,20 @@ export const respawnShipAt = (ship: Ship, x: number, y: number, rng?: Rng, force
 export const respawnShip = (ship: Ship, rng?: Rng, forced?: WeaponKind): void =>
   respawnShipAt(ship, PLAYER_SPAWN_X, PLAYER_SPAWN_Y, rng, forced)
 
-// Newtonian integration: turn, optional thrust along the nose, global gravity,
-// gentle drag, then advance. Position is unbounded here — wall death is the engine's call.
-// While EMP-disabled the ship can't turn or thrust. `env` adds water buoyancy + drag.
+// Steering degrades with hull damage: a pristine ship turns at the full rate, a wreck (0 HP) at
+// SHIP_STEER_MIN of it, linearly between — every point of damage costs a little agility, so a
+// battered ship handles like a barge until it limps home to repair.
+const steerScale = (ship: Ship): number => {
+  const hull = Math.max(0, Math.min(1, ship.health / SHIP_MAX_HEALTH))
+  return SHIP_STEER_MIN + (1 - SHIP_STEER_MIN) * hull
+}
+
+// Newtonian integration: turn (sluggish when the hull is hurt), optional thrust along the nose,
+// global gravity, gentle drag, then advance. Position is unbounded here — wall death is the
+// engine's call. While EMP-disabled the ship can't turn or thrust. `env` adds water buoyancy + drag.
 export const updateShip = (ship: Ship, input: Input, dt: number, env?: ShipEnv): void => {
   const controllable = ship.disabled <= 0
-  if (controllable) ship.angle += input.turn() * SHIP_TURN_RATE * dt
+  if (controllable) ship.angle += input.turn() * SHIP_TURN_RATE * steerScale(ship) * dt
   ship.thrusting = controllable && input.thrusting()
   if (ship.thrusting) {
     ship.vx += Math.cos(ship.angle) * SHIP_THRUST * dt

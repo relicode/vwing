@@ -10,6 +10,7 @@ import {
   SURFACE_REGROW_TIME,
   Surface,
   VOXEL_CELL,
+  WATER_CELL_FULL,
   WORLD_HEIGHT,
   WORLD_WIDTH,
 } from '$/game/constants'
@@ -18,13 +19,15 @@ import {
   carveVoxel,
   createVoxelTerrain,
   douseSurface,
-  findPool,
+  fluidToBodies,
   hasDebris,
   igniteSurface,
+  pourWater,
   restoreVoxel,
-  settleWater,
+  sealWaterRect,
   snapshotVoxel,
   stepVoxel,
+  stepWater,
   voxelToBlocks,
   wetSurface,
 } from '$/game/voxel'
@@ -315,29 +318,6 @@ describe('surface transitions (ignite / creep / burn out / douse / wet / regrow)
   })
 })
 
-describe('findPool (basin detection)', () => {
-  const PILLAR_CX = (PILLAR_C0 + PILLAR_COLS / 2) * C
-  const PILLAR_TOP_Y = PILLAR_TOP_ROW * C
-
-  test('a flat surface does not pool', () => {
-    const vt = mkVt()
-    expect(findPool(vt, PILLAR_CX, PILLAR_TOP_Y - 5)).toBeUndefined() // just above the flat pillar top
-  })
-
-  test('a carved dip pools to its rim; an open ledge does not', () => {
-    const vt = mkVt()
-    carveVoxel(vt, PILLAR_CX, PILLAR_TOP_Y + 5, 18) // notch the top, leaving earth lips on both sides
-    const pool = findPool(vt, PILLAR_CX, PILLAR_TOP_Y + 20)
-    expect(pool).toBeDefined()
-    if (pool) {
-      expect(pool.w).toBeGreaterThan(0)
-      expect(pool.h).toBeGreaterThan(0)
-      expect(pool.y).toBeCloseTo(PILLAR_TOP_Y, -1) // surface sits at the surviving rim row
-    }
-    expect(findPool(vt, ...cellCenter(50, 10))).toBeUndefined() // far open air still refuses to pool
-  })
-})
-
 describe('snapshotVoxel / restoreVoxel (terrain persistence round-trip)', () => {
   test('a carved, burning, wetted arena restores cell-for-cell onto a same-fixture grid', () => {
     const vt = mkVt()
@@ -379,66 +359,138 @@ describe('snapshotVoxel / restoreVoxel (terrain persistence round-trip)', () => 
   })
 })
 
-// A small contained basin: two earth walls (rows 30–59) with a thick bed between them (rows 50–59),
-// holding water from row 40 (surface) down to row 50 (the bed top). All in whole cells so the
-// re-settled rect is exact. Independent of the production terrain.
-const WALL_L = 10
-const WALL_R = 20
-const SURF_ROW = 40
-const BED_ROW = 50
-const basin = (): { vt: ReturnType<typeof createVoxelTerrain>; water: WaterBody[] } => {
+// A stone basin in an otherwise-empty arena: a bedrock floor, a thick destructible earth bed on it
+// (rows 100–109), and two earth walls (rows 94–99) ten cells apart. Water poured between the walls
+// pools on the bed; carving through the bed lets it drain. All whole cells so wet rows are exact.
+const BASIN_FLOOR_ROW = 110
+const BED_TOP = 100 // earth bed top (the pool's resting floor)
+const basinTerrain = (): ReturnType<typeof createVoxelTerrain> => {
   const blocks: Block[] = [
-    blk(WALL_L, 30, 1, BED_ROW - 30, StructureType.EARTH, Surface.EARTH), // left wall, rows 30–49
-    blk(WALL_R, 30, 1, BED_ROW - 30, StructureType.EARTH, Surface.EARTH), // right wall, rows 30–49
-    blk(WALL_L, BED_ROW, WALL_R - WALL_L + 1, 10, StructureType.EARTH, Surface.EARTH), // bed, rows 50–59
+    blk(0, BASIN_FLOOR_ROW, Math.ceil(WORLD_WIDTH / C), 1, StructureType.METAL, Surface.EARTH), // bedrock floor
+    blk(40, BED_TOP, 11, BASIN_FLOOR_ROW - BED_TOP, StructureType.EARTH, Surface.EARTH), // earth bed, cols 40–50
+    blk(40, 94, 1, 6, StructureType.EARTH, Surface.EARTH), // left wall, rows 94–99
+    blk(50, 94, 1, 6, StructureType.EARTH, Surface.EARTH), // right wall, rows 94–99
   ]
-  const water: WaterBody[] = [
-    { x: (WALL_L + 1) * C, y: SURF_ROW * C, w: (WALL_R - WALL_L - 1) * C, h: (BED_ROW - SURF_ROW) * C },
-  ]
-  return { vt: createVoxelTerrain(blocks, water), water }
+  return createVoxelTerrain(blocks, [])
+}
+const runToRest = (vt: ReturnType<typeof createVoxelTerrain>, cap = 5000): void => {
+  let n = 0
+  while (stepWater(vt) && n < cap) n += 1
+}
+// The lowest (largest-row) cell holding water — how far down the fluid has reached.
+const deepestWetRow = (vt: ReturnType<typeof createVoxelTerrain>): number => {
+  let row = -1
+  for (let i = 0; i < vt.fluid.level.length; i += 1) if (vt.fluid.level[i] > 0) row = Math.max(row, (i / vt.cols) | 0)
+  return row
 }
 
-describe('settleWater — water falls / is contained as the terrain changes', () => {
-  test('an intact basin is left exactly as it was (same array reference)', () => {
-    const { vt, water } = basin()
-    expect(settleWater(vt, water)).toBe(water) // unchanged → no redraw
+describe('per-cell water (voxel ↔ fluid wiring)', () => {
+  test('pourWater injects, stepWater flows, and it settles into a contained body', () => {
+    const vt = basinTerrain()
+    expect(fluidToBodies(vt)).toHaveLength(0) // dry to start
+    pourWater(vt, ...cellCenter(45, BED_TOP - 1), 3 * WATER_CELL_FULL) // dump into the basin
+    expect(fluidToBodies(vt).length).toBeGreaterThan(0) // water present immediately
+    runToRest(vt)
+    expect(stepWater(vt)).toBe(false) // it came to rest — no perpetual churn
+    const bodies = fluidToBodies(vt)
+    expect(bodies.length).toBeGreaterThan(0) // pooled, didn't vanish
+    expect(bodies.every((b) => b.x >= 40 * C && b.x + b.w <= 51 * C)).toBeTrue() // contained by the walls
   })
 
-  test('a localized hole gouged under the bed (solid still below) does NOT smear the body deeper', () => {
-    // The bed is 10 cells thick (rows 50–59). Gouge a hole through its top half in the middle columns,
-    // leaving solid below — the flat rect must NOT chase the hole down (that would draw "water" over
-    // the solid flanks beside it: the screenshot bug). The body is left exactly as it was.
-    const { vt, water } = basin()
-    carveVoxel(vt, 15 * C + C / 2, (BED_ROW + 2) * C, 2.5 * C) // hole in cols ~13–17, rows ~50–54
-    expect(settleWater(vt, water)).toBe(water) // unchanged — no deepen, no bleed over the solid flanks
+  test('carving through the bed under a pool lets the water flow down the new hole', () => {
+    const vt = basinTerrain()
+    pourWater(vt, ...cellCenter(45, BED_TOP - 1), 2 * WATER_CELL_FULL)
+    runToRest(vt)
+    const restedFloor = deepestWetRow(vt)
+    expect(restedFloor).toBe(BED_TOP - 1) // resting on the bed top (a shallow pool above row 100)
+    carveVoxel(vt, ...cellCenter(45, BED_TOP + 1), 2.5 * C) // gouge a pocket through the bed top
+    runToRest(vt)
+    expect(deepestWetRow(vt)).toBeGreaterThan(restedFloor) // the water followed the carve DOWN, not floating
   })
 
-  test('breaching a side wall at the waterline drops the surface — the water spills out and falls', () => {
-    const { vt, water } = basin()
-    carveVoxel(vt, WALL_L * C + C / 2, SURF_ROW * C + C / 2, C) // notch the left lip at the surface
-    const settled = settleWater(vt, water)
-    expect(settled).not.toBe(water)
-    expect(settled[0].y).toBeGreaterThan(water[0].y) // the level fell to the breach
+  test('a settled pool derives as coalesced, whole-pixel bodies (stable buoyancy queries)', () => {
+    const vt = basinTerrain()
+    pourWater(vt, ...cellCenter(45, BED_TOP - 1), 3 * WATER_CELL_FULL)
+    runToRest(vt)
+    const bodies = fluidToBodies(vt)
+    expect(bodies.length).toBeLessThanOrEqual(2) // a flat pool coalesces, it doesn't shatter per-column
+    for (const b of bodies) expect(b.y).toBe(Math.round(b.y)) // surfaces snap to whole px — no sub-pixel jitter
+    // Deriving twice without flowing yields identical bodies (nothing wobbles frame to frame).
+    expect(fluidToBodies(vt)).toEqual(bodies)
   })
 
-  test('knocking the floor out from under a body drains it away entirely', () => {
-    const { vt, water } = basin()
-    carveVoxel(vt, 15 * C + C / 2, (BED_ROW + 5) * C, 6 * C) // blow the whole bed out under the body
-    expect(settleWater(vt, water)).toHaveLength(0) // no bed left → the water falls away
+  test('a chunk breaking off wakes the pool resting on it — water rides terrain down, never hangs', () => {
+    // A little bowl (floor + two walls) on a thin neck down to bedrock, holding a settled pool.
+    const FLOOR = 120
+    const vt = createVoxelTerrain(
+      [
+        blk(0, FLOOR, Math.ceil(WORLD_WIDTH / C), 1, StructureType.METAL, Surface.EARTH), // bedrock floor
+        blk(55, 109, 12, 1, StructureType.EARTH, Surface.EARTH), // bowl floor, cols 55–66 row 109
+        blk(55, 106, 1, 3, StructureType.EARTH, Surface.EARTH), // left bowl wall
+        blk(66, 106, 1, 3, StructureType.EARTH, Surface.EARTH), // right bowl wall
+        blk(60, 110, 2, FLOOR - 110, StructureType.EARTH, Surface.EARTH), // neck, cols 60–61
+      ],
+      []
+    )
+    pourWater(vt, ...cellCenter(60, 108), 3 * WATER_CELL_FULL) // pool settles in the bowl
+    runToRest(vt)
+    expect(deepestWetRow(vt)).toBeLessThan(110) // resting up in the bowl, well above the floor
+    expect(stepWater(vt)).toBe(false) // and at rest — nothing moving
+
+    // Sever the neck: the bowl loses its ground and breaks off as a falling chunk. The pool sitting
+    // in it must wake and come down with the space the chunk left — not float where the bowl was.
+    for (let row = 110; row < FLOOR; row += 1) carveVoxel(vt, ...cellCenter(60, row), 4)
+    for (let row = 110; row < FLOOR; row += 1) carveVoxel(vt, ...cellCenter(61, row), 4)
+    expect(stepWater(vt)).toBe(true) // the breaking chunk woke the pool — it's falling, not hanging
   })
 
-  test('a thick rim survives one carved-out boundary column (the lip probe looks past it)', () => {
-    const blocks: Block[] = [
-      blk(8, 30, 3, BED_ROW - 30, StructureType.EARTH, Surface.EARTH), // 3-col-thick left wall, cols 8–10
-      blk(20, 30, 3, BED_ROW - 30, StructureType.EARTH, Surface.EARTH), // 3-col-thick right wall, cols 20–22
-      blk(8, BED_ROW, 15, 10, StructureType.EARTH, Surface.EARTH), // bed, cols 8–22
-    ]
-    const water: WaterBody[] = [
-      { x: 11 * C, y: SURF_ROW * C, w: 9 * C, h: (BED_ROW - SURF_ROW) * C }, // body in cols 11–19
-    ]
-    const vt = createVoxelTerrain(blocks, water)
-    // Blow the innermost left wall column (col 10) clean out from the waterline down to the bed.
-    for (let row = SURF_ROW; row < BED_ROW; row += 1) carveVoxel(vt, 10 * C + C / 2, row * C + C / 2, 5)
-    expect(settleWater(vt, water)).toBe(water) // col 9 still walls it — surface held, no drop, no drain
+  test('a sealed footprint is watertight — poured water sheds off it, never pooling inside', () => {
+    const vt = basinTerrain()
+    // A "barracks" standing on the basin bed (cols 43–47, rows 97–99): sealed solid to water only.
+    const shelter = { x: 43 * C, y: 97 * C, w: 5 * C, h: 3 * C }
+    sealWaterRect(vt, shelter)
+    const sealed: number[] = []
+    for (let row = 97; row <= 99; row += 1) for (let col = 43; col <= 47; col += 1) sealed.push(row * vt.cols + col)
+    expect(sealed.every((i) => vt.fluid.wall[i] === 1)).toBeTrue() // footprint marked watertight
+
+    pourWater(vt, ...cellCenter(45, 90), 8 * WATER_CELL_FULL) // dump water straight onto the roof
+    runToRest(vt)
+
+    expect(sealed.every((i) => vt.fluid.level[i] === 0)).toBeTrue() // not a drop got inside the shelter
+    // It shed off the roof and pooled on the bed in the gaps beside the walls (cols 41–42 / 48–49).
+    const beside = (col: number): boolean => {
+      for (let row = 94; row <= 99; row += 1) if (vt.fluid.level[row * vt.cols + col] > 0) return true
+      return false
+    }
+    expect(beside(41) || beside(42)).toBeTrue()
+    expect(beside(48) || beside(49)).toBeTrue()
+  })
+
+  test('the fluid grid round-trips through the terrain snapshot', () => {
+    const vt = basinTerrain()
+    pourWater(vt, ...cellCenter(45, BED_TOP - 1), 4 * WATER_CELL_FULL)
+    for (let i = 0; i < 30; i += 1) stepWater(vt)
+    const before = fluidToBodies(vt)
+    const restored = basinTerrain()
+    expect(restoreVoxel(restored, snapshotVoxel(vt))).toBe(true)
+    expect([...restored.fluid.level]).toEqual([...vt.fluid.level]) // cell-for-cell water levels
+    expect(fluidToBodies(restored)).toEqual(before) // same derived bodies
+  })
+
+  test('a pre-fluid snapshot leaves authored water intact (no dry-wipe on restore)', () => {
+    const authored = [{ x: 41 * C, y: 96 * C, w: 9 * C, h: 4 * C }] // a body sitting in the basin
+    const seeded = createVoxelTerrain(
+      [
+        blk(0, BASIN_FLOOR_ROW, Math.ceil(WORLD_WIDTH / C), 1, StructureType.METAL, Surface.EARTH),
+        blk(40, BED_TOP, 11, BASIN_FLOOR_ROW - BED_TOP, StructureType.EARTH, Surface.EARTH),
+        blk(40, 94, 1, 6, StructureType.EARTH, Surface.EARTH),
+        blk(50, 94, 1, 6, StructureType.EARTH, Surface.EARTH),
+      ],
+      authored
+    )
+    expect(fluidToBodies(seeded).length).toBeGreaterThan(0) // authored water seeded into the grid
+    const legacy = { ...snapshotVoxel(seeded), fluid: undefined, fluidTick: undefined } // a pre-fluid blob
+    expect(restoreVoxel(seeded, legacy)).toBe(true)
+    expect(fluidToBodies(seeded).length).toBeGreaterThan(0) // still wet — the authored fill survived
   })
 })

@@ -50,6 +50,7 @@ const makeWorld = (ships: Ship[], devices: Device[]): World => ({
   blocks: [],
   terrainVersion: 0,
   water: [],
+  waterVersion: 0,
   bases: [],
   shake: 0,
   rng: createRng(1),
@@ -352,6 +353,102 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
         if (d?.kind === DeviceKind.INFANTRY) maxX = Math.max(maxX, d.x)
       }
       expect(maxX).toBeGreaterThan(100) // crossed past the seam at x=90 into the EARTH block
+    }
+  })
+
+  test('a non-heavy trooper steps up a one-vexel ledge onto the higher block', () => {
+    // A flat block, then an abutting block one vexel (18px) higher — a single low step a rifleman hops.
+    const world = makeWorld(
+      [],
+      [infantry({ attached: true, x: 80, y: 94, walkDir: 1, groundLeft: 0, groundRight: 90 })]
+    )
+    world.blocks = [
+      { x: 0, y: 100, w: 90, h: 80, structure: StructureType.EARTH, surface: Surface.EARTH }, // feet rest at y=100
+      { x: 90, y: 82, w: 90, h: 98, structure: StructureType.EARTH, surface: Surface.EARTH }, // top one vexel higher
+    ]
+    updateDevices(world, 1 / 30)
+    const u = world.devices[0]
+    expect(u?.kind).toBe(DeviceKind.INFANTRY)
+    if (u?.kind === DeviceKind.INFANTRY) {
+      expect(u.groundRight).toBe(180) // the low ledge joined the patrol run
+      let minY = u.y
+      let maxX = u.x
+      for (let i = 0; i < 600; i += 1) {
+        updateDevices(world, 1 / 30)
+        const d = world.devices[0]
+        if (d?.kind === DeviceKind.INFANTRY) {
+          minY = Math.min(minY, d.y)
+          maxX = Math.max(maxX, d.x)
+        }
+      }
+      expect(maxX).toBeGreaterThan(96) // crossed the ledge at x=90
+      expect(minY).toBeLessThanOrEqual(78) // his feet rose onto the higher block (top 82, radius 6 → y≈76)
+    }
+  })
+
+  test('a two-vexel cliff still turns a non-heavy trooper — he steps, he does not climb', () => {
+    const world = makeWorld(
+      [],
+      [infantry({ attached: true, x: 80, y: 94, walkDir: 1, groundLeft: 0, groundRight: 90 })]
+    )
+    world.blocks = [
+      { x: 0, y: 100, w: 90, h: 80, structure: StructureType.EARTH, surface: Surface.EARTH },
+      { x: 90, y: 64, w: 90, h: 116, structure: StructureType.EARTH, surface: Surface.EARTH }, // two vexels higher: a wall
+    ]
+    updateDevices(world, 1 / 30)
+    const u = world.devices[0]
+    if (u?.kind === DeviceKind.INFANTRY) {
+      expect(u.groundRight).toBe(90) // the tall face is NOT part of the run
+      let maxX = u.x
+      let minY = u.y
+      for (let i = 0; i < 600; i += 1) {
+        updateDevices(world, 1 / 30)
+        const d = world.devices[0]
+        if (d?.kind === DeviceKind.INFANTRY) {
+          maxX = Math.max(maxX, d.x)
+          minY = Math.min(minY, d.y)
+        }
+      }
+      expect(maxX).toBeLessThanOrEqual(84) // bounded by the cliff (groundRight 90 − radius 6)
+      expect(minY).toBeGreaterThan(88) // never mounted the wall
+    }
+  })
+
+  test('a heavy specialist turns at a one-vexel ledge — only riflemen step', () => {
+    const world = makeWorld(
+      [],
+      [
+        infantry({
+          heavy: WeaponKind.GRENADE,
+          attached: true,
+          x: 80,
+          y: 94,
+          walkDir: 1,
+          groundLeft: 0,
+          groundRight: 90,
+        }),
+      ]
+    )
+    world.blocks = [
+      { x: 0, y: 100, w: 90, h: 80, structure: StructureType.EARTH, surface: Surface.EARTH },
+      { x: 90, y: 82, w: 90, h: 98, structure: StructureType.EARTH, surface: Surface.EARTH },
+    ]
+    updateDevices(world, 1 / 30)
+    const u = world.devices[0]
+    if (u?.kind === DeviceKind.INFANTRY) {
+      expect(u.groundRight).toBe(90) // a specialist keeps only the same-level seam tolerance — the ledge bounds him
+      let maxX = u.x
+      let minY = u.y
+      for (let i = 0; i < 600; i += 1) {
+        updateDevices(world, 1 / 30)
+        const d = world.devices[0]
+        if (d?.kind === DeviceKind.INFANTRY) {
+          maxX = Math.max(maxX, d.x)
+          minY = Math.min(minY, d.y)
+        }
+      }
+      expect(maxX).toBeLessThanOrEqual(84) // never crossed onto the higher block
+      expect(minY).toBeGreaterThan(88) // never mounted it
     }
   })
 

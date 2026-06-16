@@ -89,6 +89,7 @@ const makeWorld = (ships: Ship[], devices: Device[], bases: Base[]): World => ({
   blocks: [],
   terrainVersion: 0,
   water: [],
+  waterVersion: 0,
   bases,
   shake: 0,
   rng: createRng(1),
@@ -293,7 +294,7 @@ describe('stepBases — storming an emptied fort', () => {
     expect(base.capture).toBeCloseTo(0.5, 5)
   })
 
-  test('both sides PLUS a man on the roof breaches at once', () => {
+  test('all three sides — both walls and the roof — storm in a third of the single-side time', () => {
     const base = emptyFort()
     const crew = [
       trooper(BOT_ID, WALL_WEST, base.y),
@@ -301,17 +302,19 @@ describe('stepBases — storming an emptied fort', () => {
       trooper(BOT_ID, base.x, ROOF_Y),
     ]
     const world = makeWorld([], crew, [base])
-    stepBases(world, 1 / 60) // a single frame
+    stepBases(world, BASE_STORM_SIDE_TIME / 6) // three sides → 3× rate → half storms in 1/6 the single-side time
+    expect(base.capture).toBeCloseTo(0.5, 5)
+    stepBases(world, BASE_STORM_SIDE_TIME) // overshoot clamps and records the capturer
     expect(base.capture).toBe(1)
     expect(base.capturedBy).toBe(BOT_ID)
   })
 
-  test('a roof party with no wall breach gets nowhere — you have to take a side', () => {
+  test('the roof is the north side: a lone roofer storms at the one-side rate, extra roofers add nothing', () => {
     const base = emptyFort()
-    const roofers = [-40, 0, 40].map((dx) => trooper(BOT_ID, base.x + dx, ROOF_Y))
+    const roofers = [-40, 0, 40].map((dx) => trooper(BOT_ID, base.x + dx, ROOF_Y)) // three on the roof
     const world = makeWorld([], roofers, [base])
-    stepBases(world, BASE_STORM_SIDE_TIME)
-    expect(base.capture).toBe(0)
+    stepBases(world, BASE_STORM_SIDE_TIME / 2) // the roof is ONE side → half in half the single-side time
+    expect(base.capture).toBeCloseTo(0.5, 5) // not 3× — extra roofers on the same side don't stack
   })
 
   test('a manned fort cannot be stormed: defenders gate it shut until they are cleared', () => {

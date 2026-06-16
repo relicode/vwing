@@ -60,7 +60,6 @@ export enum Surface {
   EARTH = 'EARTH',
   GRASS = 'GRASS',
   ICE = 'ICE',
-  WATER = 'WATER',
   FIRE = 'FIRE', // grass that is currently alight (transient: douse → GRASS, burn out → EARTH)
 }
 
@@ -219,12 +218,13 @@ export const BASE_SORTIE_RANGE = 600 // px enemy-infantry (landed) distance that
 export const BASE_DOOR_INTERVAL = 0.7 // s between defenders fielding out the door
 export const BASE_DOOR_RADIUS = 16 // px from the door within which a returning defender slips back inside
 // Storming runs only over an EMPTIED fort (no defender left). It is a CONTACT job: capture
-// progresses at 1/BASE_STORM_SIDE_TIME per second for EACH wall a stormer presses (one man per
-// side), so one side takes BASE_STORM_SIDE_TIME, both sides half that — and both sides PLUS a
-// trooper on the roof breaches instantly. A live threat near the pad halts the storm.
-export const BASE_STORM_SIDE_TIME = 10 // s to storm with one soldier on a single side (both sides → 5 s)
+// progresses at 1/BASE_STORM_SIDE_TIME per second for EACH of the THREE sides a stormer presses —
+// the west wall, the roof (north), and the east wall — counted for at most one man per side. So one
+// side takes BASE_STORM_SIDE_TIME, two sides half that, all three a third of it. A live threat near
+// the pad halts the storm.
+export const BASE_STORM_SIDE_TIME = 10 // s to storm with one soldier on a single side (all three sides → 3.3 s)
 export const BASE_STORM_CONTACT = 8 // px gap within which a trooper counts as pressed to a wall / standing on the roof
-export const BASE_STORM_ROOF_SLOTS = 3 // roof stormers marked for the pounding pose (each side wall holds exactly one)
+export const BASE_STORM_ROOF_SLOTS = 3 // roofers marked for the pounding pose (the roof counts as ONE side for capture)
 export const BASE_STORM_THREAT_RANGE = 700 // px — an enemy ship or live enemy trooper this close to the pad halts the storm
 
 // Neon-on-near-black palette, stored as 0xRRGGBB for PixiJS fills.
@@ -308,7 +308,8 @@ export const SHIP_THRUST = 580 // px/s^2 along the nose
 // Reverse-afterburners: a pair of smaller retro nozzles at the nose firing FORWARD to brake
 // without flipping the ship (↓ / S). Weaker than the main engine — a brake, not a second drive.
 export const SHIP_REVERSE_THRUST = 260 // px/s^2 opposite the nose while the retros burn
-export const SHIP_TURN_RATE = 3.6 // rad/s
+export const SHIP_TURN_RATE = 3.6 // rad/s (at full hull; degrades with damage — see SHIP_STEER_MIN)
+export const SHIP_STEER_MIN = 0.4 // a wrecked hull (0 HP) still steers at this fraction of SHIP_TURN_RATE; full hull = 1×
 export const SHIP_DRAG = 0.22 // gentle velocity damping coefficient (per second)
 export const SHIP_FIRE_INTERVAL = 0.17 // s between shots
 export const SHIP_RESPAWN_INVULN = 2.5 // s of invulnerability after (re)spawn
@@ -330,6 +331,7 @@ export const BULLET_DAMAGE = 30 // hit points removed per shot (5 bare shots / 6
 export const SHIP_MAX_HEALTH = 100
 export const SHIP_MAX_SHIELDS = 50
 export const SHIP_SHIELD_REGEN = 9 // shield points/s recovered between hits
+export const SHIP_HULL_REPAIR = 20 // hull points/s mended while docked at a base you hold — the ONLY way hull repairs
 export const BOT_KILL_SCORE = 250 // awarded when the player downs the bot
 
 // The bot's campaign goal layer (bot.ts): a priority ladder over the inner dogfight reflexes.
@@ -460,6 +462,7 @@ export const INFANTRY_SHOT_DAMAGE = 6
 export const INFANTRY_SHOT_SPEED = 380
 export const INFANTRY_RANGE = 520
 export const INFANTRY_WALK_SPEED = 26 // px/s patrol speed on a surface
+export const INFANTRY_STEP_HEIGHT = 18 // px (one VOXEL_CELL) a non-heavy trooper steps up/down over; specialists can't
 export const INFANTRY_WALK_TURN_CHANCE = 0.012 // per-frame chance a patroller spontaneously reverses
 export const INFANTRY_PICKUP_DELAY = 2 // s after deploy before a unit can be picked up
 export const INFANTRY_FALL_LETHAL = 300 // landing impact speed (px/s) above which a unit splats
@@ -679,24 +682,22 @@ export const WATER_DRAG = 2.4 // extra exponential damping coefficient when subm
 export const SPLASH_MIN_SPEED = 130 // |vy| above which crossing the surface throws a splash
 export const SPLASH_PARTICLES = 11 // droplets per splash
 
-// ── Water pooling (basin detection) ─────────────────────────────────────────
-// A water-cannon terrain hit looks for a cupped basin around the impact: terrain lips rising on
-// both sides within POOL_HALF_WIDTH cells and a floor within POOL_MAX_DEPTH cells below. A found
-// basin becomes (or merges into) a WaterBody. Bounded + deterministic; no per-cell fluid sim.
-export const POOL_HALF_WIDTH = 40 // cells scanned each side of a hit for a containing rim
+// ── Water as a per-cell fluid ────────────────────────────────────────────────
+// Water lives on the voxel grid as a per-cell fill level (a Uint8 0..WATER_CELL_FULL parallel to
+// the destructible `mat`), and FLOWS each tick: a cell drains into the empty cell below, else
+// spreads sideways to equalize, so water seeks the lowest point, levels out, and pours off ledges.
+// The motion is deterministic (fixed scan order, alternating L/R per tick, no rng) and runs only on
+// an active-set of wet/moving cells, so settled water (the sea at rest) costs nothing per frame.
+export const WATER_CELL_FULL = 255 // a brim-full cell (one VOXEL_CELL of depth). px depth = level/FULL * cell
+export const WATER_MIN_LEVEL = 2 // levels below this evaporate to dry — kills 1-px shimmer films that never rest
+export const WATER_SETTLE_EPS = 1 // |level - neighbour| at/under which two cells count as level (stop flowing)
+export const WATER_POUR_LEVEL = 430 // level units a single water-cannon droplet injects (~POOL_FILL_AREA of old)
+export const MAX_WATER_BODIES = 24 // legacy cap retained for the authored-water generator (terrain-map.ts)
+// Basin scan window the authored-water generator still uses to seed pools at worldgen.
+export const POOL_HALF_WIDTH = 40 // cells scanned each side for a containing rim
 export const POOL_MAX_RISE = 30 // cells a basin rim may sit above the hit
 export const POOL_MAX_DEPTH = 40 // cells below the hit searched for the basin floor
 export const POOL_MIN_WIDTH = 2 // cells: ignore puddles narrower than this
-export const MAX_WATER_BODIES = 24 // cap on authored + dynamic water bodies
-// When a carve changes the terrain, each water body is re-settled against it (settleWater): a body
-// deepens into ground gouged beneath it and its surface FALLS to a breached side lip. The lip search
-// scans this many columns outward so a thick rim isn't read as "breached" by one carved-out column
-// (a single-column probe would drop the whole sea when its border land takes a stray hit).
-export const WATER_SETTLE_WALL_PROBE = 4 // cells outward a settling body scans for a containing wall
-// Pools fill GRADUALLY: each water-cannon droplet pours a fixed cross-section area into the
-// basin it lands in (the level climbs by area/width per hit, fast in a gully, slow in a wide
-// bowl), capped at the basin's spill level — never the whole basin from a single squirt.
-export const POOL_FILL_AREA = 700 // px² of water one droplet adds to its basin
 
 // ── Destructible terrain (voxel grid) ───────────────────────────────────────
 // Destructible materials (rock/grass/ice) are modeled as a grid of small cells. A shot
@@ -735,6 +736,5 @@ export const SURFACE_FRICTION: Record<Surface, number> = {
   [Surface.EARTH]: 6,
   [Surface.GRASS]: 7,
   [Surface.ICE]: 0.3,
-  [Surface.WATER]: 0,
   [Surface.FIRE]: 7, // still grass underfoot — it grips like grass while it burns
 }
