@@ -191,12 +191,13 @@ const spawnWell = (world: World, ship: Ship): void => {
   })
 }
 
-// Fire the ship's current secondary. Self-guards energy/cooldown/disabled, spends the
+// Fire the ship's current secondary. Self-guards energy/cooldown/disabled/spawn-invuln, spends the
 // weapon's energy cost, and arms the cooldown. Returns ships hit *instantly* (Rail only)
 // so the engine can reap them — spawn-based weapons resolve later in their own passes.
+// (A freshly spawned ship strobes invulnerable; it can't be hit, so it can't shoot either.)
 export const fireSecondary = (world: World, ship: Ship): Ship[] => {
   const config = WEAPON_CONFIG[ship.weapon]
-  if (ship.charge < config.cost || ship.altCooldown > 0 || ship.disabled > 0) return []
+  if (ship.charge < config.cost || ship.altCooldown > 0 || ship.disabled > 0 || ship.invuln > 0) return []
   ship.charge -= config.cost
   ship.altCooldown = config.cooldown
 

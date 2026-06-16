@@ -53,6 +53,7 @@ const trooperOf = (owner: number): Device => ({
   burning: 0,
   stun: 0,
   fallen: 0,
+  panic: 0,
 })
 
 // Down a seated ship this frame (an unseated owner id, so no killer bookkeeping interferes).

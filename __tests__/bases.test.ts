@@ -77,6 +77,7 @@ const trooper = (owner: number, x: number, y: number, attached = true): Infantry
   burning: 0,
   stun: 0,
   fallen: 0,
+  panic: 0,
 })
 
 const makeWorld = (ships: Ship[], devices: Device[], bases: Base[]): World => ({

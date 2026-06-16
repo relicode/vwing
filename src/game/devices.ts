@@ -1031,6 +1031,7 @@ const stepDevice = (
       if (device.pickupLock > 0) device.pickupLock -= dt
       if (device.stun > 0) device.stun = Math.max(0, device.stun - dt)
       if (device.fallen > 0) device.fallen = Math.max(0, device.fallen - dt)
+      if (device.panic > 0) device.panic = Math.max(0, device.panic - dt) // spill-panic wears off → the chute can deploy
       device.wade = 0 // recomputed each landed tick; cleared here so swimming/airborne units read dry
       // Drowned corpse: sink and fade for a moment, then vanish (no explosion).
       if (device.sinking > 0) {
@@ -1138,7 +1139,9 @@ const stepDevice = (
         // nothing — while opening it does nothing (the unit keeps accelerating), then snaps
         // the descent to a slow terminal the instant the canopy is fully open. A high drop
         // blooms in time and lands soft; a too-low one hits before it opens and still splats.
-        if (device.chute < 0 && device.vy > PARACHUTE_DEPLOY_SPEED) device.chute = 0
+        // A spilled man flailing in panic can't pull the ripcord until the panic passes — so a
+        // hull breach low over the ground tends to dash its troopers before their chutes ever open.
+        if (device.chute < 0 && device.vy > PARACHUTE_DEPLOY_SPEED && !(device.panic > 0)) device.chute = 0
         if (device.chute >= 0) {
           device.chute = Math.min(1, device.chute + dt / PARACHUTE_OPEN_TIME)
           // Gust sideways (a bounded random walk) so a held-down stream of troopers fans

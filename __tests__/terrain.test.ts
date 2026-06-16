@@ -92,7 +92,7 @@ describe('resolveShipTerrain', () => {
   test('a gentle descent lands: ship rests on the surface with no normal velocity', () => {
     const ship = makeShip({ x: 100, y: 92, vy: 50 }) // impact 50 < LAND_SPEED
     const result = resolveShipTerrain(ship, [platform(Surface.GRASS)], 0.1)
-    expect(result).toBe('land')
+    expect(result.result).toBe('land')
     expect(ship.y).toBeCloseTo(88) // pushed out: center = top - radius
     expect(ship.vy).toBeCloseTo(0)
   })
@@ -100,13 +100,14 @@ describe('resolveShipTerrain', () => {
   test('a middling impact bounces back off the surface', () => {
     const ship = makeShip({ x: 100, y: 92, vy: 200 }) // LAND_SPEED < 200 < CRASH_SPEED
     const result = resolveShipTerrain(ship, [platform(Surface.EARTH)], 0.1)
-    expect(result).toBe('bounce')
+    expect(result.result).toBe('bounce')
+    expect(result.impact).toBeCloseTo(200) // closing speed reported for the sim's wall-dent damage
     expect(ship.vy).toBeLessThan(0) // reversed
   })
 
   test('a hard impact crashes', () => {
     const ship = makeShip({ x: 100, y: 92, vy: CRASH_SPEED + 10 })
-    expect(resolveShipTerrain(ship, [platform(Surface.EARTH, StructureType.METAL)], 0.1)).toBe('crash')
+    expect(resolveShipTerrain(ship, [platform(Surface.EARTH, StructureType.METAL)], 0.1).result).toBe('crash')
   })
 
   test('ice keeps far more sliding speed than grass', () => {
@@ -134,7 +135,7 @@ describe('resolveShipTerrain', () => {
 
   test('no contact returns "none" and leaves the ship untouched', () => {
     const ship = makeShip({ x: 100, y: 0, vy: 5 })
-    expect(resolveShipTerrain(ship, [platform(Surface.EARTH)], 0.1)).toBe('none')
+    expect(resolveShipTerrain(ship, [platform(Surface.EARTH)], 0.1).result).toBe('none')
     expect(ship.y).toBe(0)
   })
 })
