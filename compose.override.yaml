@@ -1,0 +1,30 @@
+# Dev conveniences — Compose auto-merges this for `docker compose up` (it is NOT loaded when
+# you pass -f files explicitly, so production never sees it). It publishes Redis on the host
+# loopback so a host-side `bun run dev:all` shares the same authoritative store as the stack.
+#
+# The app itself is reached at http://localhost (through Traefik). It is deliberately NOT
+# published on 8787 here, to avoid colliding with the host game server that `bun run dev:all`
+# already binds on 8787 (and the web client on 3110).
+#
+# CAVEATS:
+#  - Host port (default 6379) must be free — a local Redis on 6379 will fail to bind. Override
+#    with REDIS_HOST_PORT (and point the host server at it via REDIS_URL).
+#  - Run EITHER the docker `app` OR a host `bun run dev:all` against this store, not both: each
+#    server owns its own live rooms in memory and only last-writer-wins on persisted/lobby
+#    state. For the host dev loop, prefer `bun run redis` (Redis only) over `bun run stack`.
+name: vwing
+
+services:
+  redis:
+    # In prod Redis lives ONLY on the `internal: true` network, which has no gateway and so
+    # cannot host-publish a port. For dev we additionally attach it to a normal (gateway'd)
+    # bridge so the loopback publish below actually binds. Traefik joins neither network, so it
+    # still cannot reach Redis even in dev.
+    networks: [internal, devnet]
+    # Loopback only — never the LAN/all interfaces.
+    ports:
+      - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
+
+networks:
+  devnet:
+    name: vwing_devnet

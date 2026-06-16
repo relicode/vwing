@@ -1,0 +1,3 @@
+# Bind-mounted runtime data (Redis AOF + RDB snapshots) — track the dir, ignore its contents.
+*
+!.gitignore
