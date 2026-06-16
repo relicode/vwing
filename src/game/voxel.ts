@@ -622,17 +622,20 @@ export const sealWaterRect = (vt: VoxelTerrain, rect: { x: number; y: number; w:
   }
 }
 
-// Derive the render/physics rectangle view of the fluid: per column, the topmost contiguous wet run
-// becomes a flat-topped body (surface = where the water reaches in its top cell, floor = the bottom
-// of the run), and equal-(surface, floor) column runs coalesce into wide rects. This is what fills
-// world.water — drawn by the renderer and queried by ship/infantry buoyancy, exactly as the old
-// authored rects were, so none of those call sites change. (One run per column: a pool perched over
-// a cave in the same column is rare in this terrain and renders as the upper run.)
+// Derive the render/physics rectangle view of the fluid: EVERY maximal contiguous wet run in a column
+// becomes a flat-topped body (surface = where the water reaches in its top cell, floor = the bottom of
+// the run), and runs that line up across columns — same floor, surface within tolerance — coalesce
+// into wide rects. This is what fills world.water — drawn by the renderer and queried by ship/infantry
+// buoyancy, so those call sites are unchanged. Crucially it emits ALL runs, not just the topmost: a
+// pocket of water trapped UNDER a rock overhang (with other water above it in the same column) used to
+// be dropped, rendering as a black void even though it was full — and reading as dry to anything down
+// in it. `bodyAt` (water.ts) is already y-aware, so the now-stacked bodies at one x query correctly.
 // Columns whose surfaces sit within this many px (and share a floor) coalesce into one body. A bit
 // above the per-level granularity (one level ≈ cell/255 ≈ 0.07 px) so a settling pool's slightly
 // uneven top doesn't shatter into dozens of single-column bodies — keeps the body count (and the
 // physics queries that read it) stable.
 const WATER_BODY_MERGE_TOL = 3
+type OpenBody = { surf: number; floor: number; startK: number; endK: number }
 export const fluidToBodies = (vt: VoxelTerrain): WaterBody[] => {
   const { cols, rows, level } = vt.fluid
   const cell = vt.cell
@@ -644,59 +647,71 @@ export const fluidToBodies = (vt: VoxelTerrain): WaterBody[] => {
     setWetBounds(vt.fluid, cols, -1, rows, -1) // nothing wet
     return []
   }
-  const span = c1 - c0 + 1
-  const surf = new Float64Array(span)
-  const flr = new Float64Array(span)
-  const wet = new Uint8Array(span)
-  // Re-measure the live wet extent while scanning so a drained region stops being scanned next time.
+  // Re-measure the live wet extent (over ALL runs) while scanning so a drained region stops being
+  // scanned, and so a column's lower runs aren't dropped from the bounds next tick.
   let tcMin = cols
   let tcMax = -1
   let trMin = rows
   let trMax = -1
+  const bodies: WaterBody[] = []
+  // Bodies still growing rightward, keyed by floor: a column holds at most one run per floor (runs are
+  // gap-separated), so a surviving open body is either continued by this column's matching run or closed.
+  const open = new Map<number, OpenBody>()
+  const emit = (o: OpenBody): void => {
+    bodies.push({ x: (c0 + o.startK) * cell, y: o.surf, w: (o.endK - o.startK + 1) * cell, h: o.floor - o.surf })
+  }
+  // This column's runs (reused parallel arrays — no per-cell object churn).
+  const colSurf: number[] = []
+  const colFloor: number[] = []
   for (let c = c0; c <= c1; c += 1) {
-    let top = -1
-    for (let r = r0; r <= r1; r += 1) {
+    let nRuns = 0
+    let r = r0
+    while (r <= r1) {
       if (level[r * cols + c] > 0) {
-        top = r
-        break
+        const top = r
+        let bottom = r
+        while (bottom + 1 <= r1 && level[(bottom + 1) * cols + c] > 0) bottom += 1
+        // Surface rounded to whole px: snaps out sub-pixel float wobble (so a flowing column's body
+        // doesn't micro-jitter the buoyancy/wade queries) and keeps the value platform-stable.
+        colSurf[nRuns] = Math.round(top * cell + (1 - level[top * cols + c] / WATER_CELL_FULL) * cell)
+        colFloor[nRuns] = (bottom + 1) * cell
+        nRuns += 1
+        if (c < tcMin) tcMin = c
+        if (c > tcMax) tcMax = c
+        if (top < trMin) trMin = top
+        if (bottom > trMax) trMax = bottom
+        r = bottom + 2 // skip the dry cell that ended this run
+      } else {
+        r += 1
       }
     }
-    if (top < 0) continue
-    let bottom = top
-    for (let r = top + 1; r <= r1 && level[r * cols + c] > 0; r += 1) bottom = r
     const k = c - c0
-    wet[k] = 1
-    // Surface rounded to whole px: snaps out sub-pixel float wobble (so a flowing column's body
-    // doesn't micro-jitter the buoyancy/wade queries) and keeps the value platform-stable.
-    surf[k] = Math.round(top * cell + (1 - level[top * cols + c] / WATER_CELL_FULL) * cell)
-    flr[k] = (bottom + 1) * cell
-    if (c < tcMin) tcMin = c
-    if (c > tcMax) tcMax = c
-    if (top < trMin) trMin = top
-    if (bottom > trMax) trMax = bottom
+    // Close every open body this column does NOT continue (its floor is gone, or the surface stepped
+    // beyond the merge tolerance) — emitting it as a finished rectangle.
+    for (const [f, o] of open) {
+      let cont = false
+      for (let i = 0; i < nRuns; i += 1) {
+        if (colFloor[i] === f && Math.abs(colSurf[i] - o.surf) <= WATER_BODY_MERGE_TOL) {
+          cont = true
+          break
+        }
+      }
+      if (!cont) {
+        emit(o)
+        open.delete(f)
+      }
+    }
+    // Extend a continued body to this column, or open a fresh one for a new run.
+    for (let i = 0; i < nRuns; i += 1) {
+      const o = open.get(colFloor[i])
+      if (o) o.endK = k
+      else open.set(colFloor[i], { surf: colSurf[i], floor: colFloor[i], startK: k, endK: k })
+    }
   }
+  for (const o of open.values()) emit(o)
   setWetBounds(vt.fluid, tcMin, tcMax, trMin, trMax)
-  const bodies: WaterBody[] = []
-  let k = 0
-  while (k < span) {
-    if (!wet[k]) {
-      k += 1
-      continue
-    }
-    const s = surf[k]
-    const f = flr[k]
-    let end = k
-    while (
-      end + 1 < span &&
-      wet[end + 1] &&
-      Math.abs(surf[end + 1] - s) <= WATER_BODY_MERGE_TOL &&
-      flr[end + 1] === f
-    ) {
-      end += 1
-    }
-    bodies.push({ x: (c0 + k) * cell, y: s, w: (end - k + 1) * cell, h: f - s })
-    k = end + 1
-  }
+  // Deterministic order (left-to-right, then top-to-bottom) regardless of the close order above.
+  bodies.sort((a, b) => a.x - b.x || a.y - b.y)
   return bodies
 }
 
