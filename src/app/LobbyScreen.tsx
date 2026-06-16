@@ -7,7 +7,8 @@ import { useCallback, useEffect, useState } from 'react'
 
 import Overlay from '$/app/Overlay'
 import { NET_GAME_NAME_MAX } from '$/game/constants'
-import { fetchGames, serverOrigin } from '$/net/client'
+import { fetchGames } from '$/net/client'
+import { serverOrigin } from '$/net/origin'
 import { type GameSummary, gameNameKey, JoinIntent, sanitizeGameName } from '$/net/protocol'
 
 const PILOT_KEY = 'vwing.pilot'
