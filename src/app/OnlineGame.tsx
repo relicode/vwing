@@ -8,8 +8,52 @@ import OnlineHud from '$/app/OnlineHud'
 import Overlay from '$/app/Overlay'
 import { useNetStatus } from '$/app/use-net'
 import { NET_RECONNECT_DELAYS_MS } from '$/game/constants'
-import { connectGame, type NetClient, NetPhase } from '$/net/client'
+import { connectGame, type NetClient, NetOutcome, NetPhase, type NetStatus } from '$/net/client'
 import { JoinIntent } from '$/net/protocol'
+
+// The base-war terminal screen, shown over the (still-drawn, spectated) world once this pilot's
+// match is decided — won, eliminated mid-fight, or beaten to the last barracks by someone else.
+const RESULT_COPY: Record<
+  Exclude<NetOutcome, NetOutcome.PLAYING>,
+  { title: string; color: string; sub: (winner: string | undefined) => string }
+> = {
+  [NetOutcome.VICTORY]: {
+    title: 'VICTORY',
+    color: 'primary.main',
+    sub: () => 'The last barracks standing is yours.',
+  },
+  [NetOutcome.ELIMINATED]: {
+    title: 'ELIMINATED',
+    color: 'secondary.main',
+    sub: () => 'Your last base fell — the battle rages on without you.',
+  },
+  [NetOutcome.DEFEAT]: {
+    title: 'DEFEAT',
+    color: 'secondary.main',
+    sub: (winner) => (winner ? `${winner} captured the field.` : 'The field has been taken.'),
+  },
+  [NetOutcome.DRAW]: {
+    title: 'DRAW',
+    color: 'text.primary',
+    sub: () => 'The last barracks fell together — no one holds the field.',
+  },
+}
+
+const MatchResult = ({ status, onExit }: { status: NetStatus; onExit: () => void }) => {
+  const copy = status.outcome === NetOutcome.PLAYING ? undefined : RESULT_COPY[status.outcome]
+  if (!copy) return undefined
+  return (
+    <Overlay>
+      <Typography variant="h3" sx={{ fontWeight: 900, letterSpacing: '0.14em', color: copy.color }}>
+        {copy.title}
+      </Typography>
+      <Typography sx={{ color: 'text.secondary' }}>{copy.sub(status.winnerName)}</Typography>
+      <Button variant="contained" onClick={onExit} autoFocus sx={{ px: 5, mt: 1 }}>
+        Back to lobby
+      </Button>
+    </Overlay>
+  )
+}
 
 type OnlineGameProps = {
   game: string
@@ -49,7 +93,12 @@ const OnlineGame = ({ game, pilot, intent, onExit }: OnlineGameProps) => {
   return (
     <>
       {client ? <GameCanvas canvas={client.canvas} /> : null}
-      {client && status.phase === NetPhase.PLAYING ? <OnlineHud status={status} onLeave={onExit} /> : null}
+      {client && status.phase === NetPhase.PLAYING && status.outcome === NetOutcome.PLAYING ? (
+        <OnlineHud status={status} onLeave={onExit} />
+      ) : null}
+      {client && status.phase === NetPhase.PLAYING && status.outcome !== NetOutcome.PLAYING ? (
+        <MatchResult status={status} onExit={onExit} />
+      ) : null}
 
       {status.phase === NetPhase.RECONNECTING ? (
         // The canvas stays mounted under the dim — the world freezes rather than vanishing,
