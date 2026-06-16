@@ -15,7 +15,7 @@ import {
 } from '$/game/constants'
 import { createRng } from '$/game/rng'
 import type { Ship, World } from '$/game/types'
-import { assignWeapon, fireSecondary } from '$/game/weapons'
+import { assignWeapon, fireSecondary, weaponFromHash, weaponFromSlug } from '$/game/weapons'
 
 const makeShip = (over: Partial<Ship>): Ship => ({
   id: 0,
@@ -70,6 +70,43 @@ describe('assignWeapon', () => {
     expect(WEAPON_POOL).toContain(WeaponKind.FLAMETHROWER)
     expect(WEAPON_POOL.some((k) => String(k) === 'INFANTRY')).toBe(false) // infantry is a ship system now
     expect(new Set(WEAPON_POOL).size).toBe(WEAPON_POOL.length) // no duplicates
+  })
+})
+
+describe('weaponFromSlug', () => {
+  test('resolves the example slug to the water cannon', () => {
+    expect(weaponFromSlug('watercannon')).toBe(WeaponKind.WATER_CANNON)
+  })
+
+  test('is separator- and case-insensitive', () => {
+    for (const slug of ['WATER_CANNON', 'water-cannon', 'water_cannon', 'Water Cannon', 'WaterCannon'])
+      expect(weaponFromSlug(slug)).toBe(WeaponKind.WATER_CANNON)
+  })
+
+  test('every pooled weapon is reachable via its normalized enum value', () => {
+    for (const kind of WEAPON_POOL) expect(weaponFromSlug(kind)).toBe(kind)
+  })
+
+  test('returns undefined for an unknown weapon', () => {
+    expect(weaponFromSlug('bfg9000')).toBeUndefined()
+    expect(weaponFromSlug('')).toBeUndefined()
+  })
+})
+
+describe('weaponFromHash', () => {
+  test('reads the special-weapon param from a location hash', () => {
+    expect(weaponFromHash('#special-weapon=watercannon')).toBe(WeaponKind.WATER_CANNON)
+    expect(weaponFromHash('special-weapon=rail')).toBe(WeaponKind.RAIL) // leading # optional
+  })
+
+  test('ignores other params and order', () => {
+    expect(weaponFromHash('#foo=bar&special-weapon=singularity')).toBe(WeaponKind.SINGULARITY)
+  })
+
+  test('returns undefined when the param is missing or unrecognized', () => {
+    expect(weaponFromHash('')).toBeUndefined()
+    expect(weaponFromHash('#other=1')).toBeUndefined()
+    expect(weaponFromHash('#special-weapon=nonsense')).toBeUndefined()
   })
 })
 

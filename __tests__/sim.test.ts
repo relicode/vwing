@@ -3,11 +3,14 @@ import { describe, expect, test } from 'bun:test'
 import {
   BASE_SHELL_KILL_DAMAGE,
   BOT_KILL_SCORE,
+  CRASH_SPEED,
   DEATHMATCH_FRAG_SCORE,
   DeviceKind,
   GRASS_BURN_TIME,
+  LAND_SPEED,
   RESPAWN_DELAY_BASE,
   RESPAWN_DELAY_GROWTH,
+  SECONDARY_MAX_CHARGE,
   SHIP_MAX_HEALTH,
   ShipKind,
   SimMode,
@@ -16,6 +19,7 @@ import {
   Surface,
   TROOP_BAY_CAPACITY,
   VOXEL_CELL,
+  WeaponKind,
   WORLD_WIDTH,
 } from '$/game/constants'
 import { inputFromSnapshot, NEUTRAL_INPUT } from '$/game/input'
@@ -384,6 +388,7 @@ describe('createSim — base capture cuts respawns', () => {
       burning: 0,
       stun: 0,
       fallen: 0,
+      panic: 0,
     }
     const parked: Device = {
       kind: DeviceKind.MINE,
@@ -468,7 +473,8 @@ describe('createSim — destructible terrain', () => {
     const world = createWorld(7)
     const gunner = combatant(0, 540, 1280)
     gunner.ship.angle = Math.PI / 2 // forward = +y (straight down into the earth)
-    gunner.ship.invuln = 999 // keep it from dying on the terrain while it shoots
+    gunner.ship.invuln = 0 // vulnerable, so it can actually shoot (a flashing ship holds fire) — it
+    // hovers just above the earth and lands gently, well under the crash threshold
     gunner.input = inputFromSnapshot({
       turn: 0,
       thrusting: false,
@@ -495,6 +501,92 @@ describe('createSim — destructible terrain', () => {
 
     expect(world.terrainVersion).toBeGreaterThan(versionBefore) // a carve happened and blocks were rebuilt
     expect(destructibleArea(world.blocks)).toBeLessThan(rockAreaBefore) // the earth actually lost mass
+  })
+})
+
+describe('createSim — a flashing ship holds its fire', () => {
+  test('no primary or secondary leaves the muzzle while spawn-invulnerable, then it shoots once the flash ends', () => {
+    const world = createWorld(3)
+    const c = combatant(0, 5400, 810) // an open SKY spawn anchor — clear air, no terrain underfoot
+    c.ship.invuln = 2 // still strobing
+    c.ship.weapon = WeaponKind.SCATTERGUN
+    c.ship.charge = SECONDARY_MAX_CHARGE
+    c.input = inputFromSnapshot({
+      turn: 0,
+      thrusting: false,
+      reversing: false,
+      firing: true,
+      altFiring: true,
+      deploying: false,
+    })
+    const sim = createSim(world, [c], { mode: SimMode.DEATHMATCH })
+    sim.step(1 / 60)
+    expect(world.bullets).toHaveLength(0) // both triggers held — nothing fires from behind the spawn shield
+    c.ship.invuln = 0
+    sim.step(1 / 60)
+    expect(world.bullets.length).toBeGreaterThan(0) // flash over → the guns open up
+  })
+})
+
+describe('createSim — a wall smack damages the hull', () => {
+  const slab = { x: 5300, y: 860, w: 200, h: 120, structure: StructureType.METAL, surface: Surface.EARTH }
+
+  test('a mid-speed bounce dents the hull without killing', () => {
+    const world = createWorld(11)
+    const c = combatant(0, 5400, 810)
+    const sim = createSim(world, [c], { mode: SimMode.DEATHMATCH })
+    world.blocks = [{ ...slab }] // a lone slab just below the ship (no carve this step → blocks persist)
+    c.ship.shields = 0 // bite the hull directly so the dent is plain
+    c.ship.x = 5400
+    c.ship.y = slab.y - c.ship.radius - 1
+    c.ship.vy = (LAND_SPEED + CRASH_SPEED) / 2 // a solid but survivable smack
+    const before = c.ship.health
+    sim.step(1 / 60)
+    expect(c.ship.health).toBeLessThan(before) // the wall dented it
+    expect(world.ships.some((s) => s.id === 0)).toBe(true) // but it lived — a bounce, not a crash
+  })
+
+  test('the same wall taken hard enough still crashes the ship', () => {
+    const world = createWorld(11)
+    const c = combatant(0, 5400, 810)
+    const sim = createSim(world, [c], { mode: SimMode.DEATHMATCH })
+    world.blocks = [{ ...slab }]
+    c.ship.x = 5400
+    c.ship.y = slab.y - c.ship.radius - 1
+    c.ship.vy = CRASH_SPEED + 100
+    sim.step(1 / 60)
+    expect(world.ships.some((s) => s.id === 0)).toBe(false) // crashed into the wall
+  })
+})
+
+describe('createSim — a hull breach spills the troop bay', () => {
+  test('a hit that bites the hull shakes panicked troopers loose', () => {
+    const world = createWorld(4)
+    const target = combatant(0, 5400, 810)
+    const sim = createSim(world, [target], { mode: SimMode.DEATHMATCH })
+    target.ship.shields = 0 // send the hit straight to the hull
+    target.ship.troops = TROOP_BAY_CAPACITY
+    world.rng = () => 0 // make the per-trooper spill rolls deterministic (each aboard man bails)
+    // A round from some other ship bites the hull (owner 1 isn't in this match, so it just lands).
+    world.bullets.push({ x: target.ship.x, y: target.ship.y, vx: 0, vy: 0, radius: 6, life: 1, owner: 1, damage: 20 })
+    sim.step(1 / 60)
+    const spilled = world.devices.filter((d) => d.kind === DeviceKind.INFANTRY)
+    expect(spilled.length).toBeGreaterThan(0) // troopers tumbled out of the breach
+    expect(spilled.every((d) => d.kind === DeviceKind.INFANTRY && d.panic > 0)).toBe(true) // panicked
+    expect(target.ship.troops).toBeLessThan(TROOP_BAY_CAPACITY) // and left the bay
+  })
+
+  test('a hit fully soaked by the shields leaves the bay intact', () => {
+    const world = createWorld(4)
+    const target = combatant(0, 5400, 810)
+    const sim = createSim(world, [target], { mode: SimMode.DEATHMATCH })
+    target.ship.shields = 50 // soaks the whole hit — the hull never dents
+    target.ship.troops = TROOP_BAY_CAPACITY
+    world.rng = () => 0
+    world.bullets.push({ x: target.ship.x, y: target.ship.y, vx: 0, vy: 0, radius: 6, life: 1, owner: 1, damage: 20 })
+    sim.step(1 / 60)
+    expect(world.devices.some((d) => d.kind === DeviceKind.INFANTRY)).toBe(false) // no hull bite → no spill
+    expect(target.ship.troops).toBe(TROOP_BAY_CAPACITY)
   })
 })
 
@@ -607,6 +699,7 @@ describe('createSim — membership', () => {
     burning: 0,
     stun: 0,
     fallen: 0,
+    panic: 0,
   })
 
   test('addCombatant / removeCombatant keep world.ships in lockstep', () => {
@@ -689,6 +782,7 @@ describe('createSim — flame and water vs infantry', () => {
     burning: 0,
     stun: 0,
     fallen: 0,
+    panic: 0,
   })
 
   test('friendly fire is real: a stray same-side bullet splatters a trooper', () => {

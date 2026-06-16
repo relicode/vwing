@@ -59,6 +59,24 @@ import type { Rng, Ship, World } from '$/game/types'
 // Roll a fresh random secondary for a (re)spawning ship.
 export const assignWeapon = (rng: Rng): WeaponKind => pick(rng, WEAPON_POOL)
 
+// Bare lowercase alphanumerics of a weapon's enum value — its canonical URL slug ('WATER_CANNON' → 'watercannon').
+const weaponSlug = (kind: WeaponKind): string => kind.toLowerCase().replace(/[^a-z0-9]/g, '')
+
+// Resolve a URL-friendly slug to its WeaponKind, separator- and case-insensitively, so
+// 'watercannon', 'water-cannon', 'water_cannon' and 'Water Cannon' all land on WATER_CANNON.
+// Returns undefined for an unrecognized weapon (caller falls back to a random roll).
+export const weaponFromSlug = (slug: string): WeaponKind | undefined => {
+  const norm = slug.toLowerCase().replace(/[^a-z0-9]/g, '')
+  return WEAPON_POOL.find((kind) => weaponSlug(kind) === norm)
+}
+
+// Read a preselected secondary from a location hash like `#special-weapon=watercannon` (a QA /
+// deep-link convenience). Undefined when the param is absent or names no weapon — i.e. random.
+export const weaponFromHash = (hash: string): WeaponKind | undefined => {
+  const slug = new URLSearchParams(hash.replace(/^#/, '')).get('special-weapon')
+  return slug ? weaponFromSlug(slug) : undefined
+}
+
 const noseX = (ship: Ship): number => ship.x + Math.cos(ship.angle) * ship.radius
 const noseY = (ship: Ship): number => ship.y + Math.sin(ship.angle) * ship.radius
 
@@ -173,12 +191,13 @@ const spawnWell = (world: World, ship: Ship): void => {
   })
 }
 
-// Fire the ship's current secondary. Self-guards energy/cooldown/disabled, spends the
+// Fire the ship's current secondary. Self-guards energy/cooldown/disabled/spawn-invuln, spends the
 // weapon's energy cost, and arms the cooldown. Returns ships hit *instantly* (Rail only)
 // so the engine can reap them — spawn-based weapons resolve later in their own passes.
+// (A freshly spawned ship strobes invulnerable; it can't be hit, so it can't shoot either.)
 export const fireSecondary = (world: World, ship: Ship): Ship[] => {
   const config = WEAPON_CONFIG[ship.weapon]
-  if (ship.charge < config.cost || ship.altCooldown > 0 || ship.disabled > 0) return []
+  if (ship.charge < config.cost || ship.altCooldown > 0 || ship.disabled > 0 || ship.invuln > 0) return []
   ship.charge -= config.cost
   ship.altCooldown = config.cooldown
 

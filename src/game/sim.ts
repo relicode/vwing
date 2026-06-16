@@ -16,6 +16,7 @@ import {
   INFANTRY_BURN_TIME,
   INFANTRY_PICKUP_SPEED,
   INFANTRY_WASH_PUSH_MAX,
+  LAND_SPEED,
   RESPAWN_DELAY_BASE,
   RESPAWN_DELAY_GROWTH,
   SHAKE_DECAY,
@@ -41,6 +42,7 @@ import {
   THRUST_PARTICLE_SPEED,
   TROOP_BAY_CAPACITY,
   TROOP_DEPLOY_COOLDOWN,
+  WALL_DAMAGE_SCALE,
   WATER_CANNON_WET_RADIUS,
   WATER_POUR_LEVEL,
   type WeaponKind,
@@ -55,7 +57,7 @@ import { createRng, randRange } from '$/game/rng'
 import { respawnShipAt, type ShipEnv, updateShip } from '$/game/ship'
 import { resolveShipTerrain } from '$/game/terrain'
 import { createTerrain } from '$/game/terrain-map'
-import { spawnTrooper } from '$/game/troops'
+import { spawnTrooper, spillTroops } from '$/game/troops'
 import type { Base, Bullet, Ship, Vec2, World } from '$/game/types'
 import {
   carveVoxel,
@@ -461,7 +463,9 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     world.bullets = surviving
   }
 
-  // Land/bounce/crash each ship against terrain; only a hard crash (once invuln lapses) kills.
+  // Land/bounce/crash each ship against terrain; a hard crash kills, a softer wall smack just dents
+  // the hull (scaled by impact — shields soak first). Both spare a flashing (invuln) ship: terrain
+  // still pushes it out of penetration, it just can't crash or be dented while spawn-protected.
   // The barracks buildings are solid to EVERY hull (the owner sets down beside his own pad, or
   // on the roof) and indestructible besides — flying into one is flying into bedrock.
   const resolveTerrain = (dt: number, events: DeathEvent[]): void => {
@@ -473,7 +477,10 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
           )
     for (const { ship } of combatants) {
       if (eliminated.has(ship.id) || awaiting.has(ship.id)) continue
-      if (resolveShipTerrain(ship, solids, dt) === 'crash' && ship.invuln <= 0) killShip(ship, undefined, events)
+      const { result, impact } = resolveShipTerrain(ship, solids, dt)
+      if (ship.invuln > 0) continue // flashing: shoved clear but immune to the crash and the dent
+      if (result === 'crash') killShip(ship, undefined, events)
+      else if (result === 'bounce') applyDamage(ship, (impact - LAND_SPEED) * WALL_DAMAGE_SCALE)
     }
   }
 
@@ -511,6 +518,12 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
       clearSpawnArea(vc.ship.x, vc.ship.y)
       world.ships.push(vc.ship)
     }
+    // Snapshot hull HP before this tick's damage resolves: any ship that ends the tick with less hull
+    // than it started took a hit, and a hit rattles troopers loose from its bay (spillTroops, end of
+    // step). Captured here — ahead of the combatant loop — so a same-tick rail/secondary strike counts;
+    // base repair only nudges hull UP, never down, so it never reads as a hit.
+    const hullBefore = new Map<number, number>()
+    for (const ship of world.ships) hullBefore.set(ship.id, ship.health)
     for (const { ship, input: control } of combatants) {
       if (eliminated.has(ship.id) || awaiting.has(ship.id)) continue
       updateShip(ship, control, dt, env)
@@ -568,7 +581,9 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
         if (wet) submergedShips.add(ship.id)
         else submergedShips.delete(ship.id)
       }
-      if (control.firing() && ship.fireCooldown <= 0 && ship.disabled <= 0) {
+      // A freshly (re)spawned ship strobes invulnerable — it can't be hit, so it can't shoot
+      // either (no firing from behind the spawn shield).
+      if (control.firing() && ship.fireCooldown <= 0 && ship.disabled <= 0 && ship.invuln <= 0) {
         spawnBullet(world.bullets, ship)
         ship.fireCooldown = SHIP_FIRE_INTERVAL
       }
@@ -601,6 +616,13 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     if (waterDirty || waterMoved) {
       refreshWater()
       waterDirty = false
+    }
+    // A hull breach this tick shakes the bay: each survivor that ends with less hull than it started
+    // spills a few panicked troopers. Done here — outside every entity loop — so the fresh devices
+    // land cleanly in world.devices, and only for ships that lived (a downed ship's bay dies with it).
+    for (const ship of world.ships) {
+      const before = hullBefore.get(ship.id)
+      if (before !== undefined && ship.health < before) spillTroops(world, ship)
     }
     return events
   }

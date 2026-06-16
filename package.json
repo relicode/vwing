@@ -1,6 +1,6 @@
 {
   "name": "vwing",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "private": true,
   "type": "module",
   "license": "Unlicense",
@@ -16,7 +16,7 @@
     "chrome": "${CHROME_BIN:-google-chrome-stable} --headless=new --remote-debugging-port=${CHROME_PORT:-9222} --user-data-dir=${TMPDIR:-/tmp}/vwing-chrome --no-first-run --no-default-browser-check http://localhost:${VWING_WEB_PORT:-3110}",
     "chrome:visual": "${CHROME_BIN:-google-chrome-stable} --new-window --remote-debugging-port=${CHROME_VISUAL_PORT:-9223} --user-data-dir=${TMPDIR:-/tmp}/vwing-chrome-visual --no-first-run --no-default-browser-check http://localhost:${VWING_WEB_PORT:-3110}",
     "build": "bun run scripts/build.ts",
-    "preview": "bun run scripts/preview.ts",
+    "preview": "http-server -c-1 -p ${PORT:-3111} dist",
     "release": "bun run scripts/release.ts",
     "test": "bun test",
     "format": "biome check --write",
@@ -39,6 +39,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "concurrently": "^9.2.1",
+    "http-server": "^14.1.1",
     "typescript": "^6.0.3"
   }
 }

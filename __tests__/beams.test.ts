@@ -85,6 +85,7 @@ const trooper = (x: number, owner: number): Device => ({
   burning: 0,
   stun: 0,
   fallen: 0,
+  panic: 0,
 })
 
 // A barracks parked dead ahead of a muzzle at the origin: the body spans y -94..26 and x 150..450,
