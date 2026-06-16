@@ -25,6 +25,7 @@ import {
 import { inputFromSnapshot, NEUTRAL_INPUT } from '$/game/input'
 import { createShip } from '$/game/ship'
 import { type Combatant, createSim, createWorld } from '$/game/sim'
+import { basePadCenters } from '$/game/terrain-map'
 import type { Block, Bullet, Device } from '$/game/types'
 
 // Total pixel area of destructible (earth, non-metal) terrain — shrinks as earth is shot away.
@@ -820,5 +821,62 @@ describe('createSim — flame and water vs infantry', () => {
     expect(world.devices).toContain(victim) // the jet never kills
     expect(victim.burning).toBe(0) // doused
     expect(victim.vx).toBeGreaterThan(0) // and shoved along the jet
+  })
+})
+
+describe('createSim — battle (online FFA base war)', () => {
+  test('starts baseless; addBase seats a fort, removeBase tears it down', () => {
+    const world = createWorld(7)
+    const sim = createSim(world, [], { mode: SimMode.BATTLE })
+    expect(world.bases).toHaveLength(0) // unlike CAMPAIGN, no fixed pair — bases are dynamic
+    const [pad] = basePadCenters()
+    const base = sim.addBase(0, pad)
+    expect(world.bases).toHaveLength(1)
+    expect(base.owner).toBe(0)
+    sim.removeBase(0)
+    expect(world.bases).toHaveLength(0)
+  })
+
+  test('a battle ship spawns empty-bayed; a base-holder is downed (not eliminated) and musters back at its perch', () => {
+    const world = createWorld(7)
+    const [padA, padB] = basePadCenters()
+    const a = combatant(0, padA.x, padA.y - SPAWN_ALTITUDE)
+    const b = combatant(1, padB.x, padB.y - SPAWN_ALTITUDE)
+    const sim = createSim(world, [a, b], { mode: SimMode.BATTLE })
+    sim.addBase(0, padA)
+    sim.addBase(1, padB)
+    expect(a.ship.troops).toBe(0) // empty bay — you fly home and load at the barracks
+    a.ship.health = 10
+    world.bullets.push(lethalShot(a.ship.x, a.ship.y, b.ship.id))
+    const events = sim.step(1 / 60)
+    expect(events.some((e) => e.victimId === 0 && !e.eliminated)).toBe(true) // downed, holds a base → respawns
+    expect(b.score).toBe(DEATHMATCH_FRAG_SCORE) // frags, not the campaign's BOT_KILL_SCORE points
+    // Step until it re-enters, then check the muster point before gravity drifts it off the perch.
+    for (let i = 0; i < Math.ceil((RESPAWN_DELAY_BASE + 0.5) * 60); i += 1) {
+      sim.step(1 / 60)
+      if (world.ships.some((s) => s.id === 0)) break
+    }
+    const back = world.ships.find((s) => s.id === 0)
+    expect(back).toBeDefined()
+    expect(back?.x).toBeCloseTo(padA.x, 0) // mustered back above its own pad
+    expect(back?.y).toBeCloseTo(padA.y - SPAWN_ALTITUDE, 0)
+    expect(back?.troops).toBe(0) // and re-kitted empty, to reload at the barracks
+  })
+
+  test('a captured base is no respawn: its holder dying is elimination', () => {
+    const world = createWorld(7)
+    const [padA, padB] = basePadCenters()
+    const a = combatant(0, padA.x, padA.y - SPAWN_ALTITUDE)
+    const b = combatant(1, padB.x, padB.y - SPAWN_ALTITUDE)
+    const sim = createSim(world, [a, b], { mode: SimMode.BATTLE })
+    sim.addBase(0, padA)
+    const bBase = sim.addBase(1, padB)
+    bBase.capture = 1
+    bBase.capturedBy = 0 // A's troops have taken B's barracks
+    b.ship.health = 10
+    world.bullets.push(lethalShot(b.ship.x, b.ship.y, a.ship.id))
+    const events = sim.step(1 / 60)
+    expect(events.some((e) => e.victimId === 1 && e.eliminated)).toBe(true) // out of bases, out of the match
+    expect(world.ships.some((s) => s.id === 1)).toBe(false) // wreck dropped, never respawns
   })
 })

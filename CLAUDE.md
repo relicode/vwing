@@ -14,7 +14,8 @@ paradrops autonomous troopers (riflemen + one-in-five specialists carrying a man
 of the squad's heavy weapon kind), rescues its own and *recruits* enemy troopers by slow contact —
 and wins by capturing the enemy barracks with troops (a captured base cuts respawns; dying then is
 elimination → VICTORY). The campaign pits the player vs. an AI bot that plays the same game
-(REARM / ASSAULT / DEFEND goal layer); online DEATHMATCH stays a baseless frag-fest. Controls:
+(REARM / ASSAULT / DEFEND goal layer); online is the same base war as a free-for-all
+(`SimMode.BATTLE`): one barracks per pilot, last pilot holding a base wins. Controls:
 flight on the arrow keys, **D** fires the primary, **S** the secondary, **A** deploys troops.
 
 ## Stack & toolchain

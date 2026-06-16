@@ -11,10 +11,11 @@ export type WorldSnapshot = Omit<World, 'rng'>
 export type PlayerInfo = {
   id: number
   name: string
-  score: number // points (CAMPAIGN) / frags (DEATHMATCH)
+  score: number // frags (online BATTLE / DEATHMATCH) / points (CAMPAIGN)
   palette: number // PLAYER_PALETTE slot the server assigned this seat (clients clamp, fallback 1)
   respawnIn: number // s until the seat's ship re-enters (0 = flying, or benched)
   connected: boolean
+  eliminated: boolean // BATTLE: out of the match (last base captured, then downed) — never true in DEATHMATCH
 }
 
 // One active game in the lobby listing.
@@ -50,7 +51,14 @@ export type ClientMessage = { t: MsgType.INPUT; input: InputSnapshot }
 
 export type ServerMessage =
   | { t: MsgType.WELCOME; selfId: number; game: string; tickRate: number; reclaimed: boolean }
-  | { t: MsgType.SNAPSHOT; world: WorldSnapshot; players: PlayerInfo[]; events: DeathEvent[] }
+  | {
+      t: MsgType.SNAPSHOT
+      world: WorldSnapshot
+      players: PlayerInfo[]
+      events: DeathEvent[]
+      matchOver: boolean // the FFA base war has been decided (BATTLE); clients show the terminal screen
+      winnerId?: number // the lone surviving contender's ship id (undefined = drawn / not yet decided)
+    }
   | { t: MsgType.REJECTED; reason: string }
 
 export const encode = (message: ServerMessage | ClientMessage): string => JSON.stringify(message)

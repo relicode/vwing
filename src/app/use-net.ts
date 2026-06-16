@@ -1,7 +1,7 @@
 import { useCallback, useSyncExternalStore } from 'react'
 
 import { WeaponKind } from '$/game/constants'
-import { type NetClient, NetPhase, type NetStatus } from '$/net/client'
+import { type NetClient, NetOutcome, NetPhase, type NetStatus } from '$/net/client'
 
 const INITIAL_STATUS: NetStatus = {
   phase: NetPhase.CONNECTING,
@@ -11,11 +11,14 @@ const INITIAL_STATUS: NetStatus = {
   score: 0,
   weapon: WeaponKind.SCATTERGUN,
   charge: 0,
+  troops: 0,
   attempt: 0,
   reclaims: 0,
   feed: [],
   respawnIn: 0,
   stalled: false,
+  outcome: NetOutcome.PLAYING,
+  winnerName: undefined,
   error: undefined,
 }
 

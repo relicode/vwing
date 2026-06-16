@@ -12,6 +12,7 @@ const player = (id: number, name: string, palette: number, connected = true): Pl
   palette,
   respawnIn: 0,
   connected,
+  eliminated: false,
 })
 
 const death = (victimId: number, killerId?: number): DeathEvent => ({
