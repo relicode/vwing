@@ -5,6 +5,10 @@ import type { Block, Ship } from '$/game/types'
 // The outcome of resolving a ship against terrain for one frame.
 export type TerrainResult = 'none' | 'land' | 'bounce' | 'crash'
 
+// The most severe outcome across all contacts this frame, plus the hardest impact (closing speed
+// along a contact normal) that reshaped velocity — the sim grades wall damage off `impact`.
+export type TerrainHit = { result: TerrainResult; impact: number }
+
 const SEVERITY: Record<TerrainResult, number> = { none: 0, land: 1, bounce: 2, crash: 3 }
 const worse = (a: TerrainResult, b: TerrainResult): TerrainResult => (SEVERITY[a] >= SEVERITY[b] ? a : b)
 
@@ -14,17 +18,18 @@ const worse = (a: TerrainResult, b: TerrainResult): TerrainResult => (SEVERITY[a
 // surface friction (ICE keeps it; grass/earth/metal grip); up to CRASH_SPEED it bounces;
 // at/above it the ship is flagged 'crash' (and hard-stopped so an invulnerable ship the
 // engine spares can't tunnel). Returns the most severe outcome across all contacts.
-export const resolveShipTerrain = (ship: Ship, blocks: Block[], dt: number): TerrainResult => {
+export const resolveShipTerrain = (ship: Ship, blocks: Block[], dt: number): TerrainHit => {
   const pending: { block: Block; depth: number }[] = []
   for (const block of blocks) {
     const c = circleRectContact(ship.x, ship.y, ship.radius, block.x, block.y, block.w, block.h)
     if (c) pending.push({ block, depth: c.depth })
   }
-  if (pending.length === 0) return 'none'
+  if (pending.length === 0) return { result: 'none', impact: 0 }
   // Resolve the deepest contact first so a wedge between two blocks settles cleanly.
   pending.sort((a, b) => b.depth - a.depth)
 
   let result: TerrainResult = 'none'
+  let impact = 0 // hardest closing speed that reshaped velocity (drives the sim's wall-dent damage)
   for (const { block } of pending) {
     // Re-test live: an earlier push-out may have already separated this pair.
     const c = circleRectContact(ship.x, ship.y, ship.radius, block.x, block.y, block.w, block.h)
@@ -33,12 +38,13 @@ export const resolveShipTerrain = (ship: Ship, blocks: Block[], dt: number): Ter
     ship.y += c.ny * c.depth
     const vn = ship.vx * c.nx + ship.vy * c.ny
     if (vn >= 0) continue // separating or tangential: position corrected, leave velocity alone
-    const impact = -vn
-    if (impact >= CRASH_SPEED) {
+    const closing = -vn
+    if (closing > impact) impact = closing
+    if (closing >= CRASH_SPEED) {
       ship.vx -= vn * c.nx
       ship.vy -= vn * c.ny
       result = worse(result, 'crash')
-    } else if (impact > LAND_SPEED) {
+    } else if (closing > LAND_SPEED) {
       ship.vx -= (1 + BOUNCE_RESTITUTION) * vn * c.nx
       ship.vy -= (1 + BOUNCE_RESTITUTION) * vn * c.ny
       result = worse(result, 'bounce')
@@ -51,5 +57,5 @@ export const resolveShipTerrain = (ship: Ship, blocks: Block[], dt: number): Ter
       result = worse(result, 'land')
     }
   }
-  return result
+  return { result, impact }
 }

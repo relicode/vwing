@@ -236,7 +236,24 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     burning: 0,
     stun: 0,
     fallen: 0,
+    panic: 0,
     ...over,
+  })
+
+  test('an ordinary fast fall deploys its chute at once', () => {
+    const t = infantry({ attached: false, chute: -1, panic: 0, vy: 300, y: 0 })
+    const world = makeWorld([], [t])
+    updateDevices(world, 1 / 60)
+    if (t.kind === DeviceKind.INFANTRY) expect(t.chute).toBeGreaterThanOrEqual(0) // ripcord pulled past the deploy speed
+  })
+
+  test('a spilled trooper in a panic holds its ripcord until the panic passes', () => {
+    const t = infantry({ attached: false, chute: -1, panic: 0.05, vy: 300, y: 0 })
+    const world = makeWorld([], [t])
+    updateDevices(world, 1 / 60)
+    if (t.kind === DeviceKind.INFANTRY) expect(t.chute).toBe(-1) // still flailing — too rattled to pull it, even past the deploy speed
+    for (let i = 0; i < 6; i += 1) updateDevices(world, 1 / 60) // let the panic burn down
+    if (t.kind === DeviceKind.INFANTRY) expect(t.chute).toBeGreaterThanOrEqual(0) // composed now → canopy out
   })
 
   test('falls under gravity and lands on a block when it hits slowly', () => {
@@ -994,6 +1011,7 @@ describe('updateDevices — fire, stun, and the heavier ordnance vs infantry', (
     burning: 0,
     stun: 0,
     fallen: 0,
+    panic: 0,
     ...over,
   })
   const ground = { x: 0, y: 200, w: 600, h: 60, structure: StructureType.EARTH, surface: Surface.EARTH }
@@ -1212,6 +1230,7 @@ describe('updateDevices — wading shallows and swimming to safety', () => {
     burning: 0,
     stun: 0,
     fallen: 0,
+    panic: 0,
     ...over,
   })
 

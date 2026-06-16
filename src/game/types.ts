@@ -118,6 +118,7 @@ export type Device =
       stun: number // s of EMP seize-up remaining (a landed unit can't move or fire)
       fallen: number // s of knocked-flat left (blast shove / hard landing / icy pratfall) — can't move or fire while down
       storming: boolean // elected to an enemy base's battering crew — in CONTACT with a wall or its roof, unopposed, no threat near (stepBases re-marks each frame): the man plants there (patrol halts, weapon slung — no firing) for the renderer's pounding pose; never set online (DEATHMATCH has no bases)
+      panic: number // s of spill-panic left: flung from a damaged hull it free-falls flailing (FALLING) and won't pull its chute until this elapses (0 = composed; ordinary deploys never panic)
     }
   | {
       kind: DeviceKind.GRENADE // gravity arc → shrapnel ring on fuse

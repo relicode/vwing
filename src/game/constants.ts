@@ -470,6 +470,12 @@ export const INFANTRY_FALL_LETHAL = 300 // landing impact speed (px/s) above whi
 // skid's end dumps a trooper on his back — helpless (no walking, no firing) until he scrambles up.
 export const INFANTRY_FALLEN_TIME = 2.5 // s a knocked-down trooper stays flat before getting up
 export const INFANTRY_FALL_KNOCKDOWN = 140 // landing impact (px/s) above which a survivable fall still knocks flat (sets `fallen`, not `stun`)
+// A hull breach shakes the troop bay: on any tick a trooper-laden ship loses hull HP, EACH whole
+// trooper still aboard rolls INFANTRY_SPILL_CHANCE to be flung clear. A spilled man tumbles out
+// PANICKED — flailing and too rattled to pull his ripcord for INFANTRY_PANIC_TIME, so the chute
+// opens late (a hit taken low over the ground can cost troopers to the splat; see devices.ts).
+export const INFANTRY_SPILL_CHANCE = 0.22 // per-trooper chance to fall out when the hull takes damage
+export const INFANTRY_PANIC_TIME = 1.2 // s a spilled trooper free-falls in a panic before its chute can deploy
 export const INFANTRY_KNOCKDOWN_RADIUS_SCALE = 1.6 // blast knockdown ring: kill radius × this flattens landed survivors
 export const BURST_KNOCKDOWN_RADIUS = 80 // px around a grenade/flak burst where landed troopers are knocked flat
 export const INFANTRY_SWIM_TIME = 6 // s a unit floats (can't shoot) in water before it drowns
@@ -727,6 +733,10 @@ export const GRASS_FIRE_EMBERS = 3 // ember puffs sampled per frame across ALL b
 export const LAND_SPEED = 130 // impact below this rests the ship on the surface
 export const CRASH_SPEED = 430 // impact at/above this destroys the ship (costs a life)
 export const BOUNCE_RESTITUTION = 0.45 // fraction of normal velocity kept on a mid-speed bounce
+// A non-fatal wall smack (a bounce — impact between LAND_SPEED and CRASH_SPEED) now dents the hull:
+// damage = (impact - LAND_SPEED) × this, so a glancing tap barely stings (mostly shields) while a
+// near-crash takes a real bite. Shields soak it first; a crash still just kills outright.
+export const WALL_DAMAGE_SCALE = 0.2 // hull points per px/s of impact above the gentle-landing threshold
 
 // Per-second tangential damping applied while a ship is resting on a surface, keyed by the
 // block's SURFACE: ICE keeps almost all speed (slippery), the others grip and shed it quickly.

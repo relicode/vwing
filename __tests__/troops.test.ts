@@ -16,7 +16,7 @@ import {
 } from '$/game/constants'
 import { updateDevices } from '$/game/devices'
 import { createRng } from '$/game/rng'
-import { spawnTrooper } from '$/game/troops'
+import { spawnTrooper, spillTroops } from '$/game/troops'
 import type { Device, Ship, World } from '$/game/types'
 
 const makeShip = (over: Partial<Ship>): Ship => ({
@@ -95,6 +95,7 @@ const bracedSpecialist = (heavy: WeaponKind): World => {
         burning: 0,
         stun: 0,
         fallen: 0,
+        panic: 0,
       },
     ]
   )
@@ -196,5 +197,31 @@ describe('spawnTrooper', () => {
     const ratio = specialists.length / N
     expect(ratio).toBeGreaterThan(TROOP_SPECIALIST_CHANCE - 0.04)
     expect(ratio).toBeLessThan(TROOP_SPECIALIST_CHANCE + 0.04)
+  })
+})
+
+describe('spillTroops', () => {
+  test('a hull breach flings panicked troopers from the bay (ripcord stowed)', () => {
+    const ship = makeShip({ troops: 5, x: 400, y: 200 })
+    const world = makeWorld([ship], [])
+    world.rng = () => 0 // every per-trooper spill roll succeeds → the whole bay bails
+    spillTroops(world, ship)
+    expect(ship.troops).toBe(0)
+    expect(world.devices).toHaveLength(5)
+    const spilled = world.devices.filter((d) => d.kind === DeviceKind.INFANTRY)
+    expect(spilled).toHaveLength(5)
+    // Each one tumbles out airborne, panicked, with its chute stowed (it opens late — see devices.ts).
+    expect(
+      spilled.every((d) => d.kind === DeviceKind.INFANTRY && d.panic > 0 && d.chute === -1 && d.attached === false)
+    ).toBe(true)
+  })
+
+  test('a fractional (half-loaded) trooper can never fall out', () => {
+    const ship = makeShip({ troops: 0.6 })
+    const world = makeWorld([ship], [])
+    world.rng = () => 0 // even with every roll succeeding, there's no WHOLE trooper to spill
+    spillTroops(world, ship)
+    expect(world.devices).toHaveLength(0)
+    expect(ship.troops).toBeCloseTo(0.6)
   })
 })

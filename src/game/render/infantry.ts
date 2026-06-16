@@ -478,12 +478,21 @@ const drawKneeling = (g: Graphics, d: InfantrySprite, kit: Kit, f: number): void
 }
 
 // FALLING (no canopy) — a flailing tumble: windmilling arms, kicking legs, terrified O-face, helmet
-// on but askew, speed-lines streaming up. Reads instantly as "this one has no parachute".
+// on but askew, speed-lines streaming up. Reads instantly as "this one has no parachute". A trooper
+// SPILLED from a damaged hull (panic > 0) thrashes harder still and flings sweat — its blind panic is
+// why it hasn't pulled the ripcord yet (the chute stays stowed until the panic passes; see devices.ts).
 const drawFalling = (g: Graphics, d: InfantrySprite, kit: Kit, time: number, f: number): void => {
   const r = d.radius
   const a = 1
-  const tilt = Math.sin(time * 6 + d.x) * 0.5
-  const phase = time * 12 + d.x
+  const panicking = d.panic > 0
+  const tilt = Math.sin(time * (panicking ? 11 : 6) + d.x) * (panicking ? 0.8 : 0.5)
+  const phase = time * (panicking ? 20 : 12) + d.x
+  if (panicking) {
+    // Sweat beads flicked off by the thrashing — sells the spilled man's terror.
+    const s = Math.sin(time * 24 + d.x)
+    g.circle(d.x - r * 1.2, d.y - r * 1.5 + s * r * 0.35, r * 0.13).fill({ color: Color.WATER_EDGE, alpha: 0.85 })
+    g.circle(d.x + r * 1.2, d.y - r * 1.3 - s * r * 0.35, r * 0.13).fill({ color: Color.WATER_EDGE, alpha: 0.85 })
+  }
   torso(g, d.x + Math.sin(tilt) * r * 0.3, d.y - r * 0.5, r, kit, a)
   for (const off of [0, Math.PI]) {
     const ang = Math.PI * 1.5 + Math.sin(phase + off)
