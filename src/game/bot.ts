@@ -1,3 +1,4 @@
+import { baseHolder, captureLead } from '$/game/bases'
 import { closestPointOnRect } from '$/game/collision'
 import {
   BASE_BUILDING_HALF_WIDTH,
@@ -213,8 +214,8 @@ const guardCount = (world: World, ownerId: number): number => {
 // the bay is topped up, so the bot doesn't thrash at the load threshold). A world without bases
 // (DEATHMATCH) short-circuits straight to DOGFIGHT.
 export const nextGoal = (prev: BotGoal, self: Ship, world: World, target: Ship | undefined): BotGoal => {
-  const home = world.bases.find((b) => b.owner === self.id)
-  const enemyBase = world.bases.find((b) => b.owner !== self.id)
+  const home = world.bases.find((b) => baseHolder(b) === self.id)
+  const enemyBase = world.bases.find((b) => baseHolder(b) !== self.id)
   if (!home || !enemyBase) return BotGoal.DOGFIGHT
   // 1. A nearby enemy ship always wins attention — never stop being a dogfighter when pressed.
   if (target && Math.hypot(target.x - self.x, target.y - self.y) < BOT_THREAT_RANGE) return BotGoal.DOGFIGHT
@@ -222,7 +223,7 @@ export const nextGoal = (prev: BotGoal, self: Ship, world: World, target: Ship |
   // (the SORTIE sensor: capture stays 0 while defenders remain, so a ground assault forming is
   // the early warning). Flying home empty-handed helps nobody, so this response needs troops
   // aboard to drop on the raiders.
-  if (home.capture > 0) return BotGoal.DEFEND
+  if ((captureLead(home)?.pct ?? 0) > 0) return BotGoal.DEFEND
   if (home.alarm === BaseAlarm.SORTIE && self.troops >= 1) return BotGoal.DEFEND
   // 2b. The barracks under the guns: an enemy ship overhead reads HIDE — once shelling has ground
   // the defense toward the reserve, fly home and answer the siege (no troops needed: the ship
@@ -241,7 +242,7 @@ export const nextGoal = (prev: BotGoal, self: Ship, world: World, target: Ship |
   // 3. Sticky rearm: keep loading until topped up. Supply = reserve + the fielded defenders
   // (loading boards both), but the bot never strips its base below the reserve — emptying the
   // whole defense is a gamble only the human is allowed to take.
-  const canLoad = home.capture < 1 && home.garrison + guardCount(world, self.id) > BASE_GUARD_RESERVE
+  const canLoad = home.garrison + guardCount(world, self.id) > BASE_GUARD_RESERVE
   if (prev === BotGoal.REARM && self.troops < BOT_REARM_DONE_TROOPS && canLoad) return BotGoal.REARM
   // 4. Stocked: fly the assault. 5. Short on troops but the barracks can supply: go load.
   if (self.troops >= BOT_ASSAULT_MIN_TROOPS) return BotGoal.ASSAULT
@@ -320,8 +321,8 @@ export const createBotInput = (self: Ship, getWorld: () => World): Input => {
     cachedTime = world.time
     const target = nearestEnemy(self, world.ships)
     goal = nextGoal(goal, self, world, target)
-    const home = world.bases.find((b) => b.owner === self.id)
-    const enemyBase = world.bases.find((b) => b.owner !== self.id)
+    const home = world.bases.find((b) => baseHolder(b) === self.id)
+    const enemyBase = world.bases.find((b) => baseHolder(b) !== self.id)
     decision = actOnGoal(goal, self, world, target, home, enemyBase)
   }
 

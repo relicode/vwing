@@ -84,6 +84,15 @@ export enum BaseAlarm {
   SORTIE = 'SORTIE',
 }
 
+// A ship's standing toward a barracks: FRIENDLY = it holds the base (its deed, or captured it),
+// HOSTILE = anyone else (the base is solid + stormable to them). The single friend/foe chokepoint
+// the base war reads (see relation() in bases.ts) — generalizes the old self-vs-the-one-enemy
+// binary so an N-pilot free-for-all works. NEUTRAL (an unheld, capturable-by-all base) lands later.
+export enum Relation {
+  FRIENDLY = 'FRIENDLY',
+  HOSTILE = 'HOSTILE',
+}
+
 // The behavioural state of a deployed trooper, derived from its fields each tick (see stateOf in
 // devices.ts). Drives firing accuracy/cadence and the rendered pose.
 export enum InfantryState {
@@ -226,11 +235,17 @@ export const BASE_DOOR_RADIUS = 16 // px from the door within which a returning 
 // progresses at 1/BASE_STORM_SIDE_TIME per second for EACH of the THREE sides a stormer presses —
 // the west wall, the roof (north), and the east wall — counted for at most one man per side. So one
 // side takes BASE_STORM_SIDE_TIME, two sides half that, all three a third of it. A live threat near
-// the pad halts the storm.
+// the pad halts the storm. Each hostile pilot storms its OWN capture bar (Base.contest), so several
+// rivals contest one fort independently rather than sharing a single bar.
 export const BASE_STORM_SIDE_TIME = 10 // s to storm with one soldier on a single side (all three sides → 3.3 s)
 export const BASE_STORM_CONTACT = 8 // px gap within which a trooper counts as pressed to a wall / standing on the roof
 export const BASE_STORM_ROOF_SLOTS = 3 // roofers marked for the pounding pose (the roof counts as ONE side for capture)
-export const BASE_STORM_THREAT_RANGE = 700 // px — an enemy ship or live enemy trooper this close to the pad halts the storm
+export const BASE_STORM_THREAT_RANGE = 700 // px — the HOLDER's relief (its ship / a live defender) this close halts the storm
+// When 2+ rival pilots storm the SAME fort at once, the contest turns to attrition: each contesting
+// pilot loses one storming-crew soldier every interval (they're fighting each other on the pad), so a
+// shared pad is a war of feeding troops — whoever sustains the storm captures. A lone storm never
+// attrites. Deterministic (a plain dt countdown on the base, no rng), so the headless server agrees.
+export const BASE_STORM_ATTRITION_INTERVAL = 2 // s between contested-storm soldier losses (per contestant)
 
 // Neon-on-near-black palette, stored as 0xRRGGBB for PixiJS fills.
 export const Color = {

@@ -1,3 +1,4 @@
+import { captureLead } from '$/game/bases'
 import { updateBeams } from '$/game/beams'
 import { createBotInput } from '$/game/bot'
 import {
@@ -86,10 +87,19 @@ export const createEngine = async (): Promise<Engine> => {
 
   const listeners = new Set<() => void>()
   const chargePct = (ship: Ship): number => Math.round((ship.charge / SECONDARY_MAX_CHARGE) * 100)
-  // Whole percents so the dirty-check below doesn't re-render React at 60fps mid-capture.
-  const capturePct = (ownerId: number): number => {
-    const base = sim.world.bases.find((b) => b.owner === ownerId)
-    return base ? Math.round(base.capture * 100) : 0
+  // Whole percents so the dirty-check below doesn't re-render React at 60fps mid-capture. The
+  // campaign is genuinely 1v1, so two scalars still tell the story: homeCapture = how far the enemy
+  // has taken the PLAYER's base (the leading assault on it), enemyCapture = the PLAYER's own progress
+  // storming the bot's base. The base war's real per-attacker shape lives in world.bases (and the
+  // online HUD derives from it); offline just reads the two parties out of it.
+  const baseOf = (ownerId: number) => sim.world.bases.find((b) => b.owner === ownerId)
+  const homeCapturePct = (): number => {
+    const base = baseOf(PLAYER_ID)
+    return base ? Math.round((captureLead(base)?.pct ?? 0) * 100) : 0
+  }
+  const enemyCapturePct = (): number => {
+    const base = baseOf(BOT_ID)
+    return base ? Math.round((base.contest[PLAYER_ID] ?? 0) * 100) : 0
   }
   const readStatus = (): EngineStatus => {
     const p = player()
@@ -101,8 +111,8 @@ export const createEngine = async (): Promise<Engine> => {
       charge: chargePct(p.ship),
       troops: Math.floor(p.ship.troops),
       squad: p.ship.squad,
-      homeCapture: capturePct(PLAYER_ID),
-      enemyCapture: capturePct(BOT_ID),
+      homeCapture: homeCapturePct(),
+      enemyCapture: enemyCapturePct(),
       respawnIn: Math.ceil(sim.respawnIn(PLAYER_ID)),
     }
   }

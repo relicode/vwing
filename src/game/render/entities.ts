@@ -1,6 +1,6 @@
 import type { Graphics } from 'pixi.js'
 
-import { baseHolder } from '$/game/bases'
+import { baseHolder, captureLead } from '$/game/bases'
 import {
   BASE_BUILDING_HALF_WIDTH,
   BASE_BUILDING_HEIGHT,
@@ -94,10 +94,12 @@ export const drawBase = (g: Graphics, base: Base, time: number, selfId: number, 
     const py = y + 12 + Math.floor(i / 6) * 9
     g.circle(px, py, 3).fill({ color: Color.SMOKE })
   }
-  // Takeover bar above the roof while a capture is running (flashes to read as an alarm).
-  if (base.capture > 0 && base.capture < 1) {
+  // Takeover bar above the roof while a capture is running — colored by the LEADING attacker's seat,
+  // so a contested fort shows WHO is taking it rather than one anonymous green bar (flashes as alarm).
+  const lead = captureLead(base)
+  if (lead) {
     const blink = Math.floor(time * 4) % 2 === 0
     g.rect(x, y - 34, w, 5).fill({ color: Color.BAR_BACK })
-    g.rect(x, y - 34, w * base.capture, 5).fill({ color: Color.THRUST, alpha: blink ? 1 : 0.55 })
+    g.rect(x, y - 34, w * lead.pct, 5).fill({ color: ownerHex(lead.by, selfId, slots), alpha: blink ? 1 : 0.55 })
   }
 }
