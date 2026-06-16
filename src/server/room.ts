@@ -1,7 +1,15 @@
-import { NET_BENCH_MAX, NET_MAX_PLAYERS, ShipKind, SimMode } from '$/game/constants'
+import {
+  NET_BENCH_MAX,
+  NET_DISCONNECT_GRACE,
+  NET_MAX_PLAYERS,
+  ShipKind,
+  SimMode,
+  SPAWN_ALTITUDE,
+} from '$/game/constants'
 import { type InputSnapshot, inputFromSnapshot, NEUTRAL_INPUT } from '$/game/input'
 import { createShip } from '$/game/ship'
-import { type Combatant, chooseSpawn, createSim, createWorld, type DeathEvent, type Sim } from '$/game/sim'
+import { type Combatant, createSim, createWorld, type DeathEvent, type Sim } from '$/game/sim'
+import { basePadCenters } from '$/game/terrain-map'
 import type { Ship } from '$/game/types'
 import { MsgType, type PlayerInfo, pilotNameKey, type ServerMessage } from '$/net/protocol'
 import { PERSIST_VERSION, type PersistedSeat, type RoomRestore } from '$/server/restore'
@@ -30,11 +38,13 @@ type BenchedSeat = {
   deaths: number
   respawnIn: number
   palette: number // the seat's PLAYER_PALETTE slot — held while benched so a reclaim keeps its color
+  forfeitAt: number // world.time past which this disconnected pilot stops counting toward the match
 }
 
 export enum JoinRefusal {
   FULL = 'FULL',
   NAME_TAKEN = 'NAME_TAKEN',
+  OVER = 'OVER', // the match has already been decided — no new seats (and no eliminated pilot re-entry)
 }
 
 export type JoinResult = { shipId: number; reclaimed: boolean } | { refusal: JoinRefusal }
@@ -58,6 +68,9 @@ export type Room = {
   players: () => PlayerInfo[]
   playerCount: () => number
   isEmpty: () => boolean
+  // The FFA base war has been decided (a lone contender remains after two+ engaged). Latched —
+  // the server drops a decided room from the lobby and refuses new seats.
+  isOver: () => boolean
 }
 
 const makeSeed = (): number => Math.floor(Math.random() * 0xffffffff)
@@ -79,7 +92,11 @@ const sanitizeInput = (raw: InputSnapshot | undefined): InputSnapshot => {
 export const createRoom = (name: string, restore?: RoomRestore): Room => {
   const seed = restore?.seed ?? makeSeed()
   const world = createWorld(seed)
-  const sim = createSim(world, [], { mode: SimMode.DEATHMATCH })
+  // Online is the FFA base war: one barracks per pilot, seated dynamically on a generator pad as
+  // each player joins (sim.addBase). Empty bay per life — you fly home and load at your own
+  // barracks — capture an enemy's to cut their respawns, and the last pilot still holding a base
+  // wins. (Was a baseless DEATHMATCH; SimMode.BATTLE flips on the whole base war.)
+  const sim = createSim(world, [], { mode: SimMode.BATTLE })
   // Resurrecting a persisted room: the seed already rebuilt the authored terrain above. The
   // hydration ORDER below is load-bearing: the clock first (pending-respawn math is
   // world.time-relative), then devices + the carved grid, then the id cursor pushed past every
@@ -108,6 +125,32 @@ export const createRoom = (name: string, restore?: RoomRestore): Room => {
     return NET_MAX_PLAYERS - 1 // unreachable: live seats can't fill every slot AND the bench
   }
 
+  // ── The FFA base war ────────────────────────────────────────────────────────
+  // Each connected seat owns a barracks on a generator pad. A base lives exactly while its seat is
+  // connected: allocated on join, torn down on disconnect (the pilot's deployed troopers fight on,
+  // but the fort and its capture progress reset), and a fresh one is seated on reclaim. Pads number
+  // NET_MAX_PLAYERS — the same cap join enforces — so a free pad always exists when a seat is
+  // admitted, and freeing one on every leave keeps live seats and pads exactly paired.
+  const pads = basePadCenters()
+  const padOf = new Map<number, number>() // live shipId → the pad index its barracks stands on
+  const freePad = (): number => {
+    const used = new Set(padOf.values())
+    for (let i = 0; i < pads.length; i += 1) if (!used.has(i)) return i
+    return 0 // unreachable: seats are capped at the pad count, so one is always free here
+  }
+  const padPerch = (idx: number): { x: number; y: number } => ({ x: pads[idx].x, y: pads[idx].y - SPAWN_ALTITUDE })
+
+  // The match layer over the per-ship base war the sim already runs. A pilot whose last base is
+  // captured and then dies is eliminated (the sim drops their ship and never respawns it); once
+  // two or more contenders have shared the arena, the instant a lone one is left the match is
+  // decided. Everything latches so a late seat or a lingering spectator can't revive a finished
+  // match, and an eliminated pilot's name is barred from reclaiming back into the same match.
+  const eliminated = new Set<number>() // live shipIds out of the match (from elimination death events)
+  const eliminatedNames = new Set<string>() // pilotNameKeys eliminated this match — refused on re-join
+  let engaged = false // two+ contenders have been live at once (guards a 1-player walkover "win")
+  let matchOver = false
+  let winnerId: number | undefined
+
   for (const seat of restore?.roster ?? []) {
     nextId = Math.max(nextId, seat.id + 1)
     bench.set(pilotNameKey(seat.name), {
@@ -117,6 +160,7 @@ export const createRoom = (name: string, restore?: RoomRestore): Room => {
       deaths: seat.deaths,
       respawnIn: seat.respawnIn,
       palette: seat.palette ?? freeSlot(), // a degraded/legacy row gets the lowest free slot
+      forfeitAt: world.time + NET_DISCONNECT_GRACE, // a restored seat gets a fresh grace window to reclaim
     })
   }
   // The persisted terrain blob is the heavy part of the state document — encode it only when
@@ -138,6 +182,9 @@ export const createRoom = (name: string, restore?: RoomRestore): Room => {
 
   const join = (displayName: string): JoinResult => {
     const key = pilotNameKey(displayName)
+    // A decided match takes no more seats, and a pilot eliminated this match can't slip back in
+    // under the same name (otherwise a fresh barracks on reclaim would undo their elimination).
+    if (matchOver || eliminatedNames.has(key)) return { refusal: JoinRefusal.OVER }
     // One seat per live pilot name: refusing the duplicate (rather than evicting the original)
     // also keeps a reconnect-before-close race from seating a pilot twice.
     for (const member of members.values()) {
@@ -145,6 +192,10 @@ export const createRoom = (name: string, restore?: RoomRestore): Room => {
     }
     if (members.size >= NET_MAX_PLAYERS) return { refusal: JoinRefusal.FULL }
     const input: InputSnapshot = { ...NEUTRAL_INPUT }
+    // A free pad is guaranteed by the size cap above (pads === NET_MAX_PLAYERS, padOf tracks only
+    // live seats). The pilot spawns on its perch and musters there on every later respawn.
+    const padIdx = freePad()
+    const pad = pads[padIdx]
     const benched = bench.get(key)
     if (benched) {
       bench.delete(key)
@@ -154,16 +205,20 @@ export const createRoom = (name: string, restore?: RoomRestore): Room => {
         name: displayName,
         score: benched.score,
         deaths: benched.deaths,
-        spawn: { x: benched.ship.x, y: benched.ship.y },
+        spawn: padPerch(padIdx), // future respawns muster at the fresh home pad
       }
       const troops = benched.ship.troops
       sim.addCombatant(combatant, { respawnIn: benched.respawnIn })
-      // Reassigned AFTER addCombatant: seating refills a DEATHMATCH bay, which would clobber
-      // the bay the pilot disconnected with. Load-bearing only for an ALIVE reclaim — a seat
-      // still mid-respawn re-enters through the normal dequeue, which re-kits the ship
-      // (fresh bay, fresh weapon) like any other respawn, by design.
+      // Reassigned AFTER addCombatant: seating refills the bay per mode, which would clobber the
+      // bay the pilot disconnected with. Load-bearing only for an ALIVE reclaim — a seat still
+      // mid-respawn re-enters through the normal dequeue, which re-kits the ship like any respawn.
       benched.ship.troops = troops
       benched.ship.invuln = Math.max(benched.ship.invuln, 1) // re-entry grace
+      // A returning pilot gets a fresh barracks — its old one stood down (and any capture progress
+      // reset) the moment it disconnected. The reclaimed ship resumes wherever it dropped; it flies
+      // home to reload and defend.
+      sim.addBase(benched.ship.id, pad)
+      padOf.set(benched.ship.id, padIdx)
       // Same seat, same color — unless that slot was stolen out from under this bench while it
       // slept (all-8-held steal). Restoring a slot a LIVE seat now holds would put two live
       // players in one color; in that (rare) case take the lowest free slot instead.
@@ -173,7 +228,7 @@ export const createRoom = (name: string, restore?: RoomRestore): Room => {
       return { shipId: benched.ship.id, reclaimed: true }
     }
     const shipId = nextId++
-    const spawn = chooseSpawn(world, sim.world.ships)
+    const spawn = padPerch(padIdx)
     const ship = createShip(ShipKind.PLAYER, spawn.x, spawn.y, shipId, world.rng)
     const combatant: Combatant = {
       ship,
@@ -184,6 +239,8 @@ export const createRoom = (name: string, restore?: RoomRestore): Room => {
       spawn,
     }
     sim.addCombatant(combatant)
+    sim.addBase(shipId, pad)
+    padOf.set(shipId, padIdx)
     palettes.set(shipId, freeSlot())
     members.set(shipId, { shipId, name: displayName, input })
     return { shipId, reclaimed: false }
@@ -201,9 +258,14 @@ export const createRoom = (name: string, restore?: RoomRestore): Room => {
         deaths: combatant.deaths,
         respawnIn: sim.respawnIn(shipId),
         palette: palettes.get(shipId) ?? 1, // the slot rides the bench
+        // A disconnect is NOT elimination: this pilot keeps counting toward the match (so a 2-player
+        // blip can't hand the survivor an instant walkover) until the grace window lapses unreclaimed.
+        forfeitAt: world.time + NET_DISCONNECT_GRACE,
       })
     }
     sim.removeCombatant(shipId, true) // benched, not gone — the pilot's troopers keep fighting
+    sim.removeBase(shipId) // the fort stands down with its pilot (capture progress resets), freeing its pad
+    padOf.delete(shipId)
     palettes.delete(shipId)
     members.delete(shipId)
   }
@@ -224,6 +286,7 @@ export const createRoom = (name: string, restore?: RoomRestore): Room => {
       palette: palettes.get(c.ship.id) ?? 1,
       respawnIn: Math.round(sim.respawnIn(c.ship.id) * 10) / 10,
       connected: members.has(c.ship.id),
+      eliminated: eliminated.has(c.ship.id),
     })),
     ...[...bench.values()].map((seat) => ({
       id: seat.ship.id,
@@ -232,8 +295,48 @@ export const createRoom = (name: string, restore?: RoomRestore): Room => {
       palette: seat.palette,
       respawnIn: 0,
       connected: false,
+      eliminated: eliminatedNames.has(pilotNameKey(seat.name)),
     })),
   ]
+
+  // Advance the sim a tick, then fold this frame's eliminations into the match verdict. A pilot
+  // out of bases dying is removed by the sim (eliminated event); once two+ have contended, the
+  // moment a single one is left the match latches decided with that lone survivor as the winner
+  // (undefined if the field emptied the same tick — a draw). Latching means a late seat or a
+  // wandering spectator can't reopen it.
+  // Pilots still in the match: live seats not eliminated, PLUS benched (disconnected) seats that
+  // haven't been eliminated and are still inside their reclaim grace window. Counting the benched is
+  // the crux of the disconnect fix — a transient drop in a 2-player fight must NOT collapse the win
+  // condition and lock the dropped pilot out (its name would then be refused on reclaim); only a real
+  // elimination or a lapsed grace removes a contender.
+  const contenders = (): { liveIds: number[]; benched: number } => ({
+    liveIds: [...members.keys()].filter((id) => !eliminated.has(id)),
+    benched: [...bench.values()].filter((s) => !eliminatedNames.has(pilotNameKey(s.name)) && world.time < s.forfeitAt)
+      .length,
+  })
+
+  const step = (dt: number): DeathEvent[] => {
+    // Engagement arms from the pre-casualty contender count, so a duel that resolves the very tick it
+    // became one (both present, one falls) still decides instead of leaving the match open.
+    {
+      const { liveIds, benched } = contenders()
+      if (liveIds.length + benched >= 2) engaged = true
+    }
+    const events = sim.step(dt)
+    for (const event of events) {
+      if (!event.eliminated) continue
+      eliminated.add(event.victimId)
+      const seat = members.get(event.victimId)
+      if (seat) eliminatedNames.add(pilotNameKey(seat.name))
+    }
+    const { liveIds, benched } = contenders()
+    if (!matchOver && engaged && liveIds.length + benched <= 1) {
+      matchOver = true
+      // The lone survivor wins; undefined (mutual elimination / only a fading benched seat) is a draw.
+      winnerId = liveIds[0]
+    }
+    return events
+  }
 
   const snapshot = (events: DeathEvent[]): ServerMessage => ({
     t: MsgType.SNAPSHOT,
@@ -243,6 +346,9 @@ export const createRoom = (name: string, restore?: RoomRestore): Room => {
     world: { ...sim.world, particles: [] },
     players: players(),
     events,
+    // The match verdict rides every snapshot so clients show VICTORY / ELIMINATED terminals.
+    matchOver,
+    winnerId,
   })
 
   const persisted = (): string => {
@@ -291,11 +397,12 @@ export const createRoom = (name: string, restore?: RoomRestore): Room => {
     join,
     leave,
     setInput,
-    step: (dt) => sim.step(dt),
+    step,
     snapshot,
     persisted,
     players,
     playerCount: () => members.size,
     isEmpty: () => members.size === 0,
+    isOver: () => matchOver,
   }
 }
