@@ -1,6 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 
-import { SHIP_TURN_RATE, WALL_THICKNESS, WORLD_HEIGHT, WORLD_WIDTH } from '$/game/constants'
+import {
+  SHIP_MAX_HEALTH,
+  SHIP_STEER_MIN,
+  SHIP_TURN_RATE,
+  WALL_THICKNESS,
+  WORLD_HEIGHT,
+  WORLD_WIDTH,
+} from '$/game/constants'
 import type { Input } from '$/game/input'
 import { createShip, PLAYER_SPAWN_X, respawnShip, updateShip } from '$/game/ship'
 import type { WaterBody } from '$/game/types'
@@ -37,6 +44,20 @@ describe('ship physics', () => {
     const startAngle = ship.angle
     updateShip(ship, makeInput(1, false), 0.1)
     expect(ship.angle).toBeCloseTo(startAngle + SHIP_TURN_RATE * 0.1)
+  })
+
+  test('a battered hull steers slower than a pristine one (but never seizes)', () => {
+    const healthy = createShip()
+    const damaged = createShip()
+    damaged.health = SHIP_MAX_HEALTH / 2 // half hull
+    const start = healthy.angle
+    updateShip(healthy, makeInput(1, false), 0.1)
+    updateShip(damaged, makeInput(1, false), 0.1)
+    const damagedTurn = damaged.angle - start
+    expect(damagedTurn).toBeLessThan(healthy.angle - start) // damage costs agility
+    expect(damagedTurn).toBeGreaterThan(0) // but it still steers
+    const scale = SHIP_STEER_MIN + (1 - SHIP_STEER_MIN) * 0.5 // linear: half hull → midway to the floor
+    expect(damagedTurn).toBeCloseTo(SHIP_TURN_RATE * scale * 0.1, 5)
   })
 
   test('the retro nozzles brake along the nose without turning the ship', () => {

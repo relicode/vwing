@@ -188,7 +188,15 @@ const bazooka = (
   g.moveTo(rearX, rearY)
     .lineTo(muzX, muzY)
     .stroke({ width: r * 0.4, color: tube, alpha }) // tube
-  g.circle(muzX, muzY, r * 0.5).fill({ color: tube, alpha }) // muzzle
+  // T-shaped muzzle: a crossbar across the tube's nose (was a round "lollipop" blob)
+  const dx = muzX - rearX
+  const dy = muzY - rearY
+  const len = Math.hypot(dx, dy) || 1
+  const px = (-dy / len) * r * 0.62
+  const py = (dx / len) * r * 0.62
+  g.moveTo(muzX - px, muzY - py)
+    .lineTo(muzX + px, muzY + py)
+    .stroke({ width: r * 0.26, color: tube, alpha }) // T-bar muzzle
   g.circle(rearX, rearY, r * 0.32).fill({ color: Color.SMOKE, alpha }) // venturi
   if (flashT > 0) {
     g.circle(muzX + f * r * 0.5, muzY, r * 0.5 * flashT).fill({ color: Color.EXPLOSION, alpha: 0.85 * flashT })
@@ -653,6 +661,18 @@ const drawFallen = (g: Graphics, d: InfantrySprite, kit: Kit, time: number, f: n
   }
 }
 
+// WADING — knee/waist-high water sheeting the lower body, with a brighter ripple ring at the
+// waterline. A field-keyed overlay (like burning/stun) drawn OVER the standing/walking pose: the
+// man keeps his feet (stateOf stays STANDING/WALKING), the water just rises up his legs by d.wade.
+const drawWading = (g: Graphics, d: InfantrySprite): void => {
+  const r = d.radius
+  const feet = d.y + r
+  const wl = feet - d.wade // waterline up the legs
+  g.rect(d.x - r * 1.1, wl, r * 2.2, feet - wl).fill({ color: Color.WATER, alpha: 0.3 }) // submerged lower body
+  g.ellipse(d.x, wl, r * 1.25, r * 0.24).fill({ color: Color.WATER, alpha: 0.32 })
+  g.ellipse(d.x, wl, r * 1.25, r * 0.24).stroke({ width: r * 0.13, color: Color.WATER_EDGE, alpha: 0.75 }) // surface ring
+}
+
 // EMP seize-up: a pair of cyan sparks orbiting the helmet while the jolt lasts.
 const drawStunned = (g: Graphics, d: InfantrySprite, time: number): void => {
   const r = d.radius
@@ -731,6 +751,7 @@ export const drawInfantry = (
   const f = d.facing >= 0 ? 1 : -1
   const kit = infantryKit(d, selfId, slots)
   drawInfantryPose(g, d, kit, time, f)
+  if (d.wade > 0) drawWading(g, d)
   if (d.burning > 0) drawBurning(g, d, time)
   if (d.stun > 0) drawStunned(g, d, time)
 }

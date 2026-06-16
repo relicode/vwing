@@ -1,17 +1,32 @@
 # TODO
 
-## Server / persistence
+## Open
 
-- [x] **Persist carved terrain across server restarts.** _(done)_
-  The persisted state document (`room.persisted()`) now carries the room's generator **seed**
-  plus a `terrain` snapshot of the server-internal voxel grid — `mat` (base64), the `pinned`
-  floating-island components, in-flight `bodies` debris, and the `regrow` clock (see
-  `snapshotVoxel` / `restoreVoxel` in `voxel.ts`, exposed as `sim.serializeTerrain()` /
-  `sim.restoreTerrain()`). Opening a game name whose room died with a server restart (either
-  intent) resurrects it via `store.loadState` → `parseRestore` → `createRoom(name, restore)`:
-  the seed reproduces the authored arena deterministically and the snapshot overlays the
-  craters, debris, pins, and poured water. The terrain blob is re-encoded only when
-  `world.terrainVersion` changes, and a snapshot that doesn't fit the grid is ignored (the room
-  starts pristine rather than corrupted). Recovery works for as long as the state lives in the
-  store (`STATE_TTL`, currently an hour past the last write); player seats/scores are not
-  restored — only the arena.
+### Substrate redesign (`StructureType`) — needs a design decision
+
+Enrich the structure axis beyond today's `{ EARTH, METAL }`. (`Surface.WATER` has already been
+dropped — water is the per-cell fluid grid now.) Proposed substrates and the open questions:
+
+- **GROUND** — destructible (today's EARTH). *Rename EARTH→GROUND is optional cosmetic churn;
+  probably skip unless we want the name.*
+- **METAL** — indestructible + non-falling (today's bedrock anchors).
+- **STATIC** — **destructible but never falls**. Formalizes the floating-island cores. **Decision:**
+  fully replace the runtime `pinned` set (simpler, loses dynamic "re-pin to largest surviving piece"
+  on damage) or **coexist** (STATIC = authored anchors, `pinned` = runtime severance)? *Lean coexist.*
+- **WATER** — a solid that **floats on the fluid** (ice floe). **Decision:** model as a dynamic
+  debris-style body that eases toward the fluid surface under it and falls when the surface drops away
+  (keeps the greedy-meshed static grid untouched), destructible like GROUND. New physics — own branch,
+  with tests, after the semantics are confirmed.
+
+Sequencing: the rename is trivial; STATIC is a contained `voxel.ts` change; WATER is the meaty one
+and should be its own branch.
+
+## Recently shipped (see git history / release notes)
+
+- **Per-cell water fluid** (`water-cell.ts` `FluidGrid`): falls, levels, pours off ledges, fills
+  carved pockets; `world.water` is a derived rect view. Watertight + static barracks; pools fall with
+  the terrain chunk under them. Water cannon deposits-and-spreads (no wall cresting).
+- **Infantry:** non-heavy troopers step over 1-vexel ledges (specialists don't); the base roof is a
+  storming side (north) — capture sums three sides (west / north / east), ≤1 man each.
+- **Ship:** steering degrades with hull damage; hull repairs only while docked at a base you hold.
+- **Render:** the bazooka muzzle is a T-bar (was a round "lollipop").

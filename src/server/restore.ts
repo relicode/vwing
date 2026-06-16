@@ -9,7 +9,7 @@ import {
   WORLD_WIDTH,
 } from '$/game/constants'
 import { clamp } from '$/game/math'
-import type { Device, Ship, WaterBody } from '$/game/types'
+import type { Device, Ship } from '$/game/types'
 import type { VoxelSnapshot } from '$/game/voxel'
 import { pilotNameKey } from '$/net/protocol'
 import { STATE_TTL } from '$/server/store'
@@ -22,7 +22,8 @@ import { STATE_TTL } from '$/server/store'
 //
 // Bump PERSIST_VERSION whenever the Ship/Device shapes change: a version mismatch degrades the
 // blob to the legacy arena-only restore (seed + terrain + water) instead of seating stale shapes.
-export const PERSIST_VERSION = 3
+// v4: water became a per-cell fluid grid persisted inside the terrain snapshot (was WaterBody rects).
+export const PERSIST_VERSION = 4
 
 // One roster row: a seat as it stood at save time — live, benched, or mid-respawn alike. The
 // ship object rides whole (mid-respawn ships are NOT in world.ships; the seat owns them), and
@@ -41,8 +42,7 @@ export type PersistedSeat = {
 // overlays what the seed can't know. Only `seed` is mandatory — every other section degrades.
 export type RoomRestore = {
   seed: number
-  terrain?: VoxelSnapshot
-  water?: WaterBody[]
+  terrain?: VoxelSnapshot // carries the per-cell water grid; world.water is re-derived from it
   time?: number
   nextId?: number
   devices?: Device[]
@@ -58,8 +58,11 @@ const finite = (value: unknown): value is number => typeof value === 'number' &&
 // kind's numeric fields are finite (booleans/optional-enum fields like `guard`/`heavy` aren't
 // gating — the sim tolerates their absence; required booleans added after a blob was written —
 // `running`, `storming` — stay undefined on its restored rows for the room's life, so every
-// reader must treat them as falsy). Keep this in lockstep with the Device union in types.ts;
-// PERSIST_VERSION must bump if a kind's required numeric surface changes.
+// reader must treat them as falsy). `wade` is deliberately NOT gated either: stepDevice rewrites it
+// from scratch every tick (`device.wade = 0` before any read), so a blob missing it self-heals on
+// the first step and never NaN-poisons — no version bump needed (same as `running`/`storming`).
+// Keep this in lockstep with the Device union in types.ts; PERSIST_VERSION must bump if a kind's
+// required numeric surface changes in a way the sim does NOT self-heal.
 const DEVICE_NUMERIC_FIELDS: Record<DeviceKind, readonly string[]> = {
   [DeviceKind.MISSILE]: [
     'x',
@@ -129,15 +132,6 @@ const SHIP_NUMERIC_FIELDS: readonly (keyof Ship)[] = [
 
 const allFinite = (obj: Record<string, unknown>, fields: readonly string[]): boolean =>
   fields.every((field) => finite(obj[field]))
-
-const validWater = (raw: unknown): WaterBody[] | undefined => {
-  if (!Array.isArray(raw)) return undefined
-  const bodies = raw.filter(
-    (b): b is WaterBody =>
-      b !== null && typeof b === 'object' && finite(b.x) && finite(b.y) && finite(b.w) && finite(b.h)
-  )
-  return bodies.length === raw.length ? bodies : undefined
-}
 
 // Row-validate the device list: unknown kinds and rows missing any of their kind's numeric
 // fields are dropped individually (a partial device NaN-poisons the sim — see the field table
@@ -224,18 +218,11 @@ export const parsePersisted = (
   if (raw.terrain && typeof raw.terrain === 'object') restore.terrain = raw.terrain as VoxelSnapshot
 
   if (raw.v !== PERSIST_VERSION) {
-    // Legacy (or future/foreign) document: arena-only, the pre-v2 shape carried water inside a
-    // full world snapshot.
+    // Legacy (or future/foreign) document: arena-only. Water is no longer hydrated from the blob —
+    // it re-seeds from the seed's authored fill and (for matching versions) the terrain snapshot.
     degraded.push('version')
-    const world = raw.world as { water?: unknown } | undefined
-    const water = validWater(world?.water)
-    if (water) restore.water = water
     return { restore, degraded }
   }
-
-  const water = validWater(raw.water)
-  if (water) restore.water = water
-  else if (raw.water !== undefined) degraded.push('water')
 
   if (finite(raw.time) && raw.time >= 0) restore.time = raw.time
   if (finite(raw.nextId) && raw.nextId >= 0 && Number.isInteger(raw.nextId)) restore.nextId = raw.nextId

@@ -234,11 +234,12 @@ export const stepBases = (world: World, dt: number): void => {
     }
 
     // Storming runs ONLY over an emptied fort. Unopposed attackers in wall/roof contact run the
-    // capture clock at 1/BASE_STORM_SIDE_TIME per pressed side (one side → BASE_STORM_SIDE_TIME,
-    // both sides → half that), and both sides PLUS a man on the roof breaches at once. The work
-    // stops cold while a live threat (enemy ship or trooper) is near the pad. An empty zone
-    // bleeds progress back — which also re-liberates a base (dropping below 1 clears capturedBy),
-    // so relieving the pad wins it back.
+    // capture clock at 1/BASE_STORM_SIDE_TIME per pressed side — and there are THREE: the west
+    // wall, the roof (north), and the east wall, counted for at most one man each. So a lone roofer
+    // storms in BASE_STORM_SIDE_TIME, a crew on all three in a third of that. The work stops cold
+    // while a live threat (enemy ship or trooper) is near the pad. An empty zone bleeds progress
+    // back — which also re-liberates a base (dropping below 1 clears capturedBy), so relieving the
+    // pad wins it back.
     if (attackers > 0 && totalDefense < 1) {
       if (!captured && attackerId !== undefined && !stormThreatNear(world, base, attackerId)) {
         // The contact crew: the FIRST man pressed to each wall (one per side) and the first
@@ -269,13 +270,14 @@ export const stepBases = (world: World, dt: number): void => {
             s.facing = s.x < base.x ? 1 : -1
           }
         }
-        const sides = (leftTaken ? 1 : 0) + (rightTaken ? 1 : 0)
-        if (leftTaken && rightTaken && roofTaken > 0) {
-          base.capture = 1 // flanked both sides + a roofer: the gate comes down at once
-        } else if (sides > 0) {
+        // Three storming sides — west wall, roof (north), east wall — each counted for at most one
+        // man, contributing 1/BASE_STORM_SIDE_TIME per second. A lone roofer storms like a lone
+        // flanker; a crew on all three breaches in a third of the single-side time.
+        const sides = (leftTaken ? 1 : 0) + (roofTaken > 0 ? 1 : 0) + (rightTaken ? 1 : 0)
+        if (sides > 0) {
           base.capture = Math.min(1, base.capture + (sides / BASE_STORM_SIDE_TIME) * dt)
+          if (base.capture >= 1) base.capturedBy = attackerId
         }
-        if (base.capture >= 1) base.capturedBy = attackerId
       }
     } else if (attackers === 0 && attackersDown === 0 && base.capture > 0) {
       base.capture = Math.max(0, base.capture - dt / BASE_REVERT_TIME)

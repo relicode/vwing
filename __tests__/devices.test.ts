@@ -13,7 +13,7 @@ import {
 } from '$/game/constants'
 import { resolveInfantryContacts, stateOf, updateDevices } from '$/game/devices'
 import { createRng } from '$/game/rng'
-import type { Base, Device, Ship, World } from '$/game/types'
+import type { Base, Block, Device, Ship, World } from '$/game/types'
 
 const makeShip = (over: Partial<Ship>): Ship => ({
   id: 0,
@@ -50,6 +50,7 @@ const makeWorld = (ships: Ship[], devices: Device[]): World => ({
   blocks: [],
   terrainVersion: 0,
   water: [],
+  waterVersion: 0,
   bases: [],
   shake: 0,
   rng: createRng(1),
@@ -218,6 +219,7 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     radius: 6,
     guard: false,
     attached: false,
+    wade: 0,
     swim: 0,
     sinking: 0,
     chute: -1,
@@ -322,6 +324,131 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
     if (u?.kind === DeviceKind.INFANTRY) {
       expect(u.x).toBeGreaterThanOrEqual(106) // groundLeft + radius
       expect(u.x).toBeLessThanOrEqual(154) // groundRight - radius
+    }
+  })
+
+  test('a trooper crosses a surface seam on even ground (the walkable span merges level blocks)', () => {
+    // Two abutting blocks at the SAME height but different surfaces — greedy meshing makes them
+    // separate rectangles, the classic 'terrain is different' seam that used to pin a man to one block.
+    const world = makeWorld(
+      [],
+      [infantry({ attached: true, x: 80, y: 94, walkDir: 1, groundLeft: 0, groundRight: 90 })]
+    )
+    world.blocks = [
+      { x: 0, y: 100, w: 90, h: 50, structure: StructureType.EARTH, surface: Surface.GRASS },
+      { x: 90, y: 100, w: 90, h: 50, structure: StructureType.EARTH, surface: Surface.EARTH },
+    ]
+    updateDevices(world, 1 / 30)
+    const u = world.devices[0]
+    expect(u?.kind).toBe(DeviceKind.INFANTRY)
+    if (u?.kind === DeviceKind.INFANTRY) {
+      expect(u.groundLeft).toBe(0) // span now covers BOTH blocks, not just the landing one
+      expect(u.groundRight).toBe(180)
+      expect(stateOf(u)).toBe(InfantryState.WALKING)
+      // And over time it actually walks across the seam into the far block instead of pacing one block.
+      let maxX = u.x
+      for (let i = 0; i < 300; i += 1) {
+        updateDevices(world, 1 / 30)
+        const d = world.devices[0]
+        if (d?.kind === DeviceKind.INFANTRY) maxX = Math.max(maxX, d.x)
+      }
+      expect(maxX).toBeGreaterThan(100) // crossed past the seam at x=90 into the EARTH block
+    }
+  })
+
+  test('a non-heavy trooper steps up a one-vexel ledge onto the higher block', () => {
+    // A flat block, then an abutting block one vexel (18px) higher — a single low step a rifleman hops.
+    const world = makeWorld(
+      [],
+      [infantry({ attached: true, x: 80, y: 94, walkDir: 1, groundLeft: 0, groundRight: 90 })]
+    )
+    world.blocks = [
+      { x: 0, y: 100, w: 90, h: 80, structure: StructureType.EARTH, surface: Surface.EARTH }, // feet rest at y=100
+      { x: 90, y: 82, w: 90, h: 98, structure: StructureType.EARTH, surface: Surface.EARTH }, // top one vexel higher
+    ]
+    updateDevices(world, 1 / 30)
+    const u = world.devices[0]
+    expect(u?.kind).toBe(DeviceKind.INFANTRY)
+    if (u?.kind === DeviceKind.INFANTRY) {
+      expect(u.groundRight).toBe(180) // the low ledge joined the patrol run
+      let minY = u.y
+      let maxX = u.x
+      for (let i = 0; i < 600; i += 1) {
+        updateDevices(world, 1 / 30)
+        const d = world.devices[0]
+        if (d?.kind === DeviceKind.INFANTRY) {
+          minY = Math.min(minY, d.y)
+          maxX = Math.max(maxX, d.x)
+        }
+      }
+      expect(maxX).toBeGreaterThan(96) // crossed the ledge at x=90
+      expect(minY).toBeLessThanOrEqual(78) // his feet rose onto the higher block (top 82, radius 6 → y≈76)
+    }
+  })
+
+  test('a two-vexel cliff still turns a non-heavy trooper — he steps, he does not climb', () => {
+    const world = makeWorld(
+      [],
+      [infantry({ attached: true, x: 80, y: 94, walkDir: 1, groundLeft: 0, groundRight: 90 })]
+    )
+    world.blocks = [
+      { x: 0, y: 100, w: 90, h: 80, structure: StructureType.EARTH, surface: Surface.EARTH },
+      { x: 90, y: 64, w: 90, h: 116, structure: StructureType.EARTH, surface: Surface.EARTH }, // two vexels higher: a wall
+    ]
+    updateDevices(world, 1 / 30)
+    const u = world.devices[0]
+    if (u?.kind === DeviceKind.INFANTRY) {
+      expect(u.groundRight).toBe(90) // the tall face is NOT part of the run
+      let maxX = u.x
+      let minY = u.y
+      for (let i = 0; i < 600; i += 1) {
+        updateDevices(world, 1 / 30)
+        const d = world.devices[0]
+        if (d?.kind === DeviceKind.INFANTRY) {
+          maxX = Math.max(maxX, d.x)
+          minY = Math.min(minY, d.y)
+        }
+      }
+      expect(maxX).toBeLessThanOrEqual(84) // bounded by the cliff (groundRight 90 − radius 6)
+      expect(minY).toBeGreaterThan(88) // never mounted the wall
+    }
+  })
+
+  test('a heavy specialist turns at a one-vexel ledge — only riflemen step', () => {
+    const world = makeWorld(
+      [],
+      [
+        infantry({
+          heavy: WeaponKind.GRENADE,
+          attached: true,
+          x: 80,
+          y: 94,
+          walkDir: 1,
+          groundLeft: 0,
+          groundRight: 90,
+        }),
+      ]
+    )
+    world.blocks = [
+      { x: 0, y: 100, w: 90, h: 80, structure: StructureType.EARTH, surface: Surface.EARTH },
+      { x: 90, y: 82, w: 90, h: 98, structure: StructureType.EARTH, surface: Surface.EARTH },
+    ]
+    updateDevices(world, 1 / 30)
+    const u = world.devices[0]
+    if (u?.kind === DeviceKind.INFANTRY) {
+      expect(u.groundRight).toBe(90) // a specialist keeps only the same-level seam tolerance — the ledge bounds him
+      let maxX = u.x
+      let minY = u.y
+      for (let i = 0; i < 600; i += 1) {
+        updateDevices(world, 1 / 30)
+        const d = world.devices[0]
+        if (d?.kind === DeviceKind.INFANTRY) {
+          maxX = Math.max(maxX, d.x)
+          minY = Math.min(minY, d.y)
+        }
+      }
+      expect(maxX).toBeLessThanOrEqual(84) // never crossed onto the higher block
+      expect(minY).toBeGreaterThan(88) // never mounted it
     }
   })
 
@@ -850,6 +977,7 @@ describe('updateDevices — fire, stun, and the heavier ordnance vs infantry', (
     radius: 6,
     guard: false,
     attached: false,
+    wade: 0,
     swim: 0,
     sinking: 0,
     chute: -1,
@@ -1051,5 +1179,97 @@ describe('updateBeams', () => {
     world.beams.push({ x1: 0, y1: 0, x2: 1, y2: 0, life: 0.05, maxLife: 0.2, color: 0xffffff })
     updateBeams(world, 0.1)
     expect(world.beams).toHaveLength(0)
+  })
+})
+
+describe('updateDevices — wading shallows and swimming to safety', () => {
+  const trooper = (
+    over: Partial<Extract<Device, { kind: DeviceKind.INFANTRY }>>
+  ): Extract<Device, { kind: DeviceKind.INFANTRY }> => ({
+    kind: DeviceKind.INFANTRY,
+    x: 100,
+    y: 191, // feet at 200 (radius 9)
+    vx: 0,
+    vy: 0,
+    owner: 0,
+    radius: 9,
+    guard: false,
+    attached: true,
+    wade: 0,
+    swim: 0,
+    sinking: 0,
+    chute: -1,
+    pickupLock: 0,
+    walkDir: 1,
+    facing: 1,
+    groundLeft: 0,
+    groundRight: 600,
+    fireCooldown: 99, // never fires in these movement tests
+    kneel: 0,
+    running: false,
+    storming: false,
+    slide: 0,
+    burning: 0,
+    stun: 0,
+    fallen: 0,
+    ...over,
+  })
+
+  const ground: Block = { x: 0, y: 200, w: 600, h: 40, structure: StructureType.EARTH, surface: Surface.EARTH }
+
+  test('a trooper in knee-high water wades — keeps its feet, records the depth, and slogs slower', () => {
+    // A landed owner ship to walk toward (a deterministic mover), the same in both worlds.
+    const dry = trooper({})
+    const dryWorld = makeWorld([makeShip({ id: 0, x: 590, y: 191 })], [dry])
+    dryWorld.blocks = [ground]
+    updateDevices(dryWorld, 0.1)
+    const dryStep = dry.x - 100
+
+    const wet = trooper({})
+    const wetWorld = makeWorld([makeShip({ id: 0, x: 590, y: 191 })], [wet])
+    wetWorld.blocks = [ground]
+    wetWorld.water = [{ x: 0, y: 192, w: 600, h: 60 }] // surface 8 px over the feet
+
+    updateDevices(wetWorld, 0.1)
+    expect(wet.swim).toBe(0) // never lost its footing
+    expect(wet.attached).toBe(true)
+    expect(wet.wade).toBeCloseTo(8, 5) // 8 px of water over the feet
+    expect(wet.x - 100).toBeGreaterThan(0) // it advanced…
+    expect(wet.x - 100).toBeLessThan(dryStep) // …but slower than on dry land
+  })
+
+  test('a trooper in water past wade depth loses its footing and starts swimming', () => {
+    const u = trooper({})
+    const world = makeWorld([], [u])
+    world.blocks = [ground]
+    world.water = [{ x: 0, y: 180, w: 600, h: 80 }] // surface 20 px over the feet — too deep to stand
+    updateDevices(world, 0.1)
+    expect(u.swim).toBeGreaterThan(0)
+    expect(u.attached).toBe(false)
+    expect(stateOf(u)).toBe(InfantryState.SWIMMING)
+  })
+
+  test('a swimmer with no boat coming strikes out for the safety of its home base', () => {
+    const u = trooper({ x: 500, y: 320, attached: false, swim: 3, groundLeft: 0, groundRight: 0 })
+    const world = makeWorld([], [u])
+    world.water = [{ x: 0, y: 300, w: 2000, h: 500 }] // deep, open water — no shelf underfoot
+    world.bases = [{ owner: 0, x: 1000, y: 100, garrison: 4, capture: 0, alarm: BaseAlarm.PATROL, door: 0 }]
+    updateDevices(world, 0.1)
+    expect(u.facing).toBe(1) // turned toward home (to the right)
+    expect(u.vx).toBeGreaterThan(0) // paddling that way
+    expect(u.x).toBeGreaterThan(500) // and making headway
+  })
+
+  test('a swimmer that reaches a shallow shelf finds the bottom and wades out', () => {
+    const shelf: Block = { x: 0, y: 310, w: 2000, h: 60, structure: StructureType.EARTH, surface: Surface.EARTH }
+    const u = trooper({ x: 500, y: 301, attached: false, swim: 3 })
+    const world = makeWorld([], [u])
+    world.blocks = [shelf]
+    world.water = [{ x: 0, y: 300, w: 2000, h: 80 }] // surface only 10 px over the shelf top → wadeable
+    updateDevices(world, 0.1) // stands up out of the swim
+    expect(u.swim).toBe(0)
+    expect(u.attached).toBe(true)
+    updateDevices(world, 0.1) // next tick, on its feet, records the wade depth
+    expect(u.wade).toBeCloseTo(10, 5)
   })
 })

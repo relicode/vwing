@@ -17,7 +17,7 @@ import { createRng } from '$/game/rng'
 import { BOT_SPAWN_X, BOT_SPAWN_Y, createShip, PLAYER_SPAWN_X, PLAYER_SPAWN_Y } from '$/game/ship'
 import { type Combatant, createSim, createWorld, type Sim } from '$/game/sim'
 import type { EngineStatus, Ship } from '$/game/types'
-import { createCanvasApp } from '$/game/view'
+import { createCanvasApp, fitStageToCanvas } from '$/game/view'
 
 const BEST_KEY = 'vwing.best'
 const MAX_FRAME_DT = 1 / 30 // clamp long frames (tab switch) so the sim never leaps
@@ -46,6 +46,7 @@ export const createEngine = async (): Promise<Engine> => {
   const app = await createCanvasApp()
   const renderer = createRenderer(createRng(0xc0ffee), app.renderer)
   app.stage.addChild(renderer.view)
+  const stopFit = fitStageToCanvas(app)
   const input = createInput(window)
 
   let phase = GamePhase.TITLE
@@ -173,6 +174,7 @@ export const createEngine = async (): Promise<Engine> => {
   }
 
   const destroy = (): void => {
+    stopFit()
     input.destroy()
     app.ticker.stop()
     renderer.destroy()

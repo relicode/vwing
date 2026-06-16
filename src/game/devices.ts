@@ -94,11 +94,14 @@ import {
   INFANTRY_SPREAD_STANDING,
   INFANTRY_SPREAD_SWIM,
   INFANTRY_SPREAD_WALKING,
+  INFANTRY_STEP_HEIGHT,
   INFANTRY_SWIM_DRAG,
   INFANTRY_SWIM_FIRE_INTERVAL,
   INFANTRY_SWIM_SPEED,
   INFANTRY_SWIM_TIME,
   INFANTRY_THRUST_PANIC_DIST,
+  INFANTRY_WADE_DEPTH,
+  INFANTRY_WADE_SPEED_SCALE,
   INFANTRY_WALK_SPEED,
   INFANTRY_WALK_TURN_CHANCE,
   INFANTRY_WATER_DAMAGE,
@@ -150,9 +153,18 @@ const insideAnyBlock = (x: number, y: number, blocks: Block[]): boolean =>
 // Lateral movers treat it like a patrol edge: walking into a cliff turns a trooper around, it
 // never grinds it into the embedded-death check (which is for terrain MOVING into a unit —
 // falling debris — not for a unit strolling into terrain). Probed past the leading edge so the
-// turn happens before the body ever clips the face.
-const wallAhead = (blocks: Block[], device: InfantryDevice, dir: number): boolean =>
-  insideAnyBlock(device.x + dir * (device.radius + 2), device.y, blocks)
+// turn happens before the body ever clips the face. A LOW face (a rise of at most `climb`, with
+// clear headroom to stand atop it) is NOT a wall to a stepper — he mounts it instead of turning
+// (followStep lifts his feet); a heavy specialist passes climb 0, so every face still turns him.
+const wallAhead = (blocks: Block[], device: InfantryDevice, dir: number, climb = 0): boolean => {
+  const px = device.x + dir * (device.radius + 2)
+  const blk = blocks.find((b) => px > b.x && px < b.x + b.w && device.y > b.y && device.y < b.y + b.h)
+  if (!blk) return false
+  if (climb <= 0) return true
+  const rise = device.y + device.radius - blk.y // how far the face's top stands above the feet
+  if (rise > 0 && rise <= climb && !insideAnyBlock(px, blk.y - device.radius - 1, blocks)) return false // a mountable step
+  return true
+}
 
 // A flying device's body touching any terrain block (walls included — the bedrock frame lives
 // in world.blocks). Projectile devices detonate or fizzle here instead of tunnelling through.
@@ -177,6 +189,43 @@ const supportingBlock = (device: InfantryDevice, blocks: Block[]): Block | undef
   const footY = device.y + device.radius + FOOTING_PROBE
   return blocks.find((b) => device.x > b.x && device.x < b.x + b.w && footY > b.y && footY < b.y + b.h)
 }
+
+// The full run a landed trooper may patrol. Greedy meshing splits even ground into separate
+// rectangles at every surface-type change (grass|earth|ice) and meshing seam, so the block under
+// the feet is usually only PART of the walkable surface. Starting from it, absorb every abutting
+// block whose TOP sits within `maxStep` of this one — same-level seams for everyone (STEP_TOL), and
+// one-vexel ledges too for a stepper (so a low step joins the run instead of bounding it; followStep
+// carries his feet up/down it). A drop or rise past `maxStep` stays a bound, so men still turn at
+// real cliffs. Recomputed each landed tick, so the span self-corrects after a knock or slide nudges
+// a unit onto a neighbour.
+const STEP_TOL = 4 // px: adjacent block tops within this count read as one continuous surface
+const walkableSpan = (ground: Block, blocks: Block[], maxStep = STEP_TOL): { left: number; right: number } => {
+  let left = ground.x
+  let right = ground.x + ground.w
+  const top = ground.y
+  for (let guard = 0; guard < 256; guard += 1) {
+    const next = blocks.find((b) => Math.abs(b.y - top) <= maxStep && b.x <= right + 1 && b.x + b.w > right + 1)
+    if (!next) break
+    right = next.x + next.w
+  }
+  for (let guard = 0; guard < 256; guard += 1) {
+    const next = blocks.find((b) => Math.abs(b.y - top) <= maxStep && b.x + b.w >= left - 1 && b.x < left - 1)
+    if (!next) break
+    left = next.x
+  }
+  return { left, right }
+}
+
+// Locomotion is sluggish in the shallows: a wading trooper keeps only INFANTRY_WADE_SPEED_SCALE of
+// its land pace (every ground mover reads this so the slog is uniform across patrol / boarding /
+// panic / burning flail). `wade` is set each landed tick (0 = dry).
+const wadeScale = (device: InfantryDevice): number => (device.wade > 0 ? INFANTRY_WADE_SPEED_SCALE : 1)
+
+// A block a swimmer can stand on to wade ashore: its top lies below the waterline but within
+// INFANTRY_WADE_DEPTH of it (so standing leaves the man only knee/waist deep), under the unit's x.
+// Lets a drifting swimmer reaching the shelf rise out of the swim instead of treading until it drowns.
+const standableUnderWater = (blocks: Block[], x: number, surface: number): Block | undefined =>
+  blocks.find((b) => x > b.x && x < b.x + b.w && b.y >= surface && b.y <= surface + INFANTRY_WADE_DEPTH)
 
 // The trooper's behavioural state, derived from its fields — drives the firing rules and most
 // rendered poses. Precedence runs sinking → swimming → airborne → landed. An in-progress ice
@@ -607,6 +656,35 @@ const clampToGround = (device: InfantryDevice, x: number): number => {
   return max <= min ? (device.groundLeft + device.groundRight) / 2 : clamp(x, min, max)
 }
 
+// One vexel of climb for a regular trooper; a heavy specialist (toting a man-portable heavy) can't
+// hop, so he turns at every face and a one-cell ledge bounds his patrol.
+const stepClimb = (device: InfantryDevice): number => (device.heavy === undefined ? INFANTRY_STEP_HEIGHT : 0)
+
+// After a horizontal move, settle a non-heavy trooper's feet onto the surface block now under him
+// whose top is within one step (up OR down) — so he flows over a one-vexel ledge instead of freezing
+// at it or clipping into the face. A real cliff (nothing within a step under the new x) is left to
+// the normal lose-footing fall. Heavy specialists don't step, so their footing is never nudged.
+const followStep = (device: InfantryDevice, blocks: Block[]): void => {
+  if (device.heavy !== undefined) return
+  const feet = device.y + device.radius
+  let top: number | undefined
+  for (const b of blocks) {
+    if (device.x <= b.x || device.x >= b.x + b.w) continue // not standing over this block
+    if (Math.abs(b.y - feet) > INFANTRY_STEP_HEIGHT) continue // a cliff or wall, not a step
+    if (top === undefined || b.y < top) top = b.y // the highest surface within a step is the one he stands on
+  }
+  // Only settle onto it if standing there leaves the head clear — never yank him UP into an overhang
+  // (a low shelf he was walking under); a blocked snap leaves him to the next tick's footing check.
+  if (top !== undefined && !insideAnyBlock(device.x, top - device.radius - 1, blocks)) device.y = top - device.radius
+}
+
+// Move a landed trooper to `x` (clamped to his walkable run) and settle his feet onto whatever
+// surface he is now over — the shared path for the landed movers, so they all step alike.
+const placeOnGround = (device: InfantryDevice, blocks: Block[], x: number): void => {
+  device.x = clampToGround(device, x)
+  followStep(device, blocks)
+}
+
 // Double-time toward a target x along the supporting block (clamped to its edges, halted by a
 // wall face) to climb aboard — boarding is urgent, so the unit SPRINTS (the run pose reads the
 // dash to the hull; `running` resets at the top of every landed tick, so it clears on arrival).
@@ -619,8 +697,8 @@ const walkToward = (
 ): void => {
   device.walkDir = targetX >= device.x ? 1 : -1
   device.running = true
-  if (!wallAhead(world.blocks, device, device.walkDir)) {
-    device.x = clampToGround(device, device.x + device.walkDir * speed * dt)
+  if (!wallAhead(world.blocks, device, device.walkDir, stepClimb(device))) {
+    placeOnGround(device, world.blocks, device.x + device.walkDir * speed * wadeScale(device) * dt)
   }
   device.facing = device.walkDir
 }
@@ -636,8 +714,8 @@ const patrolInfantry = (device: InfantryDevice, world: World, dt: number): void 
     return
   }
   if (world.rng() < INFANTRY_WALK_TURN_CHANCE) device.walkDir = -device.walkDir
-  if (wallAhead(world.blocks, device, device.walkDir)) device.walkDir = -device.walkDir
-  device.x += device.walkDir * INFANTRY_WALK_SPEED * dt
+  if (wallAhead(world.blocks, device, device.walkDir, stepClimb(device))) device.walkDir = -device.walkDir
+  device.x += device.walkDir * INFANTRY_WALK_SPEED * wadeScale(device) * dt
   if (device.x <= min) {
     device.x = min
     device.walkDir = 1
@@ -645,6 +723,7 @@ const patrolInfantry = (device: InfantryDevice, world: World, dt: number): void 
     device.x = max
     device.walkDir = -1
   }
+  followStep(device, world.blocks)
   device.facing = device.walkDir
 }
 
@@ -952,6 +1031,7 @@ const stepDevice = (
       if (device.pickupLock > 0) device.pickupLock -= dt
       if (device.stun > 0) device.stun = Math.max(0, device.stun - dt)
       if (device.fallen > 0) device.fallen = Math.max(0, device.fallen - dt)
+      device.wade = 0 // recomputed each landed tick; cleared here so swimming/airborne units read dry
       // Drowned corpse: sink and fade for a moment, then vanish (no explosion).
       if (device.sinking > 0) {
         device.sinking -= dt
@@ -990,24 +1070,59 @@ const stepDevice = (
           }
         }
       }
-      // Swimming: bob at the surface and either paddle toward a nearby rescuing owner (directed —
-      // both hands busy, holds fire) or drift to a stop (standby — looses the odd poor shot).
+      // Swimming: bob at the surface. A shallow shelf underfoot lets the man find the bottom and
+      // wade out; otherwise he makes for safety — paddling to a nearby rescuing owner if there is
+      // one (both hands busy, holds fire), else striking out for the shore of his own base, and only
+      // drifting (loosing the odd poor shot) when there's nowhere to swim to. Solid walls hold him
+      // (no tunnelling into the cliff he's pressed against).
       if (device.swim > 0) {
         device.running = false
         device.slide = 0
-        device.swim -= dt
         const surface = waterSurfaceAt(world.water, device.x, device.y)
+        const shelf = surface !== undefined ? standableUnderWater(world.blocks, device.x, surface) : undefined
+        if (shelf) {
+          // Feet on the bottom: rise out of the swim into a wade — never drowns from the shallows.
+          device.swim = 0
+          device.attached = true
+          device.chute = -1
+          device.vx = 0
+          device.vy = 0
+          device.y = shelf.y - device.radius
+          device.groundLeft = shelf.x
+          device.groundRight = shelf.x + shelf.w
+          return true
+        }
+        device.swim -= dt
         if (surface !== undefined) device.y = surface + device.radius * 0.2
         device.vy = 0
+        // Make for safety: a nearby rescuing owner first, else the shore of one's own base (the shelf
+        // check above lands him once he reaches the shallows). With nowhere to swim to — no boat, no
+        // base, or pressed to a cliff he can't climb — he treads water and looses the odd poor shot.
         const rescuer = rescuingOwner(world, device)
+        const home = world.bases.find((b) => b.owner === device.owner)
+        let target: number | undefined
         if (rescuer && Math.hypot(rescuer.x - device.x, rescuer.y - device.y) <= INFANTRY_RESCUE_RANGE) {
-          device.facing = rescuer.x >= device.x ? 1 : -1
-          device.vx = device.facing * INFANTRY_SWIM_SPEED
+          target = rescuer.x
+        } else if (home && Math.abs(home.x - device.x) > device.radius) {
+          target = home.x
+        }
+        if (target !== undefined) {
+          device.facing = target >= device.x ? 1 : -1
+          const nextX = device.x + device.facing * INFANTRY_SWIM_SPEED * dt
+          if (!insideAnyBlock(nextX, device.y, world.blocks)) {
+            device.vx = device.facing * INFANTRY_SWIM_SPEED
+            device.x = nextX
+          } else {
+            device.vx = 0 // pressed to a cliff — can't climb out unaided; tread and plink
+            infantryFire(world, device, INFANTRY_SWIM_FIRE_INTERVAL, INFANTRY_SPREAD_SWIM, dt)
+          }
         } else {
           device.vx *= Math.exp(-INFANTRY_SWIM_DRAG * dt)
+          const nextX = device.x + device.vx * dt
+          if (!insideAnyBlock(nextX, device.y, world.blocks)) device.x = nextX
+          else device.vx = 0
           infantryFire(world, device, INFANTRY_SWIM_FIRE_INTERVAL, INFANTRY_SPREAD_SWIM, dt)
         }
-        device.x += device.vx * dt
         if (device.swim <= 0) {
           device.sinking = INFANTRY_SINK_TIME
           return true
@@ -1079,6 +1194,13 @@ const stepDevice = (
         device.slide = 0
         return true
       }
+      // Patrol the whole contiguous flat run under the feet, not just the single greedy-meshed block
+      // landed on — so a trooper crosses surface-type/meshing seams on even ground (and a one-cell
+      // ledge that's part of a longer flat run patrols instead of freezing STANDING). Self-correcting
+      // each tick, so a unit knocked or slid onto a neighbour re-derives its bounds from the new spot.
+      const span = walkableSpan(ground, world.blocks, Math.max(STEP_TOL, stepClimb(device)))
+      device.groundLeft = span.left
+      device.groundRight = span.right
       // The enemy compound is impenetrable on foot: a raider overlapping the walls (a panic
       // bolt, a wash, a marching overshoot) is shoved back out to the nearest face. Men with
       // their feet at or above the roofline are up top, where the roof is theirs to walk.
@@ -1091,6 +1213,24 @@ const stepDevice = (
       }
       // Burning ground: footing on grass that's alight catches the man himself.
       if (device.burning <= 0 && ground.surface === Surface.FIRE) device.burning = INFANTRY_BURN_TIME
+      // Standing in water: the shallows are knee/waist-high — the man keeps his feet but slogs (wade,
+      // slowing every ground mover below); past INFANTRY_WADE_DEPTH the bottom drops away and he
+      // loses his footing into a swim (which can drown). Guards hold the dry, floated pad, never wade.
+      if (!device.guard) {
+        const waterTop = waterSurfaceAt(world.water, device.x, device.y)
+        const submerged = waterTop !== undefined ? device.y + device.radius - waterTop : 0
+        if (submerged > INFANTRY_WADE_DEPTH) {
+          device.attached = false
+          device.chute = -1
+          device.running = false
+          device.kneel = 0
+          device.slide = 0
+          device.vy = 0
+          device.swim = INFANTRY_SWIM_TIME
+          return true // re-enters the swim path next tick
+        }
+        if (submerged > 0) device.wade = submerged
+      }
       // Knocked flat: nothing to do but wait out the count and scramble back up — no walking,
       // no firing, any brace or skid broken. (The timer ticks down at the top of the case; a
       // burning man down on the ground burns where he lies until he's up again.)
@@ -1122,9 +1262,13 @@ const stepDevice = (
         if (world.rng() < INFANTRY_BURN_TURN_CHANCE) device.walkDir = -device.walkDir
         if (device.x <= device.groundLeft + device.radius) device.walkDir = 1
         else if (device.x >= device.groundRight - device.radius) device.walkDir = -1
-        if (wallAhead(world.blocks, device, device.walkDir)) device.walkDir = -device.walkDir
+        if (wallAhead(world.blocks, device, device.walkDir, stepClimb(device))) device.walkDir = -device.walkDir
         device.facing = device.walkDir
-        device.x = clampToGround(device, device.x + device.walkDir * INFANTRY_BURN_RUN_SPEED * dt)
+        placeOnGround(
+          device,
+          world.blocks,
+          device.x + device.walkDir * INFANTRY_BURN_RUN_SPEED * wadeScale(device) * dt
+        )
         return true
       }
       // Ice slip: footing on an icy surface occasionally gives way into a decaying slide. Once
@@ -1133,7 +1277,7 @@ const stepDevice = (
       if (device.slide !== 0 || (ground.surface === Surface.ICE && world.rng() < INFANTRY_ICE_SLIP_CHANCE)) {
         if (device.slide === 0) device.slide = device.walkDir * INFANTRY_SLIP_SPEED // a fresh slip
         if (wallAhead(world.blocks, device, Math.sign(device.slide))) device.slide = 0 // skidded into a face: dead stop
-        device.x = clampToGround(device, device.x + device.slide * dt)
+        placeOnGround(device, world.blocks, device.x + device.slide * dt) // feet follow the surface he skids across
         device.slide *= Math.exp(-INFANTRY_SLIP_FRICTION * dt)
         if (Math.abs(device.slide) < INFANTRY_SLIP_STOP_SPEED) device.slide = 0
         // A skid that ends still on the ice sometimes ends in a pratfall — flat on his back.
@@ -1206,8 +1350,8 @@ const stepDevice = (
         device.facing = away
         device.kneel = 0
         // Cornered against a wall: hold there (still running scared) rather than grind into it.
-        if (!wallAhead(world.blocks, device, away)) {
-          device.x = clampToGround(device, device.x + away * INFANTRY_RUN_SPEED * dt)
+        if (!wallAhead(world.blocks, device, away, stepClimb(device))) {
+          placeOnGround(device, world.blocks, device.x + away * INFANTRY_RUN_SPEED * wadeScale(device) * dt)
         }
         return true
       }

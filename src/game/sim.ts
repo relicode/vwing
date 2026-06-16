@@ -1,10 +1,10 @@
-import { baseBuilding, createCampaignBases, shellBase, shelteredInBase, stepBases } from '$/game/bases'
+import { baseBuilding, baseHolder, createCampaignBases, shellBase, shelteredInBase, stepBases } from '$/game/bases'
 import { updateBeams } from '$/game/beams'
 import { spawnBullet, updateBullets } from '$/game/bullets'
 import { circleRectContact, circlesOverlap } from '$/game/collision'
 import { applyDamage, applyKnockback, isDead } from '$/game/combat'
 import {
-  BASE_BUILDING_HEIGHT,
+  BASE_LOAD_RADIUS,
   BOT_KILL_SCORE,
   CARVE_RADIUS_BASE,
   CARVE_RADIUS_SCALE,
@@ -14,14 +14,15 @@ import {
   FLAMETHROWER_BURN_RADIUS,
   GRASS_FIRE_EMBERS,
   INFANTRY_BURN_TIME,
+  INFANTRY_PICKUP_SPEED,
   INFANTRY_WASH_PUSH_MAX,
-  MAX_WATER_BODIES,
-  POOL_FILL_AREA,
   RESPAWN_DELAY_BASE,
   RESPAWN_DELAY_GROWTH,
   SHAKE_DECAY,
   SHIP_DEATH_SHAKE,
   SHIP_FIRE_INTERVAL,
+  SHIP_HULL_REPAIR,
+  SHIP_MAX_HEALTH,
   SHIP_RADIUS,
   SHIP_SMOKE_HEALTH,
   SHIP_SPAWN_CLEAR_RADIUS,
@@ -40,8 +41,8 @@ import {
   THRUST_PARTICLE_SPEED,
   TROOP_BAY_CAPACITY,
   TROOP_DEPLOY_COOLDOWN,
-  VOXEL_CELL,
   WATER_CANNON_WET_RADIUS,
+  WATER_POUR_LEVEL,
   type WeaponKind,
   WORLD_HEIGHT,
   WORLD_WIDTH,
@@ -55,22 +56,24 @@ import { respawnShipAt, type ShipEnv, updateShip } from '$/game/ship'
 import { resolveShipTerrain } from '$/game/terrain'
 import { createTerrain } from '$/game/terrain-map'
 import { spawnTrooper } from '$/game/troops'
-import type { Base, Block, Bullet, Ship, Vec2, World } from '$/game/types'
+import type { Base, Bullet, Ship, Vec2, World } from '$/game/types'
 import {
   carveVoxel,
   createVoxelTerrain,
   douseSurface,
-  findPool,
+  fluidToBodies,
   igniteSurface,
-  moveBedrock,
+  pourWater,
   restoreVoxel,
+  sealWaterRect,
   snapshotVoxel,
   stepVoxel,
+  stepWater,
   type VoxelSnapshot,
   voxelToBlocks,
   wetSurface,
 } from '$/game/voxel'
-import { raisePool, submersion, waterSurfaceAt } from '$/game/water'
+import { submersion, waterSurfaceAt } from '$/game/water'
 import { fireSecondary } from '$/game/weapons'
 
 // Pairs a ship with whatever drives it plus its match bookkeeping. The sim owns these;
@@ -135,6 +138,7 @@ export const createWorld = (seed: number): World => {
     blocks,
     terrainVersion: 0,
     water,
+    waterVersion: 0,
     bases: [],
     shake: 0,
     rng: createRng(seed),
@@ -200,49 +204,25 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
   // The destructible terrain is authoritative; `world.blocks` is the rectangle view derived
   // from it (for collision, rendering, and the network snapshot).
   const voxel = createVoxelTerrain(world.blocks, world.water)
+  // The barracks are watertight: their footprint is solid to the fluid (as it already is to hulls),
+  // so poured/rising water sheds off the roof and flows around the walls instead of drowning the
+  // sheltered defenders. Bases are static, so this is sealed once here (and re-sealed on restore).
+  for (const base of world.bases) sealWaterRect(voxel, baseBuilding(base))
   let terrainDirty = false // a carve happened this frame; refresh derived blocks before drawing
+  let waterDirty = false // water was poured this frame (the flow tick may also flag movement)
   const refreshTerrain = (): void => {
     world.blocks = voxelToBlocks(voxel)
     world.terrainVersion += 1
   }
+  // world.water is the rectangle view of the per-cell fluid, rebuilt whenever the water moves; the
+  // waterVersion bump tells the renderer to redraw the water layer ALONE — terrain chunks and the
+  // server's terrain-persist cache (both keyed on terrainVersion) aren't disturbed by water flowing.
+  const refreshWater = (): void => {
+    world.water = fluidToBodies(voxel)
+    world.waterVersion += 1
+  }
   refreshTerrain()
-
-  // Each base's metal landing slab (the bedrock anchor whose top sits on the pad line) and its
-  // resting height, resolved once — the float step below rides these on rising water.
-  const padSlabs = new Map<number, { slab: Block; rest: number }>()
-  for (const base of world.bases) {
-    const slab = voxel.bedrock.find((b) => base.x >= b.x && base.x < b.x + b.w && Math.abs(b.y - base.y) < VOXEL_CELL)
-    if (slab) padSlabs.set(base.owner, { slab, rest: slab.y })
-  }
-
-  // A pool lapping over a pad makes the slab FLOAT: it steps up (whole cells, so the grounding
-  // mask stays aligned) until its top clears the waterline, carrying the barracks line and
-  // everyone standing on deck with it — an indestructible base never drowns either.
-  const floatBases = (): void => {
-    for (const base of world.bases) {
-      const pad = padSlabs.get(base.owner)
-      if (!pad) continue
-      const surface = waterSurfaceAt(world.water, base.x, pad.slab.y)
-      let target = pad.rest
-      if (surface !== undefined && surface < pad.rest) target = Math.floor(surface / VOXEL_CELL) * VOXEL_CELL
-      if (target === pad.slab.y) continue
-      const oldTop = pad.slab.y
-      const delta = target - oldTop
-      moveBedrock(voxel, pad.slab, target)
-      base.y = target
-      for (const d of world.devices) {
-        if (d.kind !== DeviceKind.INFANTRY || !d.attached) continue
-        if (d.x <= pad.slab.x || d.x >= pad.slab.x + pad.slab.w) continue
-        // Feet on the deck — or up on the barracks roof riding a building-height above it
-        // (the storming perch moves with the building; left behind, a roof man would drop
-        // through the box on a rise or be embedded by it on a fall).
-        const feet = d.y + d.radius
-        if (Math.abs(feet - oldTop) > 6 && Math.abs(feet - (oldTop - BASE_BUILDING_HEIGHT)) > 6) continue
-        d.y += delta // the deck rises under their feet — ride it, don't get embedded by it
-      }
-      terrainDirty = true
-    }
-  }
+  refreshWater()
 
   // Burning grass sheds embers: a few cells sampled per frame — not one per cell, so even a
   // broad fire line stays inside the particle budget (the FIRE surface itself sells the area).
@@ -454,19 +434,12 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
           spawnExplosion(world.particles, bullet.x, bullet.y, Color.THRUST, world.rng, 7)
         } else if (bullet.wet) {
           // Water cannon: douse any grass alight, wet bare earth → grass (regrows over time, no
-          // carve), and if the impact sits in a cupped basin, POUR a droplet's worth into it —
-          // the level climbs gradually toward the spill line (merging into any adjacent body),
-          // never all at once.
+          // carve), and POUR a droplet's worth of real water into the grid at the impact — it then
+          // flows, pools, and levels on its own through the fluid tick.
           if (douseSurface(voxel, bullet.x, bullet.y, WATER_CANNON_WET_RADIUS)) terrainDirty = true
           wetSurface(voxel, bullet.x, bullet.y, WATER_CANNON_WET_RADIUS)
-          const basin = findPool(voxel, bullet.x, bullet.y)
-          if (basin) {
-            const pooled = raisePool(world.water, basin, POOL_FILL_AREA, MAX_WATER_BODIES)
-            if (pooled !== world.water) {
-              world.water = pooled
-              terrainDirty = true // water is drawn in the terrainVersion-cached layer
-            }
-          }
+          pourWater(voxel, bullet.x, bullet.y, WATER_POUR_LEVEL)
+          waterDirty = true
           spawnExplosion(world.particles, bullet.x, bullet.y, Color.WATER_EDGE, world.rng, 6)
         } else if (block.structure === StructureType.EARTH) {
           const radius = bullet.radius * CARVE_RADIUS_SCALE + CARVE_RADIUS_BASE
@@ -536,6 +509,19 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     for (const { ship, input: control } of combatants) {
       if (eliminated.has(ship.id) || awaiting.has(ship.id)) continue
       updateShip(ship, control, dt, env)
+      // Hull mends ONLY while docked at a base you still hold — fly home, set down by the pad, and
+      // patch up (the same dock the troop bay loads at). In the field a battered ship stays battered
+      // (and sluggish to steer) until it limps home or dies; nothing else repairs hull damage.
+      if (ship.health < SHIP_MAX_HEALTH) {
+        const home = world.bases.find((b) => baseHolder(b) === ship.id)
+        if (
+          home &&
+          Math.hypot(ship.vx, ship.vy) <= INFANTRY_PICKUP_SPEED &&
+          Math.hypot(ship.x - home.x, ship.y - (home.y - 40)) <= BASE_LOAD_RADIUS
+        ) {
+          ship.health = Math.min(SHIP_MAX_HEALTH, ship.health + SHIP_HULL_REPAIR * dt)
+        }
+      }
       if (ship.thrusting) {
         const bx = -Math.cos(ship.angle)
         const by = -Math.sin(ship.angle)
@@ -596,14 +582,20 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     resolveTerrain(dt, events)
     resolveInfantryContacts(world)
     stepBases(world, dt)
-    floatBases()
     emberBurningGrass()
     // Advance loosed terrain chunks + the grass fire; rebuild the derived blocks if the terrain
     // changed this frame.
     const debrisMoved = stepVoxel(voxel, dt)
     if (terrainDirty || debrisMoved) {
-      refreshTerrain()
+      refreshTerrain() // a carve / debris settle changed the solid grid (and woke any water it touched)
       terrainDirty = false
+    }
+    // Flow the per-cell water (carves, pours, and debris this frame have already woken the cells it
+    // owns); rebuild the rectangle view whenever water appeared or moved so it draws + reads current.
+    const waterMoved = stepWater(voxel)
+    if (waterDirty || waterMoved) {
+      refreshWater()
+      waterDirty = false
     }
     return events
   }
@@ -646,6 +638,10 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
   const restoreTerrain = (snap: VoxelSnapshot): boolean => {
     if (!restoreVoxel(voxel, snap)) return false
     refreshTerrain()
+    // Re-seal the watertight barracks footprints — the wall mask isn't persisted, and a pre-fix
+    // snapshot may even carry water that had pooled inside the shelter; sealing evicts it.
+    for (const base of world.bases) sealWaterRect(voxel, baseBuilding(base))
+    refreshWater() // the snapshot carried the fluid grid too — rebuild its rectangle view
     return true
   }
 

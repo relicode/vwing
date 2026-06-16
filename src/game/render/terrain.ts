@@ -1,6 +1,7 @@
 import { Container, Graphics, Rectangle } from 'pixi.js'
 
 import { Color, StructureType, Surface, WORLD_HEIGHT, WORLD_WIDTH } from '$/game/constants'
+import { waterQuads } from '$/game/render/water-shape'
 import type { Block, RenderWorld, WaterBody } from '$/game/types'
 
 // Per-surface fill + brighter edge for earth blocks; metal (any surface) always renders gray.
@@ -8,7 +9,6 @@ const SURFACE_STYLE: Record<Surface, { fill: number; edge: number }> = {
   [Surface.EARTH]: { fill: Color.ROCK, edge: Color.ROCK_EDGE },
   [Surface.GRASS]: { fill: Color.GRASS, edge: Color.GRASS_EDGE },
   [Surface.ICE]: { fill: Color.ICE, edge: Color.ICE_EDGE },
-  [Surface.WATER]: { fill: Color.WATER, edge: Color.WATER_EDGE },
   [Surface.FIRE]: { fill: Color.FIRE, edge: Color.FIRE_EDGE },
 }
 const METAL_STYLE = { fill: Color.BEDROCK, edge: Color.BEDROCK_EDGE }
@@ -60,8 +60,6 @@ const drawBlockDetail = (g: Graphics, b: Block): void => {
           .stroke({ width: 1.5, color: Color.FIRE_EDGE, alpha: 0.9 })
       }
       break
-    case Surface.WATER:
-      break // water never appears on a block (it is a WaterBody overlay)
   }
 }
 
@@ -74,11 +72,15 @@ export const drawBlocks = (g: Graphics, blocks: Block[]): void => {
   }
 }
 
-// Water bodies: a translucent volume with a brighter surface line at the top.
-export const drawWaterBodies = (g: Graphics, water: WaterBody[]): void => {
+// Water bodies: a translucent volume with a brighter surface line at the top. Each body is clipped
+// to the empty space it actually occupies (see waterQuads) so the fill hugs an uneven basin floor
+// instead of smearing translucent water over the solid high spots poking up through it.
+export const drawWaterBodies = (g: Graphics, water: WaterBody[], blocks: Block[]): void => {
   for (const b of water) {
-    g.rect(b.x, b.y, b.w, b.h).fill({ color: Color.WATER, alpha: 0.38 })
-    g.rect(b.x, b.y, b.w, 2).fill({ color: Color.WATER_EDGE, alpha: 0.8 })
+    for (const q of waterQuads(b, blocks)) {
+      g.rect(q.x, q.top, q.w, q.floor - q.top).fill({ color: Color.WATER, alpha: 0.38 })
+      g.rect(q.x, q.top, q.w, 2).fill({ color: Color.WATER_EDGE, alpha: 0.8 })
+    }
   }
 }
 
@@ -107,22 +109,30 @@ export const createTerrainView = (): TerrainView => {
   const waterGfx = new Graphics() // basins span anywhere; few rects, drawn over the blocks
   container.addChild(waterGfx)
   let version = -1
+  let waterVersion = -1
 
   const draw = (world: RenderWorld): void => {
-    if (world.terrainVersion === version) return
-    version = world.terrainVersion
-    const byChunk: Block[][] = chunks.map(() => [])
-    for (const block of world.blocks) {
-      const first = Math.max(0, Math.floor(block.x / chunkWidth))
-      const last = Math.min(CHUNK_COUNT - 1, Math.floor((block.x + block.w) / chunkWidth))
-      for (let i = first; i <= last; i += 1) byChunk[i].push(block)
+    const terrainChanged = world.terrainVersion !== version
+    if (terrainChanged) {
+      version = world.terrainVersion
+      const byChunk: Block[][] = chunks.map(() => [])
+      for (const block of world.blocks) {
+        const first = Math.max(0, Math.floor(block.x / chunkWidth))
+        const last = Math.min(CHUNK_COUNT - 1, Math.floor((block.x + block.w) / chunkWidth))
+        for (let i = first; i <= last; i += 1) byChunk[i].push(block)
+      }
+      for (let i = 0; i < CHUNK_COUNT; i += 1) {
+        chunks[i].clear()
+        drawBlocks(chunks[i], byChunk[i])
+      }
     }
-    for (let i = 0; i < CHUNK_COUNT; i += 1) {
-      chunks[i].clear()
-      drawBlocks(chunks[i], byChunk[i])
+    // The water layer redraws on its OWN version (flowing water never re-tessellates terrain), but
+    // also when terrain changed — the fill is clipped against world.blocks.
+    if (terrainChanged || world.waterVersion !== waterVersion) {
+      waterVersion = world.waterVersion
+      waterGfx.clear()
+      drawWaterBodies(waterGfx, world.water, world.blocks)
     }
-    waterGfx.clear()
-    drawWaterBodies(waterGfx, world.water)
   }
 
   return { container, draw }
