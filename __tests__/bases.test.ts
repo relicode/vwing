@@ -589,6 +589,18 @@ describe('stepBases — the FFA contest (per-attacker bars + contested attrition
     }
     expect(run()).toBe(run()) // index-deterministic selection, no rng in the picking
   })
+
+  test('a holder garrisoning one fort does NOT gate a second fort it holds shut', () => {
+    // BOT holds two forts: A (manned, far away) and B (captured, empty). A PLAYER storms B — A's
+    // line must not count toward B's defense (a naive all-of-owner's-guards tally froze B unstormable).
+    const farA = makeBase({ owner: BOT_ID, x: 5000, y: 3000, garrison: 0 })
+    const baseB = makeBase({ owner: 9, holderId: BOT_ID, x: 1000, y: 3000, garrison: 0 })
+    const guardA: InfantryDevice = { ...trooper(BOT_ID, farA.x, farA.y - 9), guard: true } // mans A
+    const raider = trooper(PLAYER_ID, WALL_EAST, baseB.y) // storms B's east wall (WALL_EAST is at x=1000)
+    const world = makeWorld([], [guardA, raider], [farA, baseB])
+    stepBases(world, 1)
+    expect(progress(baseB, PLAYER_ID)).toBeGreaterThan(0) // B is empty here, so the storm runs
+  })
 })
 
 describe('relation + baseHolder', () => {

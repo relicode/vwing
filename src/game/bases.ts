@@ -241,7 +241,9 @@ export const stepBases = (world: World, dt: number): void => {
     for (const d of world.devices) {
       if (d.kind !== DeviceKind.INFANTRY) continue
       if (d.owner === holder) {
-        if (d.guard) fielded += 1
+        // A guard counts for THIS fort only if it is actually here — a holder may garrison TWO forts
+        // (its own deed AND a captured one), and one fort's line must not gate the other's storm shut.
+        if (d.guard && Math.hypot(d.x - base.x, d.y - base.y) <= BASE_CAPTURE_RADIUS) fielded += 1
         continue
       }
       if (d.attached && Math.hypot(d.x - base.x, d.y - base.y) <= BASE_SORTIE_RANGE) enemyInfantryNear = true
