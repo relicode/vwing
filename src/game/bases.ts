@@ -26,7 +26,7 @@ import {
   Relation,
   TROOP_BAY_CAPACITY,
 } from '$/game/constants'
-import { spawnExplosion } from '$/game/particles'
+import { burst } from '$/game/particles'
 import { basePadCenters } from '$/game/terrain-map'
 import { spawnGuard } from '$/game/troops'
 import type { Base, InfantryDevice, Vec2, World } from '$/game/types'
@@ -126,11 +126,11 @@ export const shellBase = (world: World, base: Base, damage: number): void => {
   )
   if (idx >= 0) {
     const d = world.devices[idx]
-    spawnExplosion(world.particles, d.x, d.y, Color.BLOOD, world.rng, 6)
+    burst(world, d.x, d.y, Color.BLOOD, 6)
     world.devices.splice(idx, 1)
   } else if (base.garrison >= 1) {
     base.garrison -= 1
-    spawnExplosion(world.particles, base.x, base.y - 12, Color.BLOOD, world.rng, 6)
+    burst(world, base.x, base.y - 12, Color.BLOOD, 6)
   }
 }
 
@@ -199,7 +199,7 @@ const cullStormCrew = (world: World, base: Base, raiders: InfantryDevice[]): voi
   const victim = raiders.find((r) => stormContact(base, r) !== undefined) ?? raiders[0]
   const idx = world.devices.indexOf(victim)
   if (idx < 0) return
-  spawnExplosion(world.particles, victim.x, victim.y, Color.BLOOD, world.rng, 6)
+  burst(world, victim.x, victim.y, Color.BLOOD, 6)
   world.devices.splice(idx, 1)
 }
 

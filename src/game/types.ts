@@ -58,6 +58,16 @@ export type Particle = {
   color: number
 }
 
+// A discrete explosion the sim spawned THIS tick, recorded as a compact trigger (spawnExplosion's
+// args, minus the rng) so a networked client can replay the burst locally. The particle field
+// itself is purely cosmetic and never crosses the wire — only these triggers ride the snapshot.
+export type FxBurst = {
+  x: number
+  y: number
+  color: number
+  count: number // particles to spawn (the burst's size/intensity)
+}
+
 // Deployed, world-resident entities — one Device[] array, switched on `kind`.
 export type Device =
   | {
@@ -215,6 +225,7 @@ export type World = {
   ships: Ship[]
   bullets: Bullet[]
   particles: Particle[]
+  fx: FxBurst[] // discrete explosion triggers spawned THIS tick — replayed client-side over the net
   devices: Device[]
   beams: Beam[]
   blocks: Block[] // collision/render terrain — rectangles greedily meshed from the voxel grid + debris

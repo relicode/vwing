@@ -1,5 +1,5 @@
 import { randRange } from '$/game/rng'
-import type { Particle, Rng } from '$/game/types'
+import type { Particle, Rng, World } from '$/game/types'
 
 const DEFAULT_BURST = 16
 
@@ -26,6 +26,18 @@ export const spawnExplosion = (
       color,
     })
   }
+}
+
+// A discrete explosion that BOTH draws locally (offline play and the server's own headless sim)
+// AND records a compact trigger on `world.fx` for the networked client to replay. This is how a
+// sim-spawned FX (trooper blood, base sparks, weapon detonations, splashes) reaches online players
+// without the high-churn particle field ever crossing the wire. Continuous trails (thrust/smoke)
+// deliberately bypass this and call spawnExplosion/spawnPuff directly — the client regenerates
+// those locally from ship state. Consumes the SAME rng draws spawnExplosion does, so routing a
+// site through burst() never shifts the sim's deterministic stream.
+export const burst = (world: World, x: number, y: number, color: number, count = DEFAULT_BURST): void => {
+  spawnExplosion(world.particles, x, y, color, world.rng, count)
+  world.fx.push({ x, y, color, count })
 }
 
 // A single drifting puff (exhaust ember, smoke) emitted with a base velocity + slight jitter.
