@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { createCampaignBases, shellBase, stepBases } from '$/game/bases'
+import { baseHolder, captureLead, createCampaignBases, relation, shellBase, stepBases } from '$/game/bases'
 import {
   BASE_ACTIVE_DEFENDERS,
   BASE_BUILDING_HALF_WIDTH,
@@ -9,12 +9,14 @@ import {
   BASE_GARRISON_CAP,
   BASE_GARRISON_START,
   BASE_SHELL_KILL_DAMAGE,
+  BASE_STORM_ATTRITION_INTERVAL,
   BASE_STORM_ROOF_SLOTS,
   BASE_STORM_SIDE_TIME,
   BaseAlarm,
   BOT_ID,
   DeviceKind,
   PLAYER_ID,
+  Relation,
   ShipKind,
   StructureType,
   Surface,
@@ -102,11 +104,15 @@ const makeBase = (over: Partial<Base>): Base => ({
   x: 1000,
   y: 3000,
   garrison: BASE_GARRISON_START,
-  capture: 0,
+  contest: {},
+  attritionClock: BASE_STORM_ATTRITION_INTERVAL,
   alarm: BaseAlarm.PATROL,
   door: 0,
   ...over,
 })
+
+// A given pilot's storm progress on a base (0 if it has no bar).
+const progress = (base: Base, id: number): number => base.contest[id] ?? 0
 
 // Contact spots on that fixture for a radius-9 trooper: pressed flush to a wall face (x), or
 // standing on the roof (y for any x over the building span). Storming demands one of these.
@@ -114,9 +120,9 @@ const WALL_WEST = 1000 - BASE_BUILDING_HALF_WIDTH - 9
 const WALL_EAST = 1000 + BASE_BUILDING_HALF_WIDTH + 9
 const ROOF_Y = 3000 - BASE_BUILDING_HEIGHT - 9
 
-// Count this base's fielded defenders (guard troopers standing inside the building).
+// Count this base's fielded defenders (guard troopers belonging to whoever HOLDS the base).
 const guardsOf = (world: World, base: Base): number =>
-  world.devices.filter((d) => d.kind === DeviceKind.INFANTRY && d.guard && d.owner === base.owner).length
+  world.devices.filter((d) => d.kind === DeviceKind.INFANTRY && d.guard && d.owner === baseHolder(base)).length
 
 describe('createCampaignBases', () => {
   test('seats one barracks per side on the two pads, west player / east bot', () => {
@@ -230,13 +236,14 @@ describe('stepBases — defender fielding + regen', () => {
     expect(guardsOf(stormed, groundBase)).toBe(BASE_ACTIVE_DEFENDERS)
   })
 
-  test('a captured barracks fields nobody and regrows nobody', () => {
-    const base = makeBase({ capture: 1, capturedBy: BOT_ID, garrison: 5 })
-    const raider = trooper(BOT_ID, base.x + 50, base.y) // holds the zone so capture stays pinned at 1
-    const world = makeWorld([], [raider], [base])
-    for (let i = 0; i < 40; i += 1) stepBases(world, 0.5)
-    expect(guardsOf(world, base)).toBe(0)
-    expect(base.garrison).toBe(5) // frozen — no regen, no fielding
+  test('a captured barracks is a productive home for its captor: it fields HIS men and regrows', () => {
+    const base = makeBase({ holderId: BOT_ID, garrison: 0 }) // the deed is PLAYER's; BOT holds it now
+    const world = makeWorld([], [], [base])
+    for (let i = 0; i < 200; i += 1) stepBases(world, 1)
+    expect(guardsOf(world, base)).toBe(BASE_ACTIVE_DEFENDERS) // the captor mans the firing line
+    expect(base.garrison + guardsOf(world, base)).toBe(BASE_GARRISON_CAP) // and regrows the reserve
+    // every fielded defender belongs to the CAPTOR, not the dispossessed deed owner
+    expect(world.devices.every((d) => d.kind !== DeviceKind.INFANTRY || d.owner === BOT_ID)).toBe(true)
   })
 })
 
@@ -252,11 +259,11 @@ describe('shellBase — shelling the defenders', () => {
     expect(base.garrison).toBe(2)
   })
 
-  test('a captured fort and a zero-damage round are shrugged off', () => {
-    const taken = makeBase({ capture: 1, capturedBy: BOT_ID, garrison: 4 })
+  test('a held fort is shellable (its holder’s garrison takes the hit); a zero-damage round is shrugged off', () => {
+    const taken = makeBase({ holderId: BOT_ID, garrison: 4 }) // a captured fort defends its captor — so it can be shelled
     const w1 = makeWorld([], [], [taken])
-    shellBase(w1, taken, BASE_SHELL_KILL_DAMAGE)
-    expect(taken.garrison).toBe(4)
+    shellBase(w1, taken, BASE_SHELL_KILL_DAMAGE) // P = 1, no fielded man → the reserve falls
+    expect(taken.garrison).toBe(3)
 
     const base = makeBase({ garrison: 4 })
     const w2 = makeWorld([], [], [base])
@@ -282,17 +289,17 @@ describe('stepBases — storming an emptied fort', () => {
     const base = emptyFort()
     const world = makeWorld([], [trooper(BOT_ID, WALL_EAST, base.y)], [base])
     stepBases(world, BASE_STORM_SIDE_TIME / 2)
-    expect(base.capture).toBeCloseTo(0.5, 5)
-    stepBases(world, BASE_STORM_SIDE_TIME) // overshoot clamps and records the capturer
-    expect(base.capture).toBe(1)
-    expect(base.capturedBy).toBe(BOT_ID)
+    expect(progress(base, BOT_ID)).toBeCloseTo(0.5, 5)
+    stepBases(world, BASE_STORM_SIDE_TIME) // overshoot completes the capture (progress clears, holder set)
+    expect(base.holderId).toBe(BOT_ID)
+    expect(base.contest[BOT_ID]).toBeUndefined()
   })
 
   test('flanked on both sides storms in half the time', () => {
     const base = emptyFort()
     const world = makeWorld([], [trooper(BOT_ID, WALL_WEST, base.y), trooper(BOT_ID, WALL_EAST, base.y)], [base])
     stepBases(world, BASE_STORM_SIDE_TIME / 4) // two sides → 1/4 of the single-side time = half of the half
-    expect(base.capture).toBeCloseTo(0.5, 5)
+    expect(progress(base, BOT_ID)).toBeCloseTo(0.5, 5)
   })
 
   test('all three sides — both walls and the roof — storm in a third of the single-side time', () => {
@@ -304,10 +311,9 @@ describe('stepBases — storming an emptied fort', () => {
     ]
     const world = makeWorld([], crew, [base])
     stepBases(world, BASE_STORM_SIDE_TIME / 6) // three sides → 3× rate → half storms in 1/6 the single-side time
-    expect(base.capture).toBeCloseTo(0.5, 5)
-    stepBases(world, BASE_STORM_SIDE_TIME) // overshoot clamps and records the capturer
-    expect(base.capture).toBe(1)
-    expect(base.capturedBy).toBe(BOT_ID)
+    expect(progress(base, BOT_ID)).toBeCloseTo(0.5, 5)
+    stepBases(world, BASE_STORM_SIDE_TIME) // overshoot completes the capture
+    expect(base.holderId).toBe(BOT_ID)
   })
 
   test('the roof is the north side: a lone roofer storms at the one-side rate, extra roofers add nothing', () => {
@@ -315,7 +321,7 @@ describe('stepBases — storming an emptied fort', () => {
     const roofers = [-40, 0, 40].map((dx) => trooper(BOT_ID, base.x + dx, ROOF_Y)) // three on the roof
     const world = makeWorld([], roofers, [base])
     stepBases(world, BASE_STORM_SIDE_TIME / 2) // the roof is ONE side → half in half the single-side time
-    expect(base.capture).toBeCloseTo(0.5, 5) // not 3× — extra roofers on the same side don't stack
+    expect(progress(base, BOT_ID)).toBeCloseTo(0.5, 5) // not 3× — extra roofers on the same side don't stack
   })
 
   test('a manned fort cannot be stormed: defenders gate it shut until they are cleared', () => {
@@ -323,7 +329,7 @@ describe('stepBases — storming an emptied fort', () => {
     const raider = trooper(BOT_ID, WALL_EAST, base.y)
     const world = makeWorld([], [raider], [base])
     for (let i = 0; i < 600; i += 1) stepBases(world, 1 / 60)
-    expect(base.capture).toBe(0)
+    expect(progress(base, BOT_ID)).toBe(0)
     expect(raider.storming).toBe(false) // no pounding while a defender stands
   })
 })
@@ -349,7 +355,7 @@ describe('stepBases — the battering crew (contact storming)', () => {
     const world = makeWorld([], [loiterer], [base])
     stepBases(world, 1)
     expect(loiterer.storming).toBe(false)
-    expect(base.capture).toBe(0) // no side pressed, no progress
+    expect(progress(base, BOT_ID)).toBe(0) // no side pressed, no progress
   })
 
   test('each wall holds ONE batterer: a second man at the same face queues unmarked, and the rate stays one-side', () => {
@@ -360,7 +366,7 @@ describe('stepBases — the battering crew (contact storming)', () => {
     stepBases(world, BASE_STORM_SIDE_TIME / 2)
     expect(first.storming).toBe(true)
     expect(second.storming).toBe(false)
-    expect(base.capture).toBeCloseTo(0.5, 5) // one side's rate, not two
+    expect(progress(base, BOT_ID)).toBeCloseTo(0.5, 5) // one side's rate, not two
   })
 
   test('the roof marks three for the pounding pose: a fourth man up top adds nothing', () => {
@@ -375,28 +381,28 @@ describe('stepBases — the battering crew (contact storming)', () => {
     expect(wall.storming).toBe(true)
   })
 
-  test('an enemy ship near the pad halts the storm — the men down tools', () => {
-    const base = emptyFort()
+  test('the holder’s ship near the pad halts the storm — the men down tools', () => {
+    const base = emptyFort() // deed (and holder) is PLAYER
     const stormer = trooper(BOT_ID, WALL_EAST, base.y)
     const owner = makeShip({ id: PLAYER_ID, x: base.x + 400, y: base.y - 200 }) // the defender swoops in
     const world = makeWorld([owner], [stormer], [base])
     stepBases(world, 1)
     expect(stormer.storming).toBe(false)
-    expect(base.capture).toBe(0) // nobody breaches under a hostile ship
+    expect(progress(base, BOT_ID)).toBe(0) // nobody breaches under the holder's relief
   })
 
-  test('a live enemy trooper near halts the storm — even from outside the disc; a downed one scares nobody', () => {
+  test('the holder’s trooper near halts the storm — even from outside the disc; a downed one relieves nobody', () => {
     const base = emptyFort()
     const stormer = trooper(BOT_ID, WALL_EAST, base.y)
     const defender = trooper(PLAYER_ID, base.x + BASE_CAPTURE_RADIUS + 90, base.y) // outside the disc, inside threat range
     const world = makeWorld([], [stormer, defender], [base])
     stepBases(world, 1 / 60)
     expect(stormer.storming).toBe(false)
-    expect(base.capture).toBe(0)
-    defender.fallen = 1 // flat on his back he threatens nobody — the breach resumes
+    expect(progress(base, BOT_ID)).toBe(0)
+    defender.fallen = 1 // flat on his back he relieves nobody — the breach resumes
     stepBases(world, 1 / 60)
     expect(stormer.storming).toBe(true)
-    expect(base.capture).toBeGreaterThan(0)
+    expect(progress(base, BOT_ID)).toBeGreaterThan(0)
   })
 
   test('last frame’s marks expire when the storm is interrupted', () => {
@@ -429,10 +435,10 @@ describe('stepBases — the battering crew (contact storming)', () => {
     const downed = { ...trooper(BOT_ID, WALL_EAST, base.y), fallen: 1 }
     const world = makeWorld([], [downed], [base])
     stepBases(world, 1)
-    expect(base.capture).toBe(0) // flat on his back, even in wall contact
+    expect(progress(base, BOT_ID)).toBe(0) // flat on his back, even in wall contact
     downed.fallen = 0 // back on his feet — the assault resumes
     stepBases(world, 1)
-    expect(base.capture).toBeGreaterThan(0)
+    expect(progress(base, BOT_ID)).toBeGreaterThan(0)
   })
 
   test('a kneeling specialist or a bolting man still marks, but keeps his own facing', () => {
@@ -450,69 +456,173 @@ describe('stepBases — the battering crew (contact storming)', () => {
     expect(runner.facing).toBe(1) // his legs keep selling the direction he runs
   })
 
-  test('occupiers of an already-won pad hold it without the theatrics', () => {
-    const taken = makeBase({ capture: 1, capturedBy: BOT_ID, garrison: 0 })
-    const occupier = trooper(BOT_ID, taken.x + 30, taken.y)
+  test('a friendly occupier of a held pad just stands — no storming theatrics', () => {
+    const taken = makeBase({ holderId: BOT_ID, garrison: 0 })
+    const occupier = trooper(BOT_ID, taken.x + 30, taken.y) // BOT holds it now, so his man is friendly
     const world = makeWorld([], [occupier], [taken])
     stepBases(world, 1 / 60)
     expect(occupier.storming).toBe(false)
-    expect(taken.capture).toBe(1) // still pinned by his presence
+    expect(baseHolder(taken)).toBe(BOT_ID) // still held — a held fort doesn't auto-revert
   })
 })
 
 describe('stepBases — capture tug-of-war', () => {
-  test('crossing 1 records the capturer and freezes the fort (no regen)', () => {
+  test('crossing 1 hands the fort to the capturer, who then garrisons it as his own', () => {
     // No defending ship near the pad — its presence would (rightly) halt the storm.
     const base = makeBase({ garrison: 0 })
     const raider = trooper(BOT_ID, WALL_EAST, base.y)
     const world = makeWorld([], [raider], [base])
     stepBases(world, BASE_STORM_SIDE_TIME) // one side, full time → captured
-    expect(base.capture).toBe(1)
-    expect(base.capturedBy).toBe(BOT_ID)
-    const garrisonAtFall = base.garrison
-    stepBases(world, 10)
-    expect(base.garrison).toBe(garrisonAtFall) // no regen while captured
+    expect(base.holderId).toBe(BOT_ID)
+    expect(base.contest[BOT_ID]).toBeUndefined() // progress cleared on capture
+    // the captured fort is the captor's home now: it regrows HIS reserve and mans HIS line
+    for (let i = 0; i < 200; i += 1) stepBases(world, 1)
+    expect(base.garrison + guardsOf(world, base)).toBeGreaterThan(0)
   })
 
-  test('an emptied zone bleeds progress back, and a captured base re-liberates the same way', () => {
-    const fallen = makeBase({ capture: 1, capturedBy: BOT_ID })
-    const world = makeWorld([], [], [fallen])
+  test('an emptied zone bleeds an in-progress assault back to nothing (and removes the bar)', () => {
+    const base = makeBase({ garrison: 0, contest: { [BOT_ID]: 0.5 } })
+    const world = makeWorld([], [], [base]) // the raiders have all left the disc
     stepBases(world, 1)
-    expect(fallen.capture).toBeLessThan(1)
-    expect(fallen.capturedBy).toBeUndefined() // dropping below 1 IS the re-liberation
+    expect(progress(base, BOT_ID)).toBeLessThan(0.5)
     stepBases(world, 60)
-    expect(fallen.capture).toBe(0)
+    expect(base.contest[BOT_ID]).toBeUndefined() // fully bled back, the entry is gone
   })
 
-  test('a downed occupier still occupies: one knockdown blast cannot un-capture a won pad', () => {
-    // The capture-war exclusion must not reach a completed capture — the knockdown ring is
-    // side-blind, so a single grenade over the muster pad would otherwise clear capturedBy in
-    // one frame and (mid-respawn-wait) eliminate a capturer whose men are merely flat.
-    const taken = makeBase({ capture: 1, capturedBy: BOT_ID, garrison: 0 })
-    const occupier = { ...trooper(BOT_ID, taken.x + 30, taken.y), fallen: 2.5 }
-    const world = makeWorld([], [occupier], [taken])
+  test('a completed capture does NOT auto-revert when the captor leaves — it is a real fort', () => {
+    const fallen = makeBase({ holderId: BOT_ID, garrison: 0 })
+    const world = makeWorld([], [], [fallen]) // nobody on the pad
+    stepBases(world, 5)
+    expect(baseHolder(fallen)).toBe(BOT_ID) // still held; re-liberation is by re-storming, not decay
+  })
+
+  test('the deed owner re-storms a captured fort to liberate it — capture and re-liberation are one mechanic', () => {
+    const fallen = makeBase({ holderId: BOT_ID, garrison: 0 }) // PLAYER's deed, held by BOT
+    const liberator = trooper(PLAYER_ID, WALL_EAST, fallen.y) // the deed owner's man at the wall
+    const world = makeWorld([], [liberator], [fallen])
+    stepBases(world, BASE_STORM_SIDE_TIME) // storms it back
+    expect(baseHolder(fallen)).toBe(PLAYER_ID) // holderId === deed owner ⇒ baseHolder reads the deed again
+  })
+
+  test('a downed occupier still pins his own assault: a knockdown does not bleed an in-progress storm back', () => {
+    // The knockdown ring is side-blind, so a single grenade over the disc must not erase an attacker's
+    // hard-won progress while his men are merely flat (it would otherwise gift a contested pad).
+    const base = makeBase({ garrison: 0, contest: { [BOT_ID]: 0.6 } })
+    const occupier = { ...trooper(BOT_ID, base.x + 30, base.y), fallen: 2.5 } // in the disc, but flat
+    const world = makeWorld([], [occupier], [base])
     stepBases(world, 1 / 60)
-    expect(taken.capture).toBe(1)
-    expect(taken.capturedBy).toBe(BOT_ID) // the flag still flies while he scrambles up
+    expect(progress(base, BOT_ID)).toBeCloseTo(0.6, 5) // pinned while he scrambles up — no decay
     occupier.fallen = 0
-    occupier.attached = false // scooped away — NOW the pad really is unheld
+    occupier.attached = false // scooped away — NOW the disc is truly empty
     stepBases(world, 1 / 60)
-    expect(taken.capture).toBeLessThan(1)
-    expect(taken.capturedBy).toBeUndefined()
+    expect(progress(base, BOT_ID)).toBeLessThan(0.6) // and the assault begins to bleed back
   })
 
   test('airborne (chuting) attackers do not count — only landed ones storm', () => {
     const base = makeBase({ garrison: 0 })
     const world = makeWorld([], [trooper(BOT_ID, WALL_EAST, base.y - 100, false)], [base])
     stepBases(world, 5)
-    expect(base.capture).toBe(0)
+    expect(progress(base, BOT_ID)).toBe(0)
   })
 
   test('attackers outside the capture disc are spectators', () => {
     const base = makeBase({ garrison: 0 })
     const world = makeWorld([], [trooper(BOT_ID, base.x + BASE_CAPTURE_RADIUS + 50, base.y)], [base])
     stepBases(world, 5)
-    expect(base.capture).toBe(0)
+    expect(progress(base, BOT_ID)).toBe(0)
+  })
+})
+
+describe('stepBases — the FFA contest (per-attacker bars + contested attrition)', () => {
+  // A pad whose deed belongs to nobody on the field (id 7), so BOTH rivals are hostile to it.
+  const emptyFort = () => makeBase({ garrison: 0, owner: 7 })
+
+  test('two rivals each build their OWN bar — no shared scalar, no mutual freeze', () => {
+    const base = emptyFort()
+    const red = trooper(PLAYER_ID, WALL_WEST, base.y)
+    const blue = trooper(BOT_ID, WALL_EAST, base.y)
+    const world = makeWorld([], [red, blue], [base])
+    stepBases(world, 1) // under the attrition interval — no culling, just the two storms
+    // BOTH advance: the old self-vs-the-one-enemy model froze them as each other's threat.
+    expect(red.storming).toBe(true)
+    expect(blue.storming).toBe(true)
+    expect(progress(base, PLAYER_ID)).toBeGreaterThan(0)
+    expect(progress(base, BOT_ID)).toBeGreaterThan(0)
+    expect(progress(base, PLAYER_ID)).toBeCloseTo(progress(base, BOT_ID), 5) // independent, same pace
+  })
+
+  test('a lone storm never attrites; a contested one bleeds one crew soldier per contestant', () => {
+    // Lone: one crew runs well past the attrition interval and loses nobody.
+    const lone = emptyFort()
+    const loneWorld = makeWorld([], [trooper(BOT_ID, WALL_EAST, lone.y)], [lone])
+    for (let i = 0; i < 4; i += 1) stepBases(loneWorld, BASE_STORM_ATTRITION_INTERVAL / 2)
+    expect(loneWorld.devices).toHaveLength(1) // still standing (it captured; nobody was bled)
+
+    // Contested: two rivals press; after one full interval, each loses exactly one storming soldier.
+    const base = emptyFort()
+    const red = trooper(PLAYER_ID, WALL_WEST, base.y)
+    const blue = trooper(BOT_ID, WALL_EAST, base.y)
+    const world = makeWorld([], [red, blue], [base])
+    stepBases(world, BASE_STORM_ATTRITION_INTERVAL) // fires one volley
+    expect(world.devices).not.toContain(red)
+    expect(world.devices).not.toContain(blue)
+  })
+
+  test('the contestant who keeps feeding troops outlasts the other and captures', () => {
+    const base = emptyFort()
+    // Red brings a spare pressed to the same wall; Blue brings one man. Attrition thins them at the
+    // same rate, but Red still has a man on the wall afterward and finishes the storm.
+    const redA = trooper(PLAYER_ID, WALL_WEST, base.y)
+    const redB = trooper(PLAYER_ID, WALL_WEST - 1, base.y)
+    const blue = trooper(BOT_ID, WALL_EAST, base.y)
+    const world = makeWorld([], [redA, redB, blue], [base])
+    for (let i = 0; i < 400; i += 1) stepBases(world, 1 / 30)
+    expect(baseHolder(base)).toBe(PLAYER_ID)
+  })
+
+  test('a contested storm is deterministic (same survivors on a re-run)', () => {
+    const run = (): number => {
+      const base = emptyFort()
+      const world = makeWorld([], [trooper(PLAYER_ID, WALL_WEST, base.y), trooper(BOT_ID, WALL_EAST, base.y)], [base])
+      stepBases(world, BASE_STORM_ATTRITION_INTERVAL)
+      return world.devices.length
+    }
+    expect(run()).toBe(run()) // index-deterministic selection, no rng in the picking
+  })
+
+  test('a holder garrisoning one fort does NOT gate a second fort it holds shut', () => {
+    // BOT holds two forts: A (manned, far away) and B (captured, empty). A PLAYER storms B — A's
+    // line must not count toward B's defense (a naive all-of-owner's-guards tally froze B unstormable).
+    const farA = makeBase({ owner: BOT_ID, x: 5000, y: 3000, garrison: 0 })
+    const baseB = makeBase({ owner: 9, holderId: BOT_ID, x: 1000, y: 3000, garrison: 0 })
+    const guardA: InfantryDevice = { ...trooper(BOT_ID, farA.x, farA.y - 9), guard: true } // mans A
+    const raider = trooper(PLAYER_ID, WALL_EAST, baseB.y) // storms B's east wall (WALL_EAST is at x=1000)
+    const world = makeWorld([], [guardA, raider], [farA, baseB])
+    stepBases(world, 1)
+    expect(progress(baseB, PLAYER_ID)).toBeGreaterThan(0) // B is empty here, so the storm runs
+  })
+})
+
+describe('relation + baseHolder', () => {
+  test('FRIENDLY to the holder, HOSTILE to everyone else — and it flips on capture', () => {
+    const base = makeBase({}) // deed + holder = PLAYER
+    expect(relation(base, PLAYER_ID)).toBe(Relation.FRIENDLY)
+    expect(relation(base, BOT_ID)).toBe(Relation.HOSTILE)
+    base.holderId = BOT_ID // captured
+    expect(relation(base, BOT_ID)).toBe(Relation.FRIENDLY) // the captor is now friendly
+    expect(relation(base, PLAYER_ID)).toBe(Relation.HOSTILE) // the dispossessed deed owner is hostile
+    expect(baseHolder(base)).toBe(BOT_ID)
+  })
+
+  test('captureLead reports the leading attacker and survives a JSON snapshot round-trip', () => {
+    const base = makeBase({ contest: { [BOT_ID]: 0.3, [PLAYER_ID]: 0.7 } })
+    expect(captureLead(base)).toEqual({ by: PLAYER_ID, pct: 0.7 })
+    // world.bases is JSON.stringify'd into every WorldSnapshot — `contest` MUST round-trip as a
+    // populated object (a Map would serialize to {} and silently lose every attacker's progress).
+    const round = JSON.parse(JSON.stringify(base)) as Base
+    expect(round.contest[PLAYER_ID]).toBe(0.7)
+    expect(round.contest[BOT_ID]).toBe(0.3)
+    expect(captureLead(round)).toEqual({ by: PLAYER_ID, pct: 0.7 })
   })
 })
 
@@ -558,7 +668,7 @@ describe('the assault on foot — march, walls, roof', () => {
     }
     expect(Math.abs(raider.x - WALL_EAST)).toBeLessThanOrEqual(9) // at the east face, in contact
     expect(raider.storming).toBe(true)
-    expect(base.capture).toBeGreaterThan(0) // and the breach is under way
+    expect(progress(base, BOT_ID)).toBeGreaterThan(0) // and the breach is under way
   })
 
   test('a storming man slings his rifle: no fire even with a target in range', () => {

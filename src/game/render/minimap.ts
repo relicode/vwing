@@ -50,6 +50,10 @@ export const drawMapMarkers = (
     g.rect(base.x * MAP_SCALE - 3.5, base.y * MAP_SCALE - 5, 7, 5)
       .fill({ color, alpha: 0.9 })
       .stroke({ width: 1, color, alpha: 1 })
+    // A bright core marks a base YOU hold — the same self-cue the player's own ship dot gets.
+    if (baseHolder(base) === selfId) {
+      g.circle(base.x * MAP_SCALE, base.y * MAP_SCALE - 2.5, 1.1).fill({ color: Color.SHIP_CORE })
+    }
   }
   for (const ship of world.ships) {
     const own = ship.id === selfId

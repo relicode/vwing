@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { updateBeams } from '$/game/beams'
 import {
+  BASE_STORM_ATTRITION_INTERVAL,
   BaseAlarm,
   DeviceKind,
   INFANTRY_FALLEN_TIME,
@@ -892,7 +893,16 @@ describe('updateDevices — infantry / grenade / flak / well', () => {
   test('a defender boards its owner by touch — the alarm sensor never gates it', () => {
     // Defenders leave the shelter only to board: a guard touching its owner's hull climbs aboard
     // whatever the threat sensor reads (it is no longer a posture that pins men on post).
-    const post: Base = { owner: 0, x: 100, y: 109, garrison: 0, capture: 0, alarm: BaseAlarm.SORTIE, door: 0 }
+    const post: Base = {
+      owner: 0,
+      x: 100,
+      y: 109,
+      garrison: 0,
+      contest: {},
+      attritionClock: BASE_STORM_ATTRITION_INTERVAL,
+      alarm: BaseAlarm.SORTIE,
+      door: 0,
+    }
     const owner = makeShip({ id: 0, x: 100, y: 100, vx: 0, vy: 0, troops: 0 })
     const world = makeWorld([owner], [infantry({ owner: 0, x: 100, y: 100, attached: true, guard: true })])
     world.bases = [post]
@@ -1272,7 +1282,18 @@ describe('updateDevices — wading shallows and swimming to safety', () => {
     const u = trooper({ x: 500, y: 320, attached: false, swim: 3, groundLeft: 0, groundRight: 0 })
     const world = makeWorld([], [u])
     world.water = [{ x: 0, y: 300, w: 2000, h: 500 }] // deep, open water — no shelf underfoot
-    world.bases = [{ owner: 0, x: 1000, y: 100, garrison: 4, capture: 0, alarm: BaseAlarm.PATROL, door: 0 }]
+    world.bases = [
+      {
+        owner: 0,
+        x: 1000,
+        y: 100,
+        garrison: 4,
+        contest: {},
+        attritionClock: BASE_STORM_ATTRITION_INTERVAL,
+        alarm: BaseAlarm.PATROL,
+        door: 0,
+      },
+    ]
     updateDevices(world, 0.1)
     expect(u.facing).toBe(1) // turned toward home (to the right)
     expect(u.vx).toBeGreaterThan(0) // paddling that way
