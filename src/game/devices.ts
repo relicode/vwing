@@ -1,4 +1,4 @@
-import { baseBuilding, baseHolder, shellBase, shelteredInBase, stormContact, stormThreatNear } from '$/game/bases'
+import { baseBuilding, baseHolder, holderReliefNear, shellBase, shelteredInBase, stormContact } from '$/game/bases'
 import { castRail } from '$/game/beams'
 import { pushBullet } from '$/game/bullets'
 import { circleRectContact, circlesOverlap, segmentIntersectsRect } from '$/game/collision'
@@ -739,12 +739,9 @@ const advanceOnBase = (world: World, device: InfantryDevice, dt: number): boolea
     return true // planted at the wall, both hands on the building (stepBases' mark)
   }
   const base = world.bases.find(
-    (b) =>
-      baseHolder(b) !== device.owner &&
-      b.capture < 1 &&
-      Math.hypot(device.x - b.x, device.y - b.y) <= BASE_CAPTURE_RADIUS
+    (b) => baseHolder(b) !== device.owner && Math.hypot(device.x - b.x, device.y - b.y) <= BASE_CAPTURE_RADIUS
   )
-  if (!base || stormThreatNear(world, base, device.owner)) return false // threats first — fight, don't queue
+  if (!base || holderReliefNear(world, base)) return false // the holder's relief first — fight, don't queue
   if (stormContact(base, device) !== undefined) {
     // In contact but not elected to the crew: hold the spot — wandering off would surrender
     // the slot the moment one frees up.
@@ -1100,7 +1097,7 @@ const stepDevice = (
         // check above lands him once he reaches the shallows). With nowhere to swim to — no boat, no
         // base, or pressed to a cliff he can't climb — he treads water and looses the odd poor shot.
         const rescuer = rescuingOwner(world, device)
-        const home = world.bases.find((b) => b.owner === device.owner)
+        const home = world.bases.find((b) => baseHolder(b) === device.owner)
         let target: number | undefined
         if (rescuer && Math.hypot(rescuer.x - device.x, rescuer.y - device.y) <= INFANTRY_RESCUE_RANGE) {
           target = rescuer.x
@@ -1301,13 +1298,23 @@ const stepDevice = (
         device.kneel = 0
         return true
       }
-      // A base defender holds the shelter and fires out — or, while its owner is loading, streams
+      // A base defender holds the shelter and fires out — or, while its holder is loading, streams
       // out to board. It NEVER bolts (handled before the point-blank panic below): the whole point
-      // of the building is that it doesn't have to give ground. A fallen post (captured) releases
-      // it to fight on as a regular line trooper.
+      // of the building is that it doesn't have to give ground. Its post is the nearest base its side
+      // HOLDS (a pilot may hold its own deed AND a captured fort, each manning its own line). A guard
+      // whose post fell to a foe — no held base near it — is released to fight on as a line trooper.
       if (device.guard) {
-        const post = world.bases.find((b) => b.owner === device.owner)
-        if (post && post.capture < 1) {
+        let post: Base | undefined
+        let postDist = Number.POSITIVE_INFINITY
+        for (const b of world.bases) {
+          if (baseHolder(b) !== device.owner) continue
+          const d = Math.hypot(b.x - device.x, b.y - device.y)
+          if (d < postDist) {
+            postDist = d
+            post = b
+          }
+        }
+        if (post) {
           stepDefender(world, device, post, dt, dead, deadDevices, spawned)
           return true
         }

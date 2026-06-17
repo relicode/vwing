@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { createBotInput, decideBot, nextGoal } from '$/game/bot'
 import {
+  BASE_STORM_ATTRITION_INTERVAL,
   BaseAlarm,
   BOT_ID,
   BotGoal,
@@ -175,7 +176,8 @@ describe('nextGoal (the campaign goal ladder)', () => {
     x: WORLD_WIDTH * 0.88,
     y: WORLD_HEIGHT * 0.52,
     garrison: 8,
-    capture: 0,
+    contest: {},
+    attritionClock: BASE_STORM_ATTRITION_INTERVAL,
     alarm: BaseAlarm.PATROL,
     door: 0,
     ...over,
@@ -185,7 +187,8 @@ describe('nextGoal (the campaign goal ladder)', () => {
     x: WORLD_WIDTH * 0.12,
     y: WORLD_HEIGHT * 0.52,
     garrison: 8,
-    capture: 0,
+    contest: {},
+    attritionClock: BASE_STORM_ATTRITION_INTERVAL,
     alarm: BaseAlarm.PATROL,
     door: 0,
     ...over,
@@ -215,13 +218,13 @@ describe('nextGoal (the campaign goal ladder)', () => {
   test('an enemy ship inside the threat range overrides everything', () => {
     const self = makeShip({ troops: 8 })
     const target = makeTarget({ x: self.x + 200, y: self.y })
-    const world = baseWorld([homeBase({ capture: 0.5 }), enemyBase({})], [self, target])
+    const world = baseWorld([homeBase({ contest: { [PLAYER_ID]: 0.5 } }), enemyBase({})], [self, target])
     expect(nextGoal(BotGoal.ASSAULT, self, world, target)).toBe(BotGoal.DOGFIGHT)
   })
 
   test('a contested home base pulls the bot to DEFEND', () => {
     const self = makeShip({ troops: 8 })
-    const world = baseWorld([homeBase({ capture: 0.2 }), enemyBase({})], [self])
+    const world = baseWorld([homeBase({ contest: { [PLAYER_ID]: 0.2 } }), enemyBase({})], [self])
     expect(nextGoal(BotGoal.ASSAULT, self, world, undefined)).toBe(BotGoal.DEFEND)
   })
 

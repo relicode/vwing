@@ -57,10 +57,11 @@ export const spawnTrooper = (world: World, ship: Ship): void => {
 
 // A defender fielded from reserve, already on its feet INSIDE the building's shelter — spread
 // across the firing line along its floor, where it holds and shoots out through the walls
-// (sheltered from direct fire). It rolls the same one-in-five specialist chance off the owner
-// ship's current squad kind (riflemen only while the owner is out of play). When the owner lands
+// (sheltered from direct fire). It is owned by the base's HOLDER (passed in — a captured fort fields
+// its captor's men, not the deed owner's), and rolls the one-in-five specialist chance off that
+// holder's current squad kind (riflemen only while the holder is out of play). When the holder lands
 // to load it streams out and boards like any trooper — that IS how a base is loaded (devices.ts).
-export const spawnGuard = (world: World, base: Base, squad: WeaponKind | undefined): void => {
+export const spawnGuard = (world: World, base: Base, holder: number, squad: WeaponKind | undefined): void => {
   const heavy = squad !== undefined && world.rng() < TROOP_SPECIALIST_CHANCE ? squad : undefined
   const walkDir = world.rng() < 0.5 ? -1 : 1
   // Ground span = the PHYSICAL pad under the door, so a boarding sprint can reach a ship parked
@@ -73,7 +74,7 @@ export const spawnGuard = (world: World, base: Base, squad: WeaponKind | undefin
     y: base.y - INFANTRY_RADIUS,
     vx: 0,
     vy: 0,
-    owner: base.owner,
+    owner: holder,
     radius: INFANTRY_RADIUS,
     heavy,
     guard: true,

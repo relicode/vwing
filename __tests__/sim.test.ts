@@ -167,10 +167,7 @@ describe('createSim — base capture cuts respawns', () => {
     const enemy = combatant(1, 1500, 400)
     const sim = createSim(world, [player, enemy], { mode: SimMode.CAMPAIGN })
     const home = world.bases.find((b) => b.owner === 0)
-    if (home) {
-      home.capture = 1
-      home.capturedBy = 1
-    }
+    if (home) home.holderId = 1 // the enemy holds it now
     player.ship.health = 5
     world.bullets.push(lethalShot(player.ship.x, player.ship.y, enemy.ship.id))
 
@@ -192,13 +189,11 @@ describe('createSim — base capture cuts respawns', () => {
     if (!home || !taken) return
     player.ship.health = 5
     world.bullets.push(lethalShot(player.ship.x, player.ship.y, enemy.ship.id))
-    // An occupying squad holds both captures for the whole wait (an empty zone bleeds capture
-    // back through stepBases — occupation, not a flag, is what "holding" means).
+    // A completed capture persists (a held fort doesn't auto-revert under the per-attacker model), so
+    // setting the holders once would do — re-asserting each frame just makes the intent explicit.
     const holdCaptures = (): void => {
-      home.capture = 1
-      home.capturedBy = 1 // own barracks lost…
-      taken.capture = 1
-      taken.capturedBy = 0 // …but the enemy's taken in return
+      home.holderId = 1 // own barracks lost…
+      taken.holderId = 0 // …but the enemy's taken in return
     }
     holdCaptures()
     expect(sim.step(1 / 60)[0]).toMatchObject({ victimId: 0, eliminated: false }) // the taken pad sustains the side
@@ -228,8 +223,7 @@ describe('createSim — base capture cuts respawns', () => {
     const home = world.bases.find((b) => b.owner === 0)
     expect(home).toBeDefined()
     if (!home) return
-    home.capture = 1 // the assault completes while the wreck waits
-    home.capturedBy = 1
+    home.holderId = 1 // the assault completes while the wreck waits
     // The very next frame — far inside the RESPAWN_DELAY_BASE wait — the noose closes on the
     // spot. By design this forecloses the slim chance of surviving troopers re-liberating the
     // pad before the timer ran out: baseless-while-dead ends it, exactly as at the moment of death.
@@ -288,13 +282,12 @@ describe('createSim — base capture cuts respawns', () => {
     expect(rifle.defense).toBeCloseTo(control.defense, 5) // …and harm no sheltered defender
   })
 
-  test('a captured building still stops fire, but its dead garrison takes nothing more', () => {
+  test('a captured building is still a solid wall — even to its holder’s own rounds', () => {
     const world = createWorld(31)
     const sim = createSim(world, [combatant(0, 500, 400), combatant(1, 1500, 400)], { mode: SimMode.CAMPAIGN })
     const home = world.bases.find((b) => b.owner === 0)
     if (!home) throw new Error('no player base seeded')
-    home.capture = 1 // the pad fell
-    home.capturedBy = 1
+    home.holderId = 1 // the pad fell to the enemy, who now holds it
     home.garrison = 0
     world.bullets.push({
       x: home.x,
@@ -303,12 +296,11 @@ describe('createSim — base capture cuts respawns', () => {
       vy: 0,
       radius: 3,
       life: 1,
-      owner: 1,
+      owner: 1, // the new holder's own round — the wall is opaque to it too
       damage: BASE_SHELL_KILL_DAMAGE,
     })
     sim.step(1 / 60)
-    expect(world.bullets.length).toBe(0) // the solid wall still stops the round
-    expect(home.garrison).toBe(0) // a fallen fort has no defenders left to shell
+    expect(world.bullets.length).toBe(0) // the solid wall still stops the round (no friendly transparency)
   })
 
   test('a trooper`s rifle round passes the band — small arms neither chip the garrison nor get eaten as cover', () => {
@@ -871,8 +863,7 @@ describe('createSim — battle (online FFA base war)', () => {
     const sim = createSim(world, [a, b], { mode: SimMode.BATTLE })
     sim.addBase(0, padA)
     const bBase = sim.addBase(1, padB)
-    bBase.capture = 1
-    bBase.capturedBy = 0 // A's troops have taken B's barracks
+    bBase.holderId = 0 // A's troops have taken B's barracks
     b.ship.health = 10
     world.bullets.push(lethalShot(b.ship.x, b.ship.y, a.ship.id))
     const events = sim.step(1 / 60)

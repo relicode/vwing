@@ -186,20 +186,24 @@ export type WaterBody = {
   h: number // depth from the surface to the bottom
 }
 
-// A home barracks: it garrisons troopers for its owner ship to load aboard, and is the
-// side's lifeline — enemy troopers capturing it cut the owner's respawns (see bases.ts).
-// The building's body is impenetrable (solid to every ship and to enemy infantry) and OPAQUE
-// to gunfire, but no longer indestructible to the men within: the DEFENDERS are its hitpoints
-// — up to BASE_ACTIVE_DEFENDERS stand inside firing out, the rest wait in reserve (`garrison`),
-// and a ship-class round striking the walls kills them by chance (shellBase). Only over an
-// emptied fort can attackers in wall/roof contact run the capture clock.
+// A home barracks: it garrisons troopers for its HOLDER ship to load aboard, and is a lifeline —
+// capturing it cuts the loser's respawns (see bases.ts). FRIENDLY to whoever holds it (deed owner,
+// or whoever captured it) and HOSTILE to everyone else: the body is impenetrable (solid to every
+// hull and to hostile infantry) and OPAQUE to gunfire, but the men within are its hitpoints — up to
+// BASE_ACTIVE_DEFENDERS of the holder's defenders stand inside firing out, the rest wait in reserve
+// (`garrison`), and a ship-class round striking the walls kills them by chance (shellBase). Only over
+// an emptied fort can a hostile pilot's men in wall/roof contact run THEIR capture clock.
 export type Base = {
-  owner: number // ship id whose respawns this barracks sustains
+  owner: number // the DEED — ship id this barracks was built for (sustains its respawns while it holds it)
   x: number // pad center, world px
   y: number // pad top surface, world px (the building sits on this line)
   garrison: number // RESERVE troopers (0..BASE_GARRISON_CAP; float) — fielded defenders are checked out of this
-  capture: number // enemy capture progress 0..1; >= 1 = captured (respawns cut)
-  capturedBy?: number // capturing ship id while captured; undefined = the owner holds it
+  // Per-attacker storm progress: hostile shipId → that pilot's OWN capture progress 0..1. Each rival
+  // builds its own bar (no shared "the enemy" scalar), so 3+ raiders contest independently. A plain
+  // Record, NOT a Map — world.bases is JSON.stringify'd into every WorldSnapshot, where a Map → {}.
+  contest: Record<number, number>
+  holderId?: number // current holder once captured; undefined = the deed owner holds it (see baseHolder)
+  attritionClock: number // s countdown; fires one soldier loss per contestant when 2+ rivals storm at once
   alarm: BaseAlarm // threat sensor this tick (patrol / ship near / infantry near), set by stepBases — read by the bot
   door: number // s until the next defender can field out the door
 }

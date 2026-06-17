@@ -270,10 +270,9 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     return chooseSpawn(world, enemies)
   }
 
-  // Every base sustaining a combatant's respawns: its own barracks while it still stands, plus
-  // any enemy barracks it has captured.
-  const controlledBases = (id: number): Base[] =>
-    world.bases.filter((b) => (b.owner === id ? b.capture < 1 : b.capture >= 1 && b.capturedBy === id))
+  // Every base sustaining a combatant's respawns: simply the bases it HOLDS — its own deed while it
+  // still holds it, plus any enemy barracks it has captured (baseHolder folds both cases into one).
+  const controlledBases = (id: number): Base[] => world.bases.filter((b) => baseHolder(b) === id)
 
   // The base-war noose: a side controlling no base has no reinforcements left. Always false in
   // baseless (DEATHMATCH) worlds.
@@ -705,9 +704,11 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
   const removeBase = (owner: number): void => {
     world.bases = world.bases.filter((b) => b.owner !== owner)
     for (const base of world.bases) {
-      if (base.capturedBy === owner) {
-        base.capture = 0
-        base.capturedBy = undefined
+      delete base.contest[owner] // drop this pilot's in-flight assault progress on every other base
+      if (base.holderId === owner) {
+        // it had CAPTURED another base → that fort reverts to its deed owner. Otherwise it would read
+        // as held by a ghost, wrongly making its rightful owner (controlling no base) elimination-eligible.
+        base.holderId = undefined
       }
     }
     standDownGuards(owner)

@@ -587,8 +587,7 @@ describe('online FFA base war (BATTLE room)', () => {
     const b = seat(room.join('Bandit'))
     const bBase = room.sim.world.bases.find((base) => base.owner === b.shipId)
     if (!bBase) throw new Error('no base for Bandit')
-    bBase.capture = 1
-    bBase.capturedBy = a.shipId // Ace's troops stormed it
+    bBase.holderId = a.shipId // Ace's troops stormed it
     downShip(room, b.shipId) // Bandit dies holding no base
     expect(room.players().find((p) => p.id === b.shipId)?.eliminated).toBe(true)
     expect(room.isOver()).toBe(true)
@@ -604,8 +603,7 @@ describe('online FFA base war (BATTLE room)', () => {
     const b = seat(room.join('Bandit'))
     const bBase = room.sim.world.bases.find((base) => base.owner === b.shipId)
     if (!bBase) throw new Error('no base for Bandit')
-    bBase.capture = 1
-    bBase.capturedBy = a.shipId
+    bBase.holderId = a.shipId
     downShip(room, b.shipId)
     expect(room.isOver()).toBe(true)
     room.leave(b.shipId) // the eliminated pilot drops to the lobby…

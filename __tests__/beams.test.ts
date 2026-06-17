@@ -4,6 +4,7 @@ import { castRail, fireRail } from '$/game/beams'
 import {
   BASE_BUILDING_HALF_WIDTH,
   BASE_SHELL_KILL_DAMAGE,
+  BASE_STORM_ATTRITION_INTERVAL,
   BaseAlarm,
   DeviceKind,
   RAIL_DAMAGE,
@@ -95,7 +96,8 @@ const makeBase = (over: Partial<Base>): Base => ({
   x: 300,
   y: 26,
   garrison: 8,
-  capture: 0,
+  contest: {},
+  attritionClock: BASE_STORM_ATTRITION_INTERVAL,
   alarm: BaseAlarm.PATROL,
   door: 0,
   ...over,
@@ -215,19 +217,18 @@ describe('fireRail', () => {
     expect(world.devices).toContain(sheltered)
   })
 
-  test('a captured building is a wall to BOTH sides; a fallen fort loses no one', () => {
+  test('a captured building is an opaque wall to BOTH the dispossessed owner and its holder', () => {
     const dispossessed = makeShip({ id: 1, x: 0, y: 0, angle: 0 })
-    const taken = makeBase({ capture: 1, capturedBy: 0, garrison: 4 }) // deed 1, flag flies for 0
+    const taken = makeBase({ holderId: 0, garrison: 4 }) // deed 1, held by 0
     const world = makeWorld([dispossessed])
     world.bases = [taken]
     fireRail(world, dispossessed)
-    expect(world.beams[0].x2).toBeCloseTo(taken.x - BASE_BUILDING_HALF_WIDTH) // stopped at the wall
-    expect(taken.garrison).toBe(4) // a fallen barracks is past hurting
+    expect(world.beams[0].x2).toBeCloseTo(taken.x - BASE_BUILDING_HALF_WIDTH) // stopped at the wall — no see-through
 
     const capturer = makeShip({ id: 0, x: 0, y: 0, angle: 0 })
     const held = makeWorld([capturer])
-    held.bases = [makeBase({ capture: 1, capturedBy: 0, garrison: 4 })]
+    held.bases = [makeBase({ holderId: 0, garrison: 4 })]
     fireRail(held, capturer)
-    expect(held.beams[0].x2).toBeCloseTo(300 - BASE_BUILDING_HALF_WIDTH) // the holder's fire is stopped too — no transparency
+    expect(held.beams[0].x2).toBeCloseTo(300 - BASE_BUILDING_HALF_WIDTH) // the holder's own fire is stopped too — no transparency
   })
 })
