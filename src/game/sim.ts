@@ -60,7 +60,7 @@ import {
 import { resolveInfantryContacts, updateDevices } from '$/game/devices'
 import type { Input } from '$/game/input'
 import { clamp } from '$/game/math'
-import { spawnExplosion, spawnPuff, updateParticles } from '$/game/particles'
+import { burst, spawnExplosion, spawnPuff, updateParticles } from '$/game/particles'
 import { createRng, randRange } from '$/game/rng'
 import { respawnShipAt, type ShipEnv, updateShip } from '$/game/ship'
 import { resolveShipTerrain } from '$/game/terrain'
@@ -149,6 +149,7 @@ export const createWorld = (seed: number): World => {
     ships: [],
     bullets: [],
     particles: [],
+    fx: [],
     devices: [],
     beams: [],
     blocks,
@@ -311,6 +312,8 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
     const deathX = victim.x // captured before respawn relocates the ship (for the death event)
     const deathY = victim.y
     const color = victim.kind === ShipKind.BOT ? Color.ENEMY : Color.SHIP
+    // NOT routed through burst(): the networked client already replays the wreck from the
+    // DeathEvent below (in the victim's own seat color), so adding it to world.fx would double it.
     spawnExplosion(world.particles, victim.x, victim.y, color, world.rng, 34)
     world.shake = Math.max(world.shake, SHIP_DEATH_SHAKE)
 
@@ -358,7 +361,7 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
       applyDamage(ship, bullet.damage)
       ship.lastHitBy = bullet.owner
       if (bullet.push) applyKnockback(ship, bullet.vx, bullet.vy, bullet.push)
-      spawnExplosion(world.particles, bullet.x, bullet.y, bullet.color ?? Color.SPARK, world.rng, 5)
+      burst(world, bullet.x, bullet.y, bullet.color ?? Color.SPARK, 5)
       if (isDead(ship)) killShip(ship, ship.lastHitBy, events)
       return true
     }
@@ -401,14 +404,14 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
           } else {
             inf.vx += dir * (bullet.push ?? 0) * 0.5
           }
-          spawnExplosion(world.particles, inf.x, inf.y, Color.WATER_EDGE, world.rng, 5)
+          burst(world, inf.x, inf.y, Color.WATER_EDGE, 5)
         } else if (inf.kind === DeviceKind.INFANTRY && bullet.burn) {
           // A flame gout sets the trooper alight rather than killing outright — the burn
           // timer (and the panicked flailing) takes it from here. Wet units can't catch.
           if (inf.swim <= 0 && inf.sinking <= 0) inf.burning = INFANTRY_BURN_TIME
-          spawnExplosion(world.particles, inf.x, inf.y, Color.THRUST, world.rng, 5)
+          burst(world, inf.x, inf.y, Color.THRUST, 5)
         } else {
-          spawnExplosion(world.particles, inf.x, inf.y, Color.BLOOD, world.rng, 6)
+          burst(world, inf.x, inf.y, Color.BLOOD, 6)
           world.devices.splice(unit, 1)
         }
         continue
@@ -427,7 +430,7 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
           })
       if (struckBase) {
         shellBase(world, struckBase, bullet.damage)
-        spawnExplosion(world.particles, bullet.x, bullet.y, Color.SPARK, world.rng, 5)
+        burst(world, bullet.x, bullet.y, Color.SPARK, 5)
         continue
       }
       // Prefer a destructible (EARTH) contact: blocks list bedrock first, so taking the first
@@ -448,7 +451,7 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
           // Flamethrower: set the grass ALIGHT (surface only, no carve) — the fire then creeps
           // on its own through the voxel fire tick — with a lick of flame at the impact.
           if (igniteSurface(voxel, bullet.x, bullet.y, FLAMETHROWER_BURN_RADIUS)) terrainDirty = true
-          spawnExplosion(world.particles, bullet.x, bullet.y, Color.THRUST, world.rng, 7)
+          burst(world, bullet.x, bullet.y, Color.THRUST, 7)
         } else if (bullet.wet && block.structure === StructureType.EARTH) {
           // Water cannon on EARTH: douse any grass alight, wet bare earth → grass (regrows over time,
           // no carve), and POUR a droplet's worth of real water into the grid at the impact — it then
@@ -459,17 +462,17 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
           wetSurface(voxel, bullet.x, bullet.y, WATER_CANNON_WET_RADIUS)
           pourWater(voxel, bullet.x, bullet.y, WATER_POUR_LEVEL)
           waterDirty = true
-          spawnExplosion(world.particles, bullet.x, bullet.y, Color.WATER_EDGE, world.rng, 6)
+          burst(world, bullet.x, bullet.y, Color.WATER_EDGE, 6)
         } else if (bullet.wet) {
           // Water cannon on metal: it can't soak in or pool on the indestructible pad — just a splash.
-          spawnExplosion(world.particles, bullet.x, bullet.y, Color.WATER_EDGE, world.rng, 4)
+          burst(world, bullet.x, bullet.y, Color.WATER_EDGE, 4)
         } else if (block.structure === StructureType.EARTH) {
           const radius = bullet.radius * CARVE_RADIUS_SCALE + CARVE_RADIUS_BASE
           if (carveVoxel(voxel, bullet.x, bullet.y, radius)) terrainDirty = true
-          spawnExplosion(world.particles, bullet.x, bullet.y, Color.ROCK_EDGE, world.rng, 8)
+          burst(world, bullet.x, bullet.y, Color.ROCK_EDGE, 8)
         } else {
           // Indestructible metal: just sparks.
-          spawnExplosion(world.particles, bullet.x, bullet.y, Color.SPARK, world.rng, 4)
+          burst(world, bullet.x, bullet.y, Color.SPARK, 4)
         }
         continue
       }
@@ -501,6 +504,7 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
 
   const step = (dt: number): DeathEvent[] => {
     const events: DeathEvent[] = []
+    world.fx = [] // this tick's discrete FX bursts, collected for the network snapshot (see burst())
     if (world.shake > 0) world.shake = Math.max(0, world.shake - SHAKE_DECAY * dt)
     world.time += dt
     // Reinforcements whose wait has elapsed re-enter (the spawn point is picked NOW, against the
@@ -591,7 +595,7 @@ export const createSim = (world: World, combatants: Combatant[], config: SimConf
       if (surface !== undefined) {
         const wet = submersion(ship, world.water) > 0
         if (wet !== submergedShips.has(ship.id) && Math.abs(ship.vy) > SPLASH_MIN_SPEED) {
-          spawnExplosion(world.particles, ship.x, surface, Color.WATER_EDGE, world.rng, SPLASH_PARTICLES)
+          burst(world, ship.x, surface, Color.WATER_EDGE, SPLASH_PARTICLES)
         }
         if (wet) submergedShips.add(ship.id)
         else submergedShips.delete(ship.id)

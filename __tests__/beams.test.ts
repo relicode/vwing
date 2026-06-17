@@ -48,6 +48,7 @@ const makeWorld = (ships: Ship[]): World => ({
   ships,
   bullets: [],
   particles: [],
+  fx: [],
   devices: [],
   beams: [],
   blocks: [],

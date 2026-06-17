@@ -291,12 +291,18 @@ export const connectGame = async (game: string, name: string, intent: JoinIntent
         // Benched seats ride players[] too, so a disconnected pilot's troopers keep their color.
         paletteSlots = new Map(players.map((p) => [p.id, clampSlot(p.palette)]))
         feed = updateFeed(feed, message.events, players, Date.now())
-        // The wire carries no particles (cosmetic); spawn a wreck explosion at each death here,
-        // in the victim's seat color.
+        // The wire carries no particle data (cosmetic), but it does carry this tick's discrete FX
+        // bursts as compact triggers. Spawn a wreck explosion at each death in the victim's seat
+        // color (the death event drives that one, so it isn't in world.fx)...
         for (const event of message.events) {
           const slot = paletteSlots.get(event.victimId)
           const color = slot === undefined ? Color.ENEMY : (PLAYER_PALETTE[slot] ?? Color.ENEMY)
           spawnExplosion(fxParticles, event.x, event.y, color, fxRng, 34)
+        }
+        // ...then replay every other sim burst (trooper blood, base sparks, weapon detonations,
+        // splashes, muzzle flashes) the server recorded for this tick, in its own color.
+        for (const fx of message.world.fx) {
+          spawnExplosion(fxParticles, fx.x, fx.y, fx.color, fxRng, fx.count)
         }
         publish()
       } else if (message.t === MsgType.REJECTED) {
