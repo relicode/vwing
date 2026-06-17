@@ -47,6 +47,7 @@ const makeWorld = (over?: Partial<World>): World => ({
   ships: [],
   bullets: [],
   particles: [],
+  fx: [],
   devices: [],
   beams: [],
   blocks: [],

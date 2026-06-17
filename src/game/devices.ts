@@ -135,7 +135,7 @@ import {
   WORLD_WIDTH,
 } from '$/game/constants'
 import { clamp, TWO_PI, wrapAngle } from '$/game/math'
-import { spawnExplosion, spawnPuff } from '$/game/particles'
+import { burst, spawnPuff } from '$/game/particles'
 import { randRange } from '$/game/rng'
 import type { Base, Block, Device, InfantryDevice, Ship, Vec2, World } from '$/game/types'
 import { waterSurfaceAt } from '$/game/water'
@@ -304,7 +304,7 @@ const areaDamage = (
     // the shelter never hides a blast's own victims from it.
     if (shelteredInBase(world, device.owner, device.x, device.y)) continue
     if (Math.hypot(device.x - x, device.y - y) > radius) continue
-    spawnExplosion(world.particles, device.x, device.y, Color.BLOOD, world.rng, 6)
+    burst(world, device.x, device.y, Color.BLOOD, 6)
     deadDevices.add(device)
   }
   // The shove past the shrapnel: landed troopers in the wider ring are knocked flat, not killed.
@@ -424,7 +424,7 @@ const infantryTarget = (world: World, device: InfantryDevice): Vec2 | undefined 
 const muzzleFlash = (world: World, device: InfantryDevice, angle: number, color: number): void => {
   const mx = device.x + Math.cos(angle) * device.radius * 1.8
   const my = device.y + Math.sin(angle) * device.radius * 1.8
-  spawnExplosion(world.particles, mx, my, color, world.rng, 3)
+  burst(world, mx, my, color, 3)
 }
 
 // Fire at the current target at the given cadence, with `spread` rad of aim jitter (drawn from
@@ -870,7 +870,7 @@ const settleAirborne = (
   }
   const impact = -(device.vx * c.nx + device.vy * c.ny)
   if (impact > INFANTRY_FALL_LETHAL) {
-    spawnExplosion(world.particles, device.x, device.y, Color.BLOOD, world.rng, 6)
+    burst(world, device.x, device.y, Color.BLOOD, 6)
     return 'dead'
   }
   if (impact > INFANTRY_FALL_KNOCKDOWN) device.fallen = INFANTRY_FALLEN_TIME
@@ -882,7 +882,7 @@ const settleAirborne = (
   device.chute = -1
   device.groundLeft = rect.x
   device.groundRight = rect.x + rect.w
-  spawnExplosion(world.particles, device.x, device.y + device.radius, Color.ROCK_EDGE, world.rng, 4) // landing dust
+  burst(world, device.x, device.y + device.radius, Color.ROCK_EDGE, 4) // landing dust
   return 'landed'
 }
 
@@ -948,7 +948,7 @@ const stepDevice = (
           }
         }
         if (device.disableTime > 0) applyDisable(ship, device.disableTime, device.shieldDrain)
-        spawnExplosion(world.particles, device.x, device.y, device.color, world.rng, 16)
+        burst(world, device.x, device.y, device.color, 16)
         return false
       }
       // Flesh stops it too: a warhead contact-detonates on an enemy trooper (splattering it and
@@ -965,7 +965,7 @@ const stepDevice = (
             t.running = false
           }
         } else {
-          spawnExplosion(world.particles, d.x, d.y, Color.BLOOD, world.rng, 6)
+          burst(world, d.x, d.y, Color.BLOOD, 6)
           deadDevices.add(d)
           if (device.blastRadius > 0) {
             areaDamage(
@@ -980,7 +980,7 @@ const stepDevice = (
             )
           }
         }
-        spawnExplosion(world.particles, device.x, device.y, device.color, world.rng, 14)
+        burst(world, device.x, device.y, device.color, 14)
         return false
       }
       // Terrain stops it — and so do the barracks' indestructible walls: a blast warhead
@@ -993,7 +993,7 @@ const stepDevice = (
         if (device.blastRadius > 0) {
           areaDamage(world, device.x, device.y, device.blastRadius, device.blastDamage, device.owner, dead, deadDevices)
         }
-        spawnExplosion(world.particles, device.x, device.y, device.color, world.rng, 14)
+        burst(world, device.x, device.y, device.color, 14)
         return false
       }
       if (device.life <= 0 || !inBounds(device.x, device.y)) return false
@@ -1008,7 +1008,7 @@ const stepDevice = (
           if (ship.id === device.owner || ship.invuln > 0) continue
           if (Math.hypot(ship.x - device.x, ship.y - device.y) > device.triggerRadius) continue
           areaDamage(world, device.x, device.y, device.blastRadius, device.damage, device.owner, dead, deadDevices)
-          spawnExplosion(world.particles, device.x, device.y, Color.MINE_ARMED, world.rng, 22)
+          burst(world, device.x, device.y, Color.MINE_ARMED, 22)
           return false
         }
         // Enemy infantry trip it too — the sapper's patrol-seeded field is area denial
@@ -1017,7 +1017,7 @@ const stepDevice = (
           if (d.kind !== DeviceKind.INFANTRY || d.owner === device.owner || d.sinking > 0) continue
           if (Math.hypot(d.x - device.x, d.y - device.y) > device.triggerRadius) continue
           areaDamage(world, device.x, device.y, device.blastRadius, device.damage, device.owner, dead, deadDevices)
-          spawnExplosion(world.particles, device.x, device.y, Color.MINE_ARMED, world.rng, 22)
+          burst(world, device.x, device.y, Color.MINE_ARMED, 22)
           return false
         }
       }
@@ -1062,8 +1062,8 @@ const stepDevice = (
             if (world.rng() < INFANTRY_FIRE_CATCH_CHANCE) other.burning = INFANTRY_BURN_TIME
           }
           if (device.burning <= 0) {
-            spawnExplosion(world.particles, device.x, device.y, Color.THRUST, world.rng, 10)
-            spawnExplosion(world.particles, device.x, device.y, Color.BLOOD, world.rng, 4)
+            burst(world, device.x, device.y, Color.THRUST, 10)
+            burst(world, device.x, device.y, Color.BLOOD, 4)
             return false
           }
         }
@@ -1181,7 +1181,7 @@ const stepDevice = (
       }
       // Landed. Embedded in a block (terrain shifted under it) → instant death.
       if (insideAnyBlock(device.x, device.y, world.blocks)) {
-        spawnExplosion(world.particles, device.x, device.y, Color.BLOOD, world.rng, 6)
+        burst(world, device.x, device.y, Color.BLOOD, 6)
         return false
       }
       // Block beneath shot away → lose footing and fall (re-enters the airborne path next frame).
@@ -1442,7 +1442,7 @@ const stepDevice = (
         )
         // The concussion: the shards kill whoever they meet, the shove floors whoever they miss.
         knockdown(world, device.x, device.y, BURST_KNOCKDOWN_RADIUS, deadDevices)
-        spawnExplosion(world.particles, device.x, device.y, Color.GRENADE, world.rng, 20)
+        burst(world, device.x, device.y, Color.GRENADE, 20)
         return false
       }
       return true
@@ -1472,7 +1472,7 @@ const stepDevice = (
         )
         // Same concussion as the grenade: an airburst low over the ground floors the survivors.
         knockdown(world, device.x, device.y, BURST_KNOCKDOWN_RADIUS, deadDevices)
-        spawnExplosion(world.particles, device.x, device.y, Color.FLAK, world.rng, 18)
+        burst(world, device.x, device.y, Color.FLAK, 18)
         return false
       }
       return true
@@ -1551,7 +1551,7 @@ const ignitePlume = (
     const py = y0 + dy * t
     if (Math.hypot(d.x - px, d.y - py) > radius + d.radius) continue
     d.burning = INFANTRY_BURN_TIME
-    spawnExplosion(world.particles, d.x, d.y, Color.THRUST, world.rng, 4)
+    burst(world, d.x, d.y, Color.THRUST, 4)
   }
 }
 
@@ -1643,7 +1643,7 @@ export const resolveInfantryContacts = (world: World): void => {
         d.fireCooldown = INFANTRY_FIRE_INTERVAL
         d.kneel = 0
         d.running = false
-        spawnExplosion(world.particles, d.x, d.y, Color.EMP, world.rng, 8)
+        burst(world, d.x, d.y, Color.EMP, 8)
         continue
       }
       if (ramming && d.sinking <= 0 && circlesOverlap(ship.x, ship.y, ship.radius, d.x, d.y, d.radius)) {
@@ -1653,7 +1653,7 @@ export const resolveInfantryContacts = (world: World): void => {
         // a hull glancing off the building.
         if (d.owner === ship.id && d.pickupLock > 0) continue
         if (d.owner !== ship.id && shelteredInBase(world, d.owner, d.x, d.y)) continue
-        spawnExplosion(world.particles, d.x, d.y, Color.BLOOD, world.rng, 6)
+        burst(world, d.x, d.y, Color.BLOOD, 6)
         world.devices.splice(i, 1)
       }
     }

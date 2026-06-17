@@ -1,7 +1,7 @@
 import { baseBuilding, shellBase, shelteredInBase } from '$/game/bases'
 import { applyDamage } from '$/game/combat'
 import { Color, DeviceKind, RAIL_BEAM_LIFE, RAIL_DAMAGE, RAIL_RANGE } from '$/game/constants'
-import { spawnExplosion } from '$/game/particles'
+import { burst } from '$/game/particles'
 import type { Base, Device, Ship, World } from '$/game/types'
 
 // Age out spent rail beams (damage was applied when they were fired).
@@ -104,7 +104,7 @@ export const castRail = (
     const along = relX * dirX + relY * dirY
     if (along < 0 || along > hitDist) continue
     if (Math.abs(relX * dirY - relY * dirX) > d.radius) continue
-    spawnExplosion(world.particles, d.x, d.y, Color.BLOOD, world.rng, 6)
+    burst(world, d.x, d.y, Color.BLOOD, 6)
     deadTroopers.add(d)
   }
   if (struckBase) shellBase(world, struckBase, damage)

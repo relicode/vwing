@@ -340,9 +340,11 @@ export const createRoom = (name: string, restore?: RoomRestore): Room => {
 
   const snapshot = (events: DeathEvent[]): ServerMessage => ({
     t: MsgType.SNAPSHOT,
-    // A full World minus the two purely-cosmetic, high-churn fields: `particles` (the client
-    // regenerates engine trails / smoke / wreck explosions locally) and the rng closure (which
-    // JSON.stringify drops anyway). Everything authoritative still crosses the wire.
+    // A full World minus the rng closure (JSON.stringify drops it anyway) and the high-churn
+    // `particles` trail buffer (the client regenerates engine trails / smoke / wreck explosions
+    // locally). The discrete FX bursts the sim spawned THIS tick DO cross — as the compact
+    // `world.fx` triggers (a handful of {x,y,color,count} per tick) — so trooper blood, base
+    // sparks and weapon detonations replay client-side without the particle data on the wire.
     world: { ...sim.world, particles: [] },
     players: players(),
     events,
